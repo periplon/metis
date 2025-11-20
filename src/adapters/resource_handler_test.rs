@@ -20,6 +20,7 @@ async fn test_get_resource_static() {
     
     let settings = Settings {
         server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
+        auth: Default::default(),
         resources: config,
         tools: vec![],
         prompts: vec![],
@@ -46,12 +47,14 @@ async fn test_get_resource_mock() {
             template: Some("Hello, {{ name | default(value=\"\") }}!".to_string()),
             faker_type: None,
             stateful: None,
-            script: None,
+            file: None,
+            pattern: None,            script: None,
         }),
     }];
     
     let settings = Settings {
         server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
+        auth: Default::default(),
         resources: config,
         tools: vec![],
         prompts: vec![],
@@ -69,7 +72,8 @@ async fn test_get_resource_not_found() {
     let mock_strategy = Arc::new(MockStrategyHandler::new(Arc::new(StateManager::new())));
     let settings = Settings {
         server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
-        resources: vec![],
+        auth: Default::default(),
+            resources: vec![],
         tools: vec![],
         prompts: vec![],
     };
@@ -103,6 +107,7 @@ async fn test_list_resources() {
     
     let settings = Settings {
         server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
+        auth: Default::default(),
         resources: config,
         tools: vec![],
         prompts: vec![],

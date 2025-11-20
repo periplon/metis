@@ -1,0 +1,21 @@
+[server]
+host = "0.0.0.0"
+port = 3000
+
+# Example resource
+[[resources]]
+uri = "file:///docker-example.txt"
+name = "Docker Example"
+description = "Example resource for Docker deployment"
+content = "Hello from Metis in Docker!"
+
+# Example tool
+[[tools]]
+name = "docker_echo"
+description = "Echo tool for Docker testing"
+[tools.input_schema]
+type = "object"
+properties = { message = { type = "string" } }
+[tools.mock]
+strategy = "template"
+template = "Docker Echo: {{ message }}"

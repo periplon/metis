@@ -1,39 +1,3 @@
-# Metis MCP Mock Server
-
-[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-
-**Metis** is a high-performance, fully configurable [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) mock server written in Rust. It provides comprehensive mocking capabilities for resources, tools, and prompts with support for multiple data generation strategies, making it ideal for local development, testing, and prototyping of MCP-based applications.
-
-## 🌟 Features
-
-### Core Capabilities
-- **Full MCP Protocol Support**: Complete implementation of the Model Context Protocol specification
-- **Multiple Mock Strategies**: Template-based (Tera), Random (Faker), and extensible strategy system
-- **Declarative Configuration**: Simple TOML-based configuration with hot-reload support
-- **Configuration Hot-Reload**: Automatically reloads configuration changes without restarting the server
-- **MCP Logging Support**: Captures and handles client log messages via the MCP protocol
-- **High Performance**: Built with Rust and Tokio for async, high-throughput operations
-- **Hexagonal Architecture**: Clean separation of concerns following SOLID principles
-
-### Mock Strategies
-- **Template Strategy**: Use Tera templates for dynamic content generation
-- **Random Strategy**: Generate realistic fake data using the Faker library
-- **Extensible**: Easy to add custom mock strategies
-
-### MCP Components
-- **Resources**: Mock file systems, databases, APIs, and other data sources
-- **Tools**: Simulate tool execution with configurable responses
-- **Prompts**: Provide templated prompts for testing LLM interactions
-
-## 🏗️ Architecture
-
-Metis follows **Hexagonal Architecture** (Ports and Adapters) combined with **SOLID principles** to ensure maintainability, testability, and extensibility.
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     Metis MCP Mock Server                    │
-├─────────────────────────────────────────────────────────────┤
 │                                                               │
 │  ┌─────────────────┐         ┌──────────────────┐          │
 │  │  Config Loader  │────────▶│  Config Manager  │          │

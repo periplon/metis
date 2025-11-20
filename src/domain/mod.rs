@@ -4,6 +4,7 @@ use serde_json::Value;
 
 pub mod mcp_types;
 pub mod sampling;
+pub mod auth;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Resource {

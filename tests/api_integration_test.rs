@@ -2,17 +2,21 @@ use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
-use metis::adapters::logging_handler::LoggingHandler;
-use metis::adapters::mcp_protocol_handler::McpProtocolHandler;
-use metis::adapters::mock_strategy::MockStrategyHandler;
-use metis::adapters::prompt_handler::InMemoryPromptHandler;
-use metis::adapters::resource_handler::InMemoryResourceHandler;
-use metis::adapters::state_manager::StateManager;
-use metis::adapters::tool_handler::BasicToolHandler;
+use metis::adapters::{
+    health_handler::HealthHandler,
+    logging_handler::LoggingHandler,
+    mcp_protocol_handler::McpProtocolHandler,
+    metrics_handler::{MetricsCollector, MetricsHandler},
+    mock_strategy::MockStrategyHandler,
+    prompt_handler::InMemoryPromptHandler,
+    resource_handler::InMemoryResourceHandler,
+    state_manager::StateManager,
+    tool_handler::BasicToolHandler,
+};
 // use metis::config::{Settings, ServerSettings}; // Not used in this test
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tower::util::ServiceExt; // Correct import for oneshot
+use tower::ServiceExt; // Correct import for oneshot
 
 use metis::config::Settings;
 use tokio::sync::RwLock;
@@ -22,6 +26,7 @@ async fn test_api_integration() {
     // Setup application
     let settings = Settings {
         server: metis::config::ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
+        auth: Default::default(),
         resources: vec![],
         tools: vec![],
         prompts: vec![],
@@ -34,6 +39,9 @@ async fn test_api_integration() {
     let tool_handler = Arc::new(BasicToolHandler::new(settings.clone(), mock_strategy.clone()));
     let prompt_handler = Arc::new(InMemoryPromptHandler::new(settings.clone()));
     let logging_handler = Arc::new(LoggingHandler::new());
+    let health_handler = Arc::new(HealthHandler::new(settings.clone()));
+    let metrics_collector = Arc::new(MetricsCollector::new().unwrap());
+    let metrics_handler = Arc::new(MetricsHandler::new(metrics_collector));
     let protocol_handler = Arc::new(McpProtocolHandler::new(
         resource_handler,
         tool_handler,
@@ -41,7 +49,7 @@ async fn test_api_integration() {
         logging_handler,
     ));
 
-    let app = metis::create_app(protocol_handler);
+    let app = metis::create_app(protocol_handler, health_handler, metrics_handler);
 
     // Test Initialize
     let request = Request::builder()

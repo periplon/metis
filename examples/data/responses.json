@@ -1,0 +1,22 @@
+[
+    {
+        "status": "success",
+        "message": "Operation completed successfully",
+        "code": 200
+    },
+    {
+        "status": "error",
+        "message": "Resource not found",
+        "code": 404
+    },
+    {
+        "status": "success",
+        "message": "Data updated",
+        "code": 200
+    },
+    {
+        "status": "warning",
+        "message": "Deprecated endpoint",
+        "code": 299
+    }
+]

@@ -6,7 +6,7 @@ use crate::domain::{PromptPort, ResourcePort, ToolPort};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 #[derive(Debug, Deserialize)]
 pub struct JsonRpcRequest {

@@ -1,0 +1,209 @@
+# Advanced Metis Configuration Example
+# Demonstrates all available features
+
+[server]
+host = "0.0.0.0"
+port = 3000
+
+# API Key authentication
+[auth]
+enabled = true
+mode = "ApiKey"
+api_keys = ["dev-key-123", "test-key-456"]
+
+# Static resource
+[[resources]]
+uri = "file:///static.txt"
+name = "Static Content"
+content = "This is static content"
+
+# Template-based resource
+[[resources]]
+uri = "db://users/{id}"
+name = "User by ID"
+[resources.mock]
+strategy = "template"
+template = '''
+{
+  "id": {{ id }},
+  "name": "User {{ id }}",
+  "created_at": "2024-01-01T00:00:00Z"
+}
+'''
+
+# File-based resource (loads from JSON file)
+[[resources]]
+uri = "api://products"
+name = "Product List"
+[resources.mock]
+strategy = "file"
+[resources.mock.file]
+path = "examples/data/products.json"
+selection = "random"
+
+# Pattern-based resource
+[[resources]]
+uri = "api://order-id"
+name = "Order ID Generator"
+[resources.mock]
+strategy = "pattern"
+pattern = "ORD-\\d\\d\\d\\d-\\w\\w\\w\\w"
+
+# Stateful resource (counter)
+[[resources]]
+uri = "api://counter"
+name = "Request Counter"
+[resources.mock]
+strategy = "stateful"
+[resources.mock.stateful]
+state_key = "request_count"
+operation = "increment"
+template = '{"count": {{ value }}}'
+
+# Script-based resource (Rhai)
+[[resources]]
+uri = "api://computed"
+name = "Computed Value"
+[resources.mock]
+strategy = "script"
+script = '''
+let x = 10;
+let y = 20;
+#{
+  "sum": x + y,
+  "product": x * y
+}
+'''
+
+# Echo tool
+[[tools]]
+name = "echo"
+description = "Echoes the input"
+[tools.input_schema]
+type = "object"
+properties = { text = { type = "string" } }
+[tools.mock]
+strategy = "template"
+template = "Echo: {{ text }}"
+
+# Random name generator
+[[tools]]
+name = "generate_name"
+description = "Generates a random name"
+[tools.input_schema]
+type = "object"
+properties = {}
+[tools.mock]
+strategy = "random"
+faker_type = "name"
+
+# Random email generator
+[[tools]]
+name = "generate_email"
+description = "Generates a random email"
+[tools.input_schema]
+type = "object"
+properties = {}
+[tools.mock]
+strategy = "random"
+faker_type = "email"
+
+# File-based responses
+[[tools]]
+name = "get_response"
+description = "Returns a response from file"
+[tools.input_schema]
+type = "object"
+properties = {}
+[tools.mock]
+strategy = "file"
+[tools.mock.file]
+path = "examples/data/responses.json"
+selection = "random"
+
+# Pattern-based ID generator
+[[tools]]
+name = "generate_id"
+description = "Generates a unique ID"
+[tools.input_schema]
+type = "object"
+properties = {}
+[tools.mock]
+strategy = "pattern"
+pattern = "ID-\\d\\d\\d\\d\\d"
+
+# Stateful counter tool
+[[tools]]
+name = "increment_counter"
+description = "Increments and returns a counter"
+[tools.input_schema]
+type = "object"
+properties = {}
+[tools.mock]
+strategy = "stateful"
+[tools.mock.stateful]
+state_key = "tool_counter"
+operation = "increment"
+
+# Script-based calculator
+[[tools]]
+name = "calculate"
+description = "Performs calculations"
+[tools.input_schema]
+type = "object"
+properties = { 
+  a = { type = "number" },
+  b = { type = "number" },
+  op = { type = "string" }
+}
+[tools.mock]
+strategy = "script"
+script = '''
+let a = input.a;
+let b = input.b;
+let op = input.op;
+
+let result = if op == "add" {
+  a + b
+} else if op == "subtract" {
+  a - b
+} else if op == "multiply" {
+  a * b
+} else if op == "divide" {
+  a / b
+} else {
+  0
+};
+
+#{ "result": result }
+'''
+
+# Code review prompt
+[[prompts]]
+name = "code_review"
+description = "Prompt for code review"
+[[prompts.arguments]]
+name = "code"
+description = "Code to review"
+required = true
+[[prompts.messages]]
+role = "system"
+content = "You are an expert code reviewer."
+[[prompts.messages]]
+role = "user"
+content = "Please review this code: {{ code }}"
+
+# Bug fix prompt
+[[prompts]]
+name = "bug_fix"
+description = "Prompt for bug fixing"
+[[prompts.arguments]]
+name = "error"
+description = "Error message"
+required = true
+[[prompts.messages]]
+role = "system"
+content = "You are a debugging expert."
+[[prompts.messages]]
+role = "user"
+content = "Help me fix this error: {{ error }}"

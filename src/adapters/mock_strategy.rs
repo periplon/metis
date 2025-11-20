@@ -1,11 +1,11 @@
 use crate::adapters::state_manager::StateManager;
 use crate::config::{MockConfig, MockStrategyType, StateOperation};
 use anyhow::Result;
-use fake::faker::internet::en::{FreeEmail, SafeEmail, Username};
+use fake::faker::internet::en::{SafeEmail, Username};
 use fake::faker::lorem::en::{Paragraph, Sentence, Word};
 use fake::faker::name::en::{Name, Title};
 use fake::Fake;
-use rhai::{Engine, Scope, AST};
+use rhai::{Engine, Scope};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -43,6 +43,8 @@ impl MockStrategyHandler {
             MockStrategyType::Random => self.generate_random(config),
             MockStrategyType::Stateful => self.generate_stateful(config, args).await,
             MockStrategyType::Script => self.generate_script(config, args),
+            MockStrategyType::File => self.generate_file(config).await,
+            MockStrategyType::Pattern => self.generate_pattern(config),
         }
     }
 
@@ -142,6 +144,76 @@ impl MockStrategyHandler {
             // Convert Rhai Dynamic back to serde_json::Value
             let json_val = serde_json::to_value(&result)?;
             Ok(json_val)
+        } else {
+            Ok(Value::Null)
+        }
+    }
+
+    async fn generate_file(&self, config: &MockConfig) -> Result<Value> {
+        if let Some(file_config) = &config.file {
+            // Read file content
+            let content = tokio::fs::read_to_string(&file_config.path).await?;
+            
+            // Parse as JSON array
+            let data: Vec<Value> = serde_json::from_str(&content)?;
+            
+            if data.is_empty() {
+                return Ok(Value::Null);
+            }
+
+            // Select based on strategy
+            let selected = match file_config.selection.as_str() {
+                "random" => {
+                    use rand::Rng;
+                    let mut rng = rand::thread_rng();
+                    let idx = rng.gen_range(0..data.len());
+                    &data[idx]
+                }
+                "sequential" => {
+                    // TODO: Implement sequential selection with state
+                    &data[0]
+                }
+                _ => &data[0],
+            };
+
+            Ok(selected.clone())
+        } else {
+            Ok(Value::Null)
+        }
+    }
+
+    fn generate_pattern(&self, config: &MockConfig) -> Result<Value> {
+        if let Some(pattern) = &config.pattern {
+            use rand::Rng;
+            let mut rng = rand::thread_rng();
+            
+            // Simple pattern generation - expand character classes
+            let mut result = String::new();
+            let mut chars = pattern.chars().peekable();
+            
+            while let Some(ch) = chars.next() {
+                match ch {
+                    '\\' => {
+                        if let Some(next) = chars.next() {
+                            match next {
+                                'd' => result.push_str(&rng.gen_range(0..10).to_string()),
+                                'w' => {
+                                    let c = if rng.gen_bool(0.5) {
+                                        rng.gen_range(b'a'..=b'z') as char
+                                    } else {
+                                        rng.gen_range(b'A'..=b'Z') as char
+                                    };
+                                    result.push(c);
+                                }
+                                _ => result.push(next),
+                            }
+                        }
+                    }
+                    _ => result.push(ch),
+                }
+            }
+            
+            Ok(json!(result))
         } else {
             Ok(Value::Null)
         }

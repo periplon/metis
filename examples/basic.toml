@@ -1,0 +1,66 @@
+# Basic Metis Configuration Example
+
+[server]
+host = "127.0.0.1"
+port = 3000
+
+# Authentication disabled for development
+[auth]
+enabled = false
+
+# Simple static resource
+[[resources]]
+uri = "file:///hello.txt"
+name = "Hello World"
+description = "A simple static resource"
+mime_type = "text/plain"
+content = "Hello from Metis!"
+
+# Resource with template-based mock
+[[resources]]
+uri = "file:///user.json"
+name = "User Data"
+description = "Dynamic user data using templates"
+mime_type = "application/json"
+[resources.mock]
+strategy = "template"
+template = '''
+{
+  "id": {{ id | default(value=1) }},
+  "name": "{{ name | default(value="John Doe") }}",
+  "email": "{{ email | default(value="john@example.com") }}"
+}
+'''
+
+# Simple echo tool
+[[tools]]
+name = "echo"
+description = "Echoes back the input"
+[tools.input_schema]
+type = "object"
+properties = { message = { type = "string" } }
+[tools.mock]
+strategy = "template"
+template = "{{ message }}"
+
+# Random data tool
+[[tools]]
+name = "random_user"
+description = "Generates random user data"
+[tools.input_schema]
+type = "object"
+properties = {}
+[tools.mock]
+strategy = "random"
+faker_type = "name"
+
+# Simple prompt
+[[prompts]]
+name = "greeting"
+description = "A friendly greeting prompt"
+[[prompts.messages]]
+role = "system"
+content = "You are a friendly assistant."
+[[prompts.messages]]
+role = "user"
+content = "Say hello!"

@@ -20,7 +20,8 @@ async fn test_execute_tool_static() {
     
     let settings = Settings {
         server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
-        resources: vec![],
+        auth: Default::default(),
+            resources: vec![],
         tools: config,
         prompts: vec![],
     };
@@ -45,13 +46,15 @@ async fn test_execute_tool_mock() {
             template: Some("{\"result\": \"{{ name }}\"}".to_string()),
             faker_type: None,
             stateful: None,
-            script: None,
+            file: None,
+            pattern: None,            script: None,
         }),
     }];
     
     let settings = Settings {
         server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
-        resources: vec![],
+        auth: Default::default(),
+            resources: vec![],
         tools: config,
         prompts: vec![],
     };
@@ -76,7 +79,8 @@ async fn test_execute_tool_echo_fallback() {
     
     let settings = Settings {
         server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
-        resources: vec![],
+        auth: Default::default(),
+            resources: vec![],
         tools: config,
         prompts: vec![],
     };
@@ -93,7 +97,8 @@ async fn test_execute_tool_not_found() {
     let mock_strategy = Arc::new(MockStrategyHandler::new(Arc::new(StateManager::new())));
     let settings = Settings {
         server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
-        resources: vec![],
+        auth: Default::default(),
+            resources: vec![],
         tools: vec![],
         prompts: vec![],
     };
@@ -125,7 +130,8 @@ async fn test_list_tools() {
     
     let settings = Settings {
         server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
-        resources: vec![],
+        auth: Default::default(),
+            resources: vec![],
         tools: config,
         prompts: vec![],
     };

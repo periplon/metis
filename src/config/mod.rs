@@ -3,10 +3,13 @@ use serde::Deserialize;
 use serde_json::Value;
 
 pub mod watcher;
+pub mod validator;
 
 #[derive(Debug, Deserialize)]
 pub struct Settings {
     pub server: ServerSettings,
+    #[serde(default)]
+    pub auth: crate::domain::auth::AuthConfig,
     #[serde(default)]
     pub resources: Vec<ResourceConfig>,
     #[serde(default)]
@@ -48,6 +51,8 @@ pub enum MockStrategyType {
     Random,
     Stateful,
     Script,
+    File,
+    Pattern,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -57,6 +62,19 @@ pub struct MockConfig {
     pub faker_type: Option<String>,
     pub stateful: Option<StatefulConfig>,
     pub script: Option<String>,
+    pub file: Option<FileConfig>,
+    pub pattern: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct FileConfig {
+    pub path: String,
+    #[serde(default = "default_selection")]
+    pub selection: String, // "random", "sequential", "weighted"
+}
+
+fn default_selection() -> String {
+    "random".to_string()
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -111,6 +129,13 @@ impl Settings {
         let mut settings: Settings = s.try_deserialize()?;
 
         settings.load_external_configs(root)?;
+
+        // Validate configuration
+        validator::ConfigValidator::validate(&settings)
+            .map_err(|errors| {
+                let error_messages: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
+                anyhow::anyhow!("Configuration validation failed:\n{}", error_messages.join("\n"))
+            })?;
 
         Ok(settings)
     }

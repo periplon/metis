@@ -21,6 +21,9 @@ notify = "6.1"
 rhai = { version = "1.16", features = ["sync", "serde"] }
 serde_yaml = "0.9"
 glob = "0.3"
+prometheus = "0.13"
+jsonwebtoken = "9"
+tower-http = { version = "0.5", features = ["auth"] }
 
 [dev-dependencies]
 tower = { version = "0.4", features = ["util"] }

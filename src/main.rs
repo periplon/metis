@@ -56,6 +56,12 @@ async fn main() -> anyhow::Result<()> {
     let tool_handler = Arc::new(BasicToolHandler::new(settings.clone(), mock_strategy.clone()));
     let prompt_handler = Arc::new(InMemoryPromptHandler::new(settings.clone()));
     let logging_handler = Arc::new(LoggingHandler::new());
+    let health_handler = Arc::new(metis::adapters::health_handler::HealthHandler::new(settings.clone()));
+    
+    // Initialize metrics
+    let metrics_collector = Arc::new(metis::adapters::metrics_handler::MetricsCollector::new()?);
+    let metrics_handler = Arc::new(metis::adapters::metrics_handler::MetricsHandler::new(metrics_collector));
+    
     let protocol_handler = Arc::new(McpProtocolHandler::new(
         resource_handler,
         tool_handler,
@@ -64,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
     ));
 
     // Create application using the library function
-    let app = metis::create_app(protocol_handler);
+    let app = metis::create_app(protocol_handler, health_handler, metrics_handler);
 
     // Start server
     let addr: SocketAddr = format!("{}:{}", host, port).parse()?;
