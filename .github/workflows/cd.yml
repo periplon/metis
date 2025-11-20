@@ -25,9 +25,11 @@ jobs:
 
       - name: Install cocogitto
         run: |
-          curl -L https://github.com/cocogitto/cocogitto/releases/download/6.1.0/cocogitto-6.1.0-x86_64-unknown-linux-musl.tar.gz | tar xz
-          find . -name cog -type f -exec sudo mv {} /usr/local/bin/cog \;
+          mkdir -p /tmp/cocogitto
+          curl -L https://github.com/cocogitto/cocogitto/releases/download/6.1.0/cocogitto-6.1.0-x86_64-unknown-linux-musl.tar.gz | tar xz -C /tmp/cocogitto
+          find /tmp/cocogitto -name cog -type f -exec sudo mv {} /usr/local/bin/cog \;
           chmod +x /usr/local/bin/cog
+          rm -rf /tmp/cocogitto
           cog --version
 
       - name: Semver Bump
