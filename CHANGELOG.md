@@ -2,6 +2,14 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.1.1 - 2025-11-20
+#### Bug Fixes
+- Use array syntax for workspace.metadata.leptos configuration - (0819656) - Joan Marc Carbo Arnau
+#### Continuous Integration
+- Configure leptos workspace metadata and simplify build command - (0802dce) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.1.0 - 2025-11-20
 #### Continuous Integration
 - Clean up cocogitto installation artifacts to prevent untracked files error - (5dd4c78) - Joan Marc Carbo Arnau
