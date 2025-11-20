@@ -35,28 +35,33 @@ jobs:
       - name: Semver Bump
         id: cog_bump
         run: |
+          set -e
+
+          # Default to skipped in case of errors
+          echo "skipped=true" >> $GITHUB_OUTPUT
+
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          
+
           # Dry run first
-          NEXT_VERSION=$(cog bump --auto --dry-run)
-          
-          if [ -z "$NEXT_VERSION" ]; then
+          NEXT_VERSION=$(cog bump --auto --dry-run || echo "")
+
+          if [ -z "$NEXT_VERSION" ] || [ "$NEXT_VERSION" = "No conventional commits for your repository that required a bump" ]; then
             echo "No version bump needed."
-            echo "skipped=true" >> $GITHUB_OUTPUT
             exit 0
           fi
-          
+
+          # We're doing a bump, so mark as not skipped
           echo "skipped=false" >> $GITHUB_OUTPUT
-          
+
           # Perform bump
           cog bump --auto
-          
+
           # Get the new version
           NEW_TAG=$(git describe --tags --abbrev=0)
           VERSION=${NEW_TAG#v}
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          
+
           # Push changes (HEAD:main is crucial because we are in detached HEAD)
           git push origin HEAD:main
           git push origin $NEW_TAG
@@ -117,6 +122,7 @@ jobs:
   build-binaries:
     name: Build Binary
     needs: [version-and-tag, build-ui]
+    if: needs.version-and-tag.outputs.skipped != 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
