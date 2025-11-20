@@ -35,19 +35,9 @@ impl Default for AuthConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AuthContext {
     pub authenticated: bool,
     pub user_id: Option<String>,
     pub roles: Vec<String>,
-}
-
-impl Default for AuthContext {
-    fn default() -> Self {
-        Self {
-            authenticated: false,
-            user_id: None,
-            roles: vec![],
-        }
-    }
 }

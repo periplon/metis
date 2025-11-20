@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId};
 use metis::adapters::{mock_strategy::MockStrategyHandler, state_manager::StateManager};
-use metis::config::{MockConfig, MockStrategyType, FileConfig};
+use metis::config::{MockConfig, MockStrategyType};
 use serde_json::json;
 use std::sync::Arc;
 
@@ -14,8 +14,11 @@ fn benchmark_static_strategy(c: &mut Criterion) {
         faker_type: None,
         stateful: None,
         script: None,
+        script_lang: None,
         file: None,
         pattern: None,
+        llm: None,
+        database: None,
     };
 
     c.bench_function("static_strategy", |b| {
@@ -38,8 +41,11 @@ fn benchmark_template_strategy(c: &mut Criterion) {
         faker_type: None,
         stateful: None,
         script: None,
+        script_lang: None,
         file: None,
         pattern: None,
+        llm: None,
+        database: None,
     };
 
     c.bench_function("template_strategy", |b| {
@@ -63,8 +69,11 @@ fn benchmark_random_strategy(c: &mut Criterion) {
         faker_type: Some("name".to_string()),
         stateful: None,
         script: None,
+        script_lang: None,
         file: None,
         pattern: None,
+        llm: None,
+        database: None,
     };
 
     c.bench_function("random_strategy", |b| {
@@ -87,8 +96,11 @@ fn benchmark_pattern_strategy(c: &mut Criterion) {
         faker_type: None,
         stateful: None,
         script: None,
+        script_lang: None,
         file: None,
         pattern: Some("ID-\\d\\d\\d\\d-\\w\\w\\w\\w".to_string()),
+        llm: None,
+        database: None,
     };
 
     c.bench_function("pattern_strategy", |b| {
@@ -111,8 +123,11 @@ fn benchmark_script_strategy(c: &mut Criterion) {
         faker_type: None,
         stateful: None,
         script: Some("let x = 10; let y = 20; #{ \"sum\": x + y }".to_string()),
+        script_lang: None,
         file: None,
         pattern: None,
+        llm: None,
+        database: None,
     };
 
     c.bench_function("script_strategy", |b| {
@@ -137,8 +152,11 @@ fn benchmark_all_strategies(c: &mut Criterion) {
             faker_type: None,
             stateful: None,
             script: None,
+            script_lang: None,
             file: None,
             pattern: None,
+            llm: None,
+            database: None,
         }),
         ("template", MockConfig {
             strategy: MockStrategyType::Template,
@@ -146,8 +164,11 @@ fn benchmark_all_strategies(c: &mut Criterion) {
             faker_type: None,
             stateful: None,
             script: None,
+            script_lang: None,
             file: None,
             pattern: None,
+            llm: None,
+            database: None,
         }),
         ("random", MockConfig {
             strategy: MockStrategyType::Random,
@@ -155,8 +176,11 @@ fn benchmark_all_strategies(c: &mut Criterion) {
             faker_type: Some("name".to_string()),
             stateful: None,
             script: None,
+            script_lang: None,
             file: None,
             pattern: None,
+            llm: None,
+            database: None,
         }),
         ("pattern", MockConfig {
             strategy: MockStrategyType::Pattern,
@@ -164,8 +188,11 @@ fn benchmark_all_strategies(c: &mut Criterion) {
             faker_type: None,
             stateful: None,
             script: None,
+            script_lang: None,
             file: None,
             pattern: Some("ID-\\d\\d\\d".to_string()),
+            llm: None,
+            database: None,
         }),
     ];
 

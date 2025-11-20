@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use tracing::{info, warn};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct JsonRpcRequest {
     pub jsonrpc: String,
     pub method: String,

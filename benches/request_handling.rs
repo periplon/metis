@@ -25,6 +25,7 @@ fn create_test_app() -> (Arc<McpProtocolHandler>, Arc<HealthHandler>, Arc<Metric
         resources: vec![],
         tools: vec![],
         prompts: vec![],
+        rate_limit: None,
     }));
 
     let state_manager = Arc::new(StateManager::new());

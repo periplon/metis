@@ -488,6 +488,7 @@ impl MockStrategyHandler {
         anyhow::anyhow!("{}", msg)
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn json_to_python(&self, vm: &rustpython_vm::VirtualMachine, value: &Value) -> rustpython_vm::PyObjectRef {
         use rustpython_vm::convert::ToPyObject;
 

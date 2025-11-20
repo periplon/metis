@@ -21,6 +21,7 @@ pub struct Jwks {
 #[derive(Clone)]
 pub struct JwksClient {
     url: String,
+    #[allow(clippy::type_complexity)]
     cache: Arc<RwLock<Option<(HashMap<String, Jwk>, Instant)>>>,
     ttl: Duration,
 }
