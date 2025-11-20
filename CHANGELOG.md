@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.1.3 - 2025-11-20
+#### Bug Fixes
+- Ensure version-and-tag outputs are set correctly when bump is skipped - (53cdbe1) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.1.2 - 2025-11-20
 #### Bug Fixes
 - Skip docker and release jobs when version bump is skipped - (da29c75) - Joan Marc Carbo Arnau
