@@ -318,20 +318,20 @@ Metis implements the following MCP protocol methods:
     - ✅ Stateful
     - ✅ Database (SQLx)
     - ✅ LLM (OpenAI/Anthropic)
-    - ⚠️ Script (Rhai implemented; Python/Lua/JS experimental)
+    - ⚠️ Script (Rhai implemented; Python/Lua/JS experimental & currently broken)
     - 🚧 File (Planned)
     - 🚧 Pattern (Planned)
 - ✅ Resource, Tool, and Prompt handlers
 - ✅ TOML-based configuration with Hot Reload
 - ✅ Health Checks & Prometheus Metrics
 - ✅ Rate Limiting
-- ✅ Basic Web UI
-- ✅ Comprehensive Test Coverage
+- ✅ Basic Web UI (Embedded)
+- ⚠️ Authentication (Implemented but not integrated)
 
 ### Planned Features
 - [ ] Fix compilation issues in Script strategy (Python integration)
 - [ ] Implement File and Pattern strategies
-- [ ] Authentication and authorization integration
+- [ ] Integrate Authentication middleware
 - [ ] Advanced Workflow engine
 - [ ] Enhanced Web UI for configuration management
 - [ ] Performance optimizations (>10k req/s)
