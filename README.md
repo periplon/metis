@@ -30,7 +30,7 @@
 
 ### Project Structure
 
-```
+```text
 metis/
 ├── src/
 │   ├── adapters/           # Infrastructure layer (Ports & Adapters)
