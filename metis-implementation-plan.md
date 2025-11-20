@@ -2,22 +2,30 @@
 
 ## Executive Summary
 
-Metis is a high-performance, fully configurable MCP (Model Context Protocol) mock server written in Rust. It provides comprehensive mocking capabilities for resources, tools, and prompts with support for multiple authentication methods, various data generation strategies, and live configuration reloading.
+**Status**: 🟡 Under Development (v0.1.0-dev)
+**Last Updated**: November 2025
 
-**Project Timeline**: 36 weeks (9 months) from start to full v1.3 release
-**Checkpoints**: Week 0 (validation), Week 11 (Phase 3 review), Week 17 (v1.0 decision point)
-**Incremental Releases**: v1.0 (Week 17), v1.1 (Week 21), v1.2 (Week 31), v1.3 (Week 35)
+Metis is a high-performance, fully configurable MCP (Model Context Protocol) mock server written in Rust. It allows developers to simulate MCP resources, tools, and prompts using various dynamic strategies without connecting to live production services.
 
-**Key Phases**:
-- **Week 0**: Technology validation and risk mitigation
-- **Weeks 1-17**: Core platform (v1.0) - MCP protocol, mock strategies, auth, config, observability
-- **Weeks 18-35**: Advanced features (v1.1-v1.3) - Workflows, multi-language scripting, Web UI, comprehensive testing
+**Current Capabilities (MVP)**:
+- **Core Protocol**: Full implementation of MCP JSON-RPC 2.0 protocol.
+- **Mock Strategies**: 
+  - Production Ready: `Static`, `Template` (Tera), `Random` (Faker), `Stateful`, `Database` (SQLx), `LLM` (OpenAI/Anthropic).
+  - Experimental: `Script` (Rhai works; Python/JS/Lua integration is currently broken).
+- **Configuration**: Hot-reloading TOML configuration.
+- **Observability**: Prometheus metrics and health check endpoints.
+- **Web UI**: Basic embedded UI for serving static assets.
 
-**Success Metrics**:
-- >10k requests/second performance
-- >85% test coverage
-- 500+ organizations using in first year
-- Complete documentation with tutorials
+**Pending / In-Progress**:
+- **Mock Strategies**: `File` and `Pattern` strategies are planned but not implemented.
+- **Authentication**: Middleware exists but is not yet fully integrated into the application pipeline.
+- **Workflow Engine**: Planned for future releases.
+- **Advanced Web UI**: Full Leptos-based configuration UI is planned.
+
+**Project Timeline**:
+- **Current**: Phase 1 (Core Foundation & Basic Strategies)
+- **Next**: Phase 2 (Scripting fixes, File/Pattern strategies, Auth integration)
+
 
 ## Table of Contents
 
