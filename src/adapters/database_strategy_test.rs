@@ -67,6 +67,7 @@ async fn test_generate_database_sqlite() {
         file: None,
         pattern: None,
         script: None,
+        script_lang: None,
         llm: None,
         database: Some(DatabaseConfig {
             url: db_url.clone(),

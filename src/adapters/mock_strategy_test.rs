@@ -192,3 +192,32 @@ async fn test_generate_script_js() {
     let value = result.unwrap();
     assert_eq!(value, "Hello, JS!");
 }
+
+#[tokio::test]
+async fn test_generate_script_python() {
+    use crate::config::ScriptLang;
+    let handler = MockStrategyHandler::new(Arc::new(StateManager::new()));
+    let config = MockConfig {
+        strategy: MockStrategyType::Script,
+        template: None,
+        faker_type: None,
+        stateful: None,
+        file: None,
+        pattern: None,
+        script: Some(r#"
+output = "Hello, " + input["name"] + "!"
+        "#.to_string()),
+        script_lang: Some(ScriptLang::Python),
+        llm: None,
+        database: None,
+    };
+    let args = json!({ "name": "Python" });
+
+    let result = handler.generate(&config, Some(&args)).await;
+    if let Err(e) = &result {
+        println!("Error: {}", e);
+    }
+    assert!(result.is_ok());
+    let value = result.unwrap();
+    assert_eq!(value, "Hello, Python!");
+}

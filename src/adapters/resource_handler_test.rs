@@ -48,8 +48,9 @@ use tokio::sync::RwLock;
             stateful: None,
             file: None,
             pattern: None,
-            llm: None,
             script: None,
+            script_lang: None,
+            llm: None,
             database: None,
         }),
     }];

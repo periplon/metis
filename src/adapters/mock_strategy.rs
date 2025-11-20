@@ -7,6 +7,8 @@ use fake::faker::name::en::{Name, Title};
 use fake::Fake;
 use mlua::LuaSerdeExt;
 use rhai::{Engine, Scope};
+use rustpython_vm::convert::IntoObject;
+use rustpython_vm::AsObject;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -405,6 +407,7 @@ impl MockStrategyHandler {
                 },
                 ScriptLang::Lua => self.generate_script_lua(script, args),
                 ScriptLang::Js => self.generate_script_js(script, args),
+                ScriptLang::Python => self.generate_script_python(script, args),
             }
         } else {
             Ok(Value::Null)
@@ -444,6 +447,118 @@ impl MockStrategyHandler {
             .map_err(|e| anyhow::anyhow!("JS result conversion error: {}", e))?;
             
         Ok(json_val)
+    }
+
+    fn generate_script_python(&self, script: &str, args: Option<&Value>) -> Result<Value> {
+        use rustpython_vm::Interpreter;
+        use rustpython_vm::compiler::Mode;
+        
+        let interpreter = Interpreter::without_stdlib(Default::default());
+        
+        interpreter.enter(|vm| {
+            let scope = vm.new_scope_with_builtins();
+            
+            if let Some(args_val) = args {
+                // Plan B: Construct PyObject recursively.
+                // This is safer and cleaner.
+                let py_val = self.json_to_python(vm, args_val);
+                scope.globals.set_item("input", py_val, vm).map_err(|e| self.map_py_err(vm, e))?;
+            }
+            
+            let code_obj = vm.compile(script, Mode::Exec, "<embedded>".to_owned())
+                .map_err(|err| self.map_py_err(vm, vm.new_syntax_error(&err, Some(script))))?;
+                
+            let _ = vm.run_code_obj(code_obj, scope.clone()).map_err(|e| self.map_py_err(vm, e))?;
+            
+            if let Ok(output) = scope.globals.get_item("output", vm) {
+                self.python_to_json(vm, output)
+            } else {
+                Ok(Value::Null)
+            }
+        }).map_err(|e| anyhow::anyhow!("Python error: {}", e))
+    }
+
+    fn map_py_err(&self, vm: &rustpython_vm::VirtualMachine, err: rustpython_vm::PyRef<rustpython_vm::builtins::PyBaseException>) -> anyhow::Error {
+        let mut msg = String::new();
+        if let Ok(s) = err.into_object().str(vm) {
+            msg.push_str(s.as_str());
+        } else {
+            msg.push_str("Unknown python error");
+        }
+        anyhow::anyhow!("{}", msg)
+    }
+
+    fn json_to_python(&self, vm: &rustpython_vm::VirtualMachine, value: &Value) -> rustpython_vm::PyObjectRef {
+        use rustpython_vm::convert::ToPyObject;
+
+        match value {
+            Value::Null => vm.ctx.none(),
+            Value::Bool(b) => b.to_pyobject(vm),
+            Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    vm.ctx.new_int(i).into()
+                } else if let Some(f) = n.as_f64() {
+                    vm.ctx.new_float(f).into()
+                } else {
+                    vm.ctx.none()
+                }
+            }
+            Value::String(s) => vm.ctx.new_str(s.as_str()).into(),
+            Value::Array(arr) => {
+                let elements: Vec<_> = arr.iter().map(|v| self.json_to_python(vm, v)).collect();
+                vm.ctx.new_list(elements).into()
+            }
+            Value::Object(obj) => {
+                let dict = vm.ctx.new_dict();
+                for (k, v) in obj {
+                    let py_k = vm.ctx.new_str(k.as_str());
+                    let py_v = self.json_to_python(vm, v);
+                    let _ = dict.set_item(py_k.as_object(), py_v, vm);
+                }
+                dict.into()
+            }
+        }
+    }
+
+    fn python_to_json(&self, vm: &rustpython_vm::VirtualMachine, obj: rustpython_vm::PyObjectRef) -> Result<Value> {
+        use rustpython_vm::builtins::{PyList, PyStr, PyInt, PyFloat, PyDict};
+        // Basic conversion
+        if vm.is_none(&obj) {
+            Ok(Value::Null)
+        } else if let Some(s) = obj.payload::<PyStr>() {
+            Ok(Value::String(s.as_str().to_string()))
+        } else if obj.class().is(vm.ctx.types.bool_type) {
+            Ok(Value::Bool(obj.try_to_bool(vm).unwrap_or(false)))
+        } else if let Some(i) = obj.payload::<PyInt>() {
+            match i.try_to_primitive::<i64>(vm) {
+                Ok(val) => Ok(json!(val)),
+                Err(_) => Ok(Value::Null) 
+            }
+        } else if let Some(f) = obj.payload::<PyFloat>() {
+            Ok(json!(f.to_f64()))
+        } else if let Some(l) = obj.payload::<PyList>() {
+            let borrowed = l.borrow_vec();
+            let mut arr = Vec::new();
+            for item in borrowed.iter() {
+                arr.push(self.python_to_json(vm, item.clone())?);
+            }
+            Ok(Value::Array(arr))
+        } else if let Some(d) = obj.payload::<PyDict>() {
+            let mut map = serde_json::Map::new();
+            for (k, v) in d {
+                let k_str = if let Some(s) = k.payload::<PyStr>() {
+                    s.as_str().to_string()
+                } else {
+                    continue;
+                };
+                let v_json = self.python_to_json(vm, v)?;
+                map.insert(k_str, v_json);
+            }
+            Ok(Value::Object(map))
+        } else {
+            let s = obj.str(vm).map_err(|e| self.map_py_err(vm, e))?;
+            Ok(Value::String(s.as_str().to_string()))
+        }
     }
 
     async fn generate_file(&self, config: &MockConfig) -> Result<Value> {

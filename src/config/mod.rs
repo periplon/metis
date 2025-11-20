@@ -89,6 +89,7 @@ pub enum ScriptLang {
     Rhai,
     Lua,
     Js,
+    Python,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
