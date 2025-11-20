@@ -33,3 +33,8 @@ Cargo.lock
 
 # OS
 Thumbs.db
+
+
+# Added by cargo
+
+/target
