@@ -161,6 +161,7 @@ jobs:
   docker:
     name: Docker Build & Push
     needs: [version-and-tag, build-ui]
+    if: needs.version-and-tag.outputs.skipped != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -195,6 +196,7 @@ jobs:
   release:
     name: Release
     needs: [version-and-tag, build-binaries]
+    if: needs.version-and-tag.outputs.skipped != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
