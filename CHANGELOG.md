@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.1.2 - 2025-11-20
+#### Bug Fixes
+- Skip docker and release jobs when version bump is skipped - (da29c75) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.1.1 - 2025-11-20
 #### Bug Fixes
 - Use array syntax for workspace.metadata.leptos configuration - (0819656) - Joan Marc Carbo Arnau
