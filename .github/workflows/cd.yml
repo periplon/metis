@@ -26,8 +26,9 @@ jobs:
       - name: Install cocogitto
         run: |
           curl -L https://github.com/cocogitto/cocogitto/releases/download/6.1.0/cocogitto-6.1.0-x86_64-unknown-linux-musl.tar.gz | tar xz
-          sudo mv cocogitto-6.1.0-x86_64-unknown-linux-musl/cog /usr/local/bin
-          rm -rf cocogitto-6.1.0-x86_64-unknown-linux-musl
+          find . -name cog -type f -exec sudo mv {} /usr/local/bin/cog \;
+          chmod +x /usr/local/bin/cog
+          cog --version
 
       - name: Semver Bump
         id: cog_bump
@@ -35,10 +36,7 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Check if we should bump
-          # Note: cog check is strict, skipping for now to just do bump
-          
-          # Dry run first to see if there is a version change
+          # Dry run first
           NEXT_VERSION=$(cog bump --auto --dry-run)
           
           if [ -z "$NEXT_VERSION" ]; then
@@ -49,16 +47,16 @@ jobs:
           
           echo "skipped=false" >> $GITHUB_OUTPUT
           
-          # Perform bump (updates Cargo.toml, commits, tags)
+          # Perform bump
           cog bump --auto
           
-          # Get the new version (git describe --tags --abbrev=0)
+          # Get the new version
           NEW_TAG=$(git describe --tags --abbrev=0)
           VERSION=${NEW_TAG#v}
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           
-          # Push changes
-          git push origin main
+          # Push changes (HEAD:main is crucial because we are in detached HEAD)
+          git push origin HEAD:main
           git push origin $NEW_TAG
 
   build-ui:
@@ -74,30 +72,32 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
       - name: Install cargo-leptos
-        run: cargo install cargo-leptos
+        run: cargo binstall cargo-leptos -y
 
       - name: Build UI
         run: |
           cd ui
           cargo leptos build --release
       
-      # cargo-leptos builds to target/site by default usually, but check docs.
-      # metis/README.md says just "ui-build".
-      # Actually metis uses `rust_embed` on `ui/dist`.
-      # We should check where cargo-leptos puts files. Usually `target/site`.
-      # We might need to move it to `ui/dist` or configure `rust_embed` path.
-      # BUT, the existing code says `#[folder = "ui/dist"]`.
-      # So we must ensure files are in `ui/dist`.
-      
       - name: Prepare UI dist
         run: |
           mkdir -p ui/dist
-          # Assuming cargo-leptos outputs to target/site (default)
+          # Check possible output locations
           if [ -d "target/site" ]; then
             cp -r target/site/* ui/dist/
           elif [ -d "ui/target/site" ]; then
-             cp -r ui/target/site/* ui/dist/
+            cp -r ui/target/site/* ui/dist/
+          elif [ -d "../target/site" ]; then
+            cp -r ../target/site/* ui/dist/
+          else
+             echo "Could not find target/site directory. Listing dirs:"
+             ls -R .
+             ls -R ..
+             exit 1
           fi
           # Verify dist
           ls -R ui/dist
