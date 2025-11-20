@@ -36,19 +36,275 @@ impl MockStrategyHandler {
         }
     }
 
-    pub async fn generate(&self, config: &MockConfig, args: Option<&Value>) -> Result<Value> {
+    pub async fn generate(
+        &self,
+        config: &MockConfig,
+        args: Option<&serde_json::Value>,
+    ) -> Result<Value> {
         match config.strategy {
-            MockStrategyType::Static => Ok(json!(null)), // Handled by static content/response
-            MockStrategyType::Template => self.generate_template(config, args),
-            MockStrategyType::Random => self.generate_random(config),
+            MockStrategyType::Static => Ok(json!(null)),
+            MockStrategyType::Template => self.generate_template(config, args).await,
+            MockStrategyType::Random => self.generate_random(config).await,
             MockStrategyType::Stateful => self.generate_stateful(config, args).await,
             MockStrategyType::Script => self.generate_script(config, args),
             MockStrategyType::File => self.generate_file(config).await,
             MockStrategyType::Pattern => self.generate_pattern(config),
+            MockStrategyType::LLM => self.generate_llm(config, args).await,
+            MockStrategyType::Database => self.generate_database(config, args).await,
         }
     }
 
-    fn generate_template(&self, config: &MockConfig, args: Option<&Value>) -> Result<Value> {
+    async fn generate_database(
+        &self,
+        config: &MockConfig,
+        args: Option<&serde_json::Value>,
+    ) -> Result<Value> {
+        use sqlx::any::AnyPoolOptions;
+        use sqlx::Row;
+        use sqlx::Column;
+        use sqlx::TypeInfo;
+
+        // Ensure drivers are installed (safe to call multiple times)
+        sqlx::any::install_default_drivers();
+
+        let db_config = config.database.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Database config not provided"))?;
+
+        // Create connection pool (in a real app, we should cache this)
+        // For now, we create a new pool for each request which is not optimal but functional
+        let pool = AnyPoolOptions::new()
+            .max_connections(1)
+            .connect(&db_config.url)
+            .await
+            .map_err(|e| anyhow::anyhow!("Database connection error: {}", e))?;
+
+        let mut query_builder = sqlx::query(&db_config.query);
+
+        // Bind parameters
+        if let Some(args_val) = args {
+            for param_name in &db_config.params {
+                if let Some(val) = args_val.get(param_name) {
+                    match val {
+                        Value::String(s) => query_builder = query_builder.bind(s),
+                        Value::Number(n) => {
+                            if let Some(i) = n.as_i64() {
+                                query_builder = query_builder.bind(i);
+                            } else if let Some(f) = n.as_f64() {
+                                query_builder = query_builder.bind(f);
+                            }
+                        }
+                        Value::Bool(b) => query_builder = query_builder.bind(b),
+                        _ => query_builder = query_builder.bind(val.to_string()),
+                    }
+                } else {
+                    // If param missing, bind null or error? Let's bind null for now
+                    query_builder = query_builder.bind(Option::<String>::None);
+                }
+            }
+        }
+
+        let rows = query_builder
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| anyhow::anyhow!("Database query error: {}", e))?;
+
+        // Convert rows to JSON
+        let mut results = Vec::new();
+        for row in rows {
+            let mut row_json = serde_json::Map::new();
+            for col in row.columns() {
+                let col_name = col.name();
+                // This is a simplification. Handling all SQL types generically is complex.
+                // We try to get as string for now, or handle common types if possible.
+                // sqlx::AnyRow is tricky for generic value extraction without knowing types.
+                // A robust implementation would need more complex type handling.
+                
+                // Try to get as string, if fails, try other types or skip
+                // Note: sqlx::Any doesn't easily support "get as any" without type info.
+                // For this MVP, we'll try to get everything as string.
+                let val_str: Option<String> = row.try_get(col_name).ok();
+                if let Some(s) = val_str {
+                    row_json.insert(col_name.to_string(), Value::String(s));
+                } else {
+                    // Try integer
+                    let val_int: Option<i64> = row.try_get(col_name).ok();
+                    if let Some(i) = val_int {
+                        row_json.insert(col_name.to_string(), json!(i));
+                    } else {
+                         // Try bool
+                        let val_bool: Option<bool> = row.try_get(col_name).ok();
+                        if let Some(b) = val_bool {
+                            row_json.insert(col_name.to_string(), json!(b));
+                        } else {
+                             row_json.insert(col_name.to_string(), Value::Null);
+                        }
+                    }
+                }
+            }
+            results.push(Value::Object(row_json));
+        }
+
+        // If single result expected (implied by usage), return first? 
+        // Or always return array? Let's return array for now, user can use template to extract.
+        Ok(json!(results))
+    }
+
+    async fn generate_llm(
+        &self,
+        config: &MockConfig,
+        args: Option<&serde_json::Value>,
+    ) -> Result<Value> {
+        let llm_config = config.llm.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("LLM config not provided"))?;
+
+        // Get API key from environment variable
+        let api_key = if let Some(env_var) = &llm_config.api_key_env {
+            std::env::var(env_var)
+                .map_err(|_| anyhow::anyhow!("API key environment variable {} not set", env_var))?
+        } else {
+            return Err(anyhow::anyhow!("No API key configuration provided"));
+        };
+
+        // Extract prompt from args
+        let prompt = if let Some(args) = args {
+            args.get("prompt")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Hello")
+                .to_string()
+        } else {
+            "Hello".to_string()
+        };
+
+        match llm_config.provider {
+            crate::config::LLMProvider::OpenAI => {
+                let result = self.generate_openai(llm_config, &api_key, &prompt).await?;
+                Ok(json!(result))
+            }
+            crate::config::LLMProvider::Anthropic => {
+                let result = self.generate_anthropic(llm_config, &api_key, &prompt).await?;
+                Ok(json!(result))
+            }
+        }
+    }
+
+    async fn generate_openai(
+        &self,
+        config: &crate::config::LLMConfig,
+        api_key: &str,
+        prompt: &str,
+    ) -> Result<String> {
+        use async_openai::{Client, config::OpenAIConfig, types::*};
+
+        let openai_config = OpenAIConfig::new().with_api_key(api_key);
+        let client = Client::with_config(openai_config);
+
+        let mut messages = vec![];
+
+        // Add system message if provided
+        if let Some(system_prompt) = &config.system_prompt {
+            messages.push(ChatCompletionRequestMessage::System(
+                ChatCompletionRequestSystemMessageArgs::default()
+                    .content(system_prompt.clone())
+                    .build()?
+            ));
+        }
+
+        // Add user message
+        messages.push(ChatCompletionRequestMessage::User(
+            ChatCompletionRequestUserMessageArgs::default()
+                .content(prompt.to_string())
+                .build()?
+        ));
+
+        let mut request_builder = CreateChatCompletionRequestArgs::default();
+        request_builder
+            .model(&config.model)
+            .messages(messages);
+
+        if let Some(temp) = config.temperature {
+            request_builder.temperature(temp);
+        }
+
+        if let Some(max_tokens) = config.max_tokens {
+            request_builder.max_tokens(max_tokens as u16);
+        }
+
+        let request = request_builder.build()?;
+
+        let response = client
+            .chat()
+            .create(request)
+            .await
+            .map_err(|e| anyhow::anyhow!("OpenAI API error: {}", e))?;
+
+        let content = response
+            .choices
+            .first()
+            .and_then(|choice| choice.message.content.clone())
+            .ok_or_else(|| anyhow::anyhow!("No response from OpenAI"))?;
+
+        Ok(content)
+    }
+
+    async fn generate_anthropic(
+        &self,
+        config: &crate::config::LLMConfig,
+        api_key: &str,
+        prompt: &str,
+    ) -> Result<String> {
+        use serde_json::json;
+
+        let client = reqwest::Client::new();
+
+        let mut request_body = json!({
+            "model": config.model,
+            "max_tokens": config.max_tokens.unwrap_or(1000),
+            "messages": [{
+                "role": "user",
+                "content": prompt
+            }]
+        });
+
+        if let Some(system_prompt) = &config.system_prompt {
+            request_body["system"] = json!(system_prompt);
+        }
+
+        if let Some(temp) = config.temperature {
+            request_body["temperature"] = json!(temp);
+        }
+
+        let response = client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("Anthropic API error: {}", e))?;
+
+        if !response.status().is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Anthropic API error: {}", error_text));
+        }
+
+        let response_json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to parse Anthropic response: {}", e))?;
+
+        let content = response_json
+            .get("content")
+            .and_then(|c| c.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|item| item.get("text"))
+            .and_then(|text| text.as_str())
+            .ok_or_else(|| anyhow::anyhow!("No response from Anthropic"))?;
+
+        Ok(content.to_string())
+    }
+
+    async fn generate_template(&self, config: &MockConfig, args: Option<&Value>) -> Result<Value> {
         if let Some(template_str) = &config.template {
             let mut context = Context::new();
             if let Some(args_val) = args {
@@ -73,7 +329,7 @@ impl MockStrategyHandler {
         }
     }
 
-    fn generate_random(&self, config: &MockConfig) -> Result<Value> {
+    async fn generate_random(&self, config: &MockConfig) -> Result<Value> {
         if let Some(faker_type) = &config.faker_type {
             match faker_type.as_str() {
                 "name" => Ok(json!(Name().fake::<String>())),

@@ -20,8 +20,11 @@ async fn test_generate_template() {
         template: Some("Hello, {{ name }}!".to_string()),
         faker_type: None,
         stateful: None,
-            file: None,
-            pattern: None,        script: None,
+        file: None,
+        pattern: None,
+        script: None,
+        llm: None,
+        database: None,
     };
     let args = json!({ "name": "World" });
 
@@ -39,8 +42,11 @@ async fn test_generate_template_missing_args() {
         template: Some("Hello, {{ name | default(value=\"\") }}!".to_string()),
         faker_type: None,
         stateful: None,
-            file: None,
-            pattern: None,        script: None,
+        file: None,
+        pattern: None,
+        script: None,
+        llm: None,
+        database: None,
     };
     
     // Tera renders missing variables as empty string by default or errors depending on config. 
@@ -60,8 +66,11 @@ async fn test_generate_random() {
         template: None,
         faker_type: Some("name".to_string()),
         stateful: None,
-            file: None,
-            pattern: None,        script: None,
+        file: None,
+        pattern: None,
+        script: None,
+        llm: None,
+        database: None,
     };
 
     let result = handler.generate(&config, None).await;
@@ -80,8 +89,11 @@ async fn test_generate_random_unknown_type() {
         template: None,
         faker_type: Some("unknown_type".to_string()),
         stateful: None,
-            file: None,
-            pattern: None,        script: None,
+        file: None,
+        pattern: None,
+        script: None,
+        llm: None,
+        database: None,
     };
 
     let result = handler.generate(&config, None).await;
@@ -101,11 +113,14 @@ async fn test_generate_script() {
         template: None,
         faker_type: None,
         stateful: None,
-            file: None,
-            pattern: None,        script: Some(r#"
+        file: None,
+        pattern: None,
+        script: Some(r#"
             let name = input.name;
             "Hello, " + name + "!"
         "#.to_string()),
+        llm: None,
+        database: None,
     };
     let args = json!({ "name": "Script" });
 

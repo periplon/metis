@@ -17,6 +17,8 @@ pub struct AuthConfig {
     pub api_keys: Option<Vec<String>>,
     pub jwt_secret: Option<String>,
     pub jwt_algorithm: Option<String>,
+    pub basic_users: Option<std::collections::HashMap<String, String>>,
+    pub jwks_url: Option<String>,
 }
 
 impl Default for AuthConfig {
@@ -27,6 +29,8 @@ impl Default for AuthConfig {
             api_keys: None,
             jwt_secret: None,
             jwt_algorithm: Some("HS256".to_string()),
+            basic_users: None,
+            jwks_url: None,
         }
     }
 }

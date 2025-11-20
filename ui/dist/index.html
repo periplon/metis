@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Metis Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/style-45911c133a8cabc2.css" integrity="sha384-e/Q7/Dk8oZlSjr2+ymqTaF/Mti4BLtL60sBEqeX5XIHy3P3QcAPkk+eXG80exETG"/>
+<link rel="modulepreload" href="/metis-ui-e3d7c1eef8fa3688.js" crossorigin="anonymous" integrity="sha384-ar11yAOhDXerPDNjfl8Avx8F3L+g0eK/n8TY06j2PjmBRhT8fGPin8LWp1JohQ6q"><link rel="preload" href="/metis-ui-e3d7c1eef8fa3688_bg.wasm" crossorigin="anonymous" integrity="sha384-kn/TiknfdMppQnv+BkzdEpdnQ8KAbFI+mUuZ4dnKz5mXFI819SBAL91KQVgrOguK" as="fetch" type="application/wasm"></head>
+
+<body>
+<script type="module">
+import init, * as bindings from '/metis-ui-e3d7c1eef8fa3688.js';
+const wasm = await init({ module_or_path: '/metis-ui-e3d7c1eef8fa3688_bg.wasm' });
+
+
+window.wasmBindings = bindings;
+
+
+dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
+
+</script></body>
+
+</html>

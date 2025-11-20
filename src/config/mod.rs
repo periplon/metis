@@ -1,6 +1,8 @@
 use config::{Config, File};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
+use std::path::PathBuf;
 
 pub mod watcher;
 pub mod validator;
@@ -43,7 +45,7 @@ pub struct ToolConfig {
     pub mock: Option<MockConfig>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MockStrategyType {
     Static,
@@ -53,9 +55,13 @@ pub enum MockStrategyType {
     Script,
     File,
     Pattern,
+    #[serde(rename = "llm")]
+    LLM,
+    #[serde(rename = "database")]
+    Database,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MockConfig {
     pub strategy: MockStrategyType,
     pub template: Option<String>,
@@ -64,9 +70,38 @@ pub struct MockConfig {
     pub script: Option<String>,
     pub file: Option<FileConfig>,
     pub pattern: Option<String>,
+    pub llm: Option<LLMConfig>,
+    pub database: Option<DatabaseConfig>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DatabaseConfig {
+    pub url: String,
+    pub query: String,
+    pub params: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LLMConfig {
+    pub provider: LLMProvider,
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+    pub model: String,
+    pub system_prompt: Option<String>,
+    pub temperature: Option<f32>,
+    pub max_tokens: Option<u32>,
+    #[serde(default)]
+    pub stream: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LLMProvider {
+    OpenAI,
+    Anthropic,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct FileConfig {
     pub path: String,
     #[serde(default = "default_selection")]
@@ -77,14 +112,14 @@ fn default_selection() -> String {
     "random".to_string()
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct StatefulConfig {
     pub state_key: String,
     pub operation: StateOperation,
     pub template: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StateOperation {
     Get,

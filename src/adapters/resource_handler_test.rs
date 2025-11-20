@@ -48,7 +48,10 @@ async fn test_get_resource_mock() {
             faker_type: None,
             stateful: None,
             file: None,
-            pattern: None,            script: None,
+            pattern: None,
+            llm: None,
+            script: None,
+            database: None,
         }),
     }];
     

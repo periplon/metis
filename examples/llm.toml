@@ -1,0 +1,56 @@
+[server]
+host = "0.0.0.0"
+port = 3000
+
+# LLM-powered code reviewer
+[[tools]]
+name = "ai_code_reviewer"
+description = "AI-powered code review using GPT-4"
+[tools.input_schema]
+type = "object"
+properties = { code = { type = "string" }, language = { type = "string" } }
+
+[tools.mock]
+strategy = "llm"
+[tools.mock.llm]
+provider = "openai"
+model = "gpt-4"
+system_prompt = "You are an expert code reviewer. Provide constructive feedback on code quality, best practices, and potential improvements."
+temperature = 0.3
+max_tokens = 2000
+api_key_env = "OPENAI_API_KEY"
+
+# LLM-powered text summarizer
+[[tools]]
+name = "ai_summarizer"
+description = "Summarize text using Claude"
+[tools.input_schema]
+type = "object"
+properties = { text = { type = "string" } }
+
+[tools.mock]
+strategy = "llm"
+[tools.mock.llm]
+provider = "anthropic"
+model = "claude-3-sonnet-20240229"
+system_prompt = "You are a helpful assistant that summarizes text concisely."
+temperature = 0.5
+max_tokens = 500
+api_key_env = "ANTHROPIC_API_KEY"
+
+# LLM-powered chatbot
+[[tools]]
+name = "ai_assistant"
+description = "General purpose AI assistant"
+[tools.input_schema]
+type = "object"
+properties = { prompt = { type = "string" } }
+
+[tools.mock]
+strategy = "llm"
+[tools.mock.llm]
+provider = "openai"
+model = "gpt-3.5-turbo"
+temperature = 0.7
+max_tokens = 1000
+api_key_env = "OPENAI_API_KEY"

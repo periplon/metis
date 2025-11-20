@@ -47,7 +47,10 @@ async fn test_execute_tool_mock() {
             faker_type: None,
             stateful: None,
             file: None,
-            pattern: None,            script: None,
+            pattern: None,
+            script: None,
+            llm: None,
+            database: None,
         }),
     }];
     

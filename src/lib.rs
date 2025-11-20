@@ -100,6 +100,14 @@ pub fn create_app(
         }))
         // MCP protocol endpoint
         .route("/mcp", post(handle_mcp))
+        // UI endpoint (catch-all for SPA)
+        .fallback(crate::adapters::ui_handler::UIHandler::serve)
+        .layer(
+            tower_http::cors::CorsLayer::new()
+                .allow_origin(tower_http::cors::Any)
+                .allow_methods(tower_http::cors::Any)
+                .allow_headers(tower_http::cors::Any),
+        )
         .with_state(protocol_handler)
 }
 

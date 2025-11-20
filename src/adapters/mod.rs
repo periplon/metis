@@ -9,16 +9,16 @@ pub mod auth_middleware;
 pub mod sampling_handler;
 pub mod state_manager;
 pub mod tool_handler;
+pub mod jwks;
+pub mod ui_handler;
 
 #[cfg(test)]
 mod mock_strategy_test;
 #[cfg(test)]
-mod resource_handler_test;
-#[cfg(test)]
 mod tool_handler_test;
 #[cfg(test)]
+mod resource_handler_test;
+#[cfg(test)]
+mod database_strategy_test;
+#[cfg(test)]
 mod mcp_protocol_handler_test;
-
-
-
-
