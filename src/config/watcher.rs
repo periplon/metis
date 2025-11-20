@@ -6,7 +6,7 @@ use std::time::Duration;
 use tracing::{error, info};
 
 pub struct ConfigWatcher {
-    watcher: RecommendedWatcher,
+    _watcher: RecommendedWatcher,
 }
 
 impl ConfigWatcher {
@@ -49,6 +49,6 @@ impl ConfigWatcher {
             }
         });
 
-        Ok(Self { watcher })
+        Ok(Self { _watcher: watcher })
     }
 }

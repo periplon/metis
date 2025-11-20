@@ -24,6 +24,7 @@ async fn test_execute_tool_static() {
             resources: vec![],
         tools: config,
         prompts: vec![],
+        rate_limit: None,
     };
     let handler = BasicToolHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -49,6 +50,7 @@ async fn test_execute_tool_mock() {
             file: None,
             pattern: None,
             script: None,
+            script_lang: None,
             llm: None,
             database: None,
         }),
@@ -60,6 +62,7 @@ async fn test_execute_tool_mock() {
             resources: vec![],
         tools: config,
         prompts: vec![],
+        rate_limit: None,
     };
     let handler = BasicToolHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -86,6 +89,7 @@ async fn test_execute_tool_echo_fallback() {
             resources: vec![],
         tools: config,
         prompts: vec![],
+        rate_limit: None,
     };
     let handler = BasicToolHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -104,6 +108,7 @@ async fn test_execute_tool_not_found() {
             resources: vec![],
         tools: vec![],
         prompts: vec![],
+        rate_limit: None,
     };
     let handler = BasicToolHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -137,6 +142,7 @@ async fn test_list_tools() {
             resources: vec![],
         tools: config,
         prompts: vec![],
+        rate_limit: None,
     };
     let handler = BasicToolHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 

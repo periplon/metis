@@ -52,6 +52,31 @@ metis/
 └── Cargo.toml
 ```
 
+## ✨ Key Features
+
+### 🛠️ 9 Powerful Mock Strategies
+- **Static**: Return fixed null/empty responses
+- **Template**: Dynamic responses using Tera templates
+- **Random**: Generate realistic fake data (names, emails, etc.)
+- **Stateful**: Get, set, and increment state variables
+- **Script**: Execute Rhai scripts for complex logic
+- **File**: Serve content from local files (sequential or random selection)
+- **Pattern**: Generate strings from regex-like patterns
+- **LLM**: Proxy to OpenAI or Anthropic for AI-generated mocks
+- **Database**: Execute SQL queries against real databases
+
+### 🛡️ Reliability & Observability
+- **Rate Limiting**: Built-in token bucket rate limiter
+- **Health Checks**: Kubernetes-ready endpoints (`/health/live`, `/health/ready`)
+- **Metrics**: Prometheus-compatible metrics endpoint (`/metrics`)
+- **Hot Reload**: Zero-downtime configuration updates
+
+### 💻 Developer Experience
+- **Web UI**: Basic dashboard for monitoring
+- **CLI**: Simple command-line interface
+- **TOML Config**: Human-readable configuration
+- **Validation**: Startup configuration checks
+
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -161,6 +186,13 @@ template = "Your template content here with {{ variables }}"
 **Available Strategies:**
 - `template`: Use Tera templates with variable substitution
 - `random`: Generate random data using Faker library
+- `static`: Return null/empty response
+- `stateful`: Persist and retrieve state across requests
+- `script`: Execute Rhai scripts
+- `file`: Read from external files
+- `pattern`: Generate data from patterns
+- `llm`: Generate content using OpenAI/Anthropic
+- `database`: Query SQL databases
 
 **Random Strategy Options:**
 - `faker_type`: Type of fake data to generate (e.g., "name", "email", "sentence", "paragraph")
@@ -277,19 +309,19 @@ Metis implements the following MCP protocol methods:
 
 ### Current Status (v0.1.0)
 - ✅ Core MCP protocol implementation
-- ✅ Template and Random mock strategies
+- ✅ 9 Mock Strategies (Template, Random, LLM, Script, Database, File, Pattern, Static, Stateful)
 - ✅ Resource, Tool, and Prompt handlers
-- ✅ TOML-based configuration
-- ✅ Basic test coverage
+- ✅ TOML-based configuration with Hot Reload
+- ✅ Health Checks & Prometheus Metrics
+- ✅ Rate Limiting
+- ✅ Basic Web UI
+- ✅ Comprehensive Test Coverage
 
 ### Planned Features
-- [ ] Additional mock strategies (LLM, Script, Database, File)
-- [ ] Authentication and authorization
-- [x] Configuration hot-reload
-- [ ] Workflow engine
-- [ ] Web UI for configuration management
-- [ ] Multi-language scripting support (Python, Lua, Rhai)
-- [ ] Advanced observability (metrics, tracing)
+- [ ] Authentication and authorization (Implemented, pending integration)
+- [ ] Advanced Workflow engine
+- [ ] Enhanced Web UI for configuration management
+- [ ] Multi-language scripting support (Python, Lua)
 - [ ] Performance optimizations (>10k req/s)
 
 See [metis-implementation-plan.md](metis-implementation-plan.md) for detailed roadmap.

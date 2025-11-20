@@ -70,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
     ));
 
     // Create application using the library function
-    let app = metis::create_app(protocol_handler, health_handler, metrics_handler);
+    let app = metis::create_app(protocol_handler, health_handler, metrics_handler, settings).await;
 
     // Start server
     let addr: SocketAddr = format!("{}:{}", host, port).parse()?;

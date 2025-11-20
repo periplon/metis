@@ -3,7 +3,7 @@ use crate::adapters::state_manager::StateManager;
 use crate::config::{MockConfig, MockStrategyType, DatabaseConfig};
 use serde_json::json;
 use std::sync::Arc;
-use sqlx::{Pool, Sqlite, sqlite::SqlitePoolOptions};
+use sqlx::sqlite::SqlitePoolOptions;
 
 #[tokio::test]
 async fn test_generate_database_sqlite() {

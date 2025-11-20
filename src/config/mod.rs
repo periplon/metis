@@ -1,8 +1,6 @@
 use config::{Config, File};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
-use std::path::PathBuf;
 
 pub mod watcher;
 pub mod validator;
@@ -18,6 +16,15 @@ pub struct Settings {
     pub tools: Vec<ToolConfig>,
     #[serde(default)]
     pub prompts: Vec<PromptConfig>,
+    #[serde(default)]
+    pub rate_limit: Option<RateLimitConfig>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct RateLimitConfig {
+    pub enabled: bool,
+    pub requests_per_second: u32,
+    pub burst_size: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -68,10 +75,20 @@ pub struct MockConfig {
     pub faker_type: Option<String>,
     pub stateful: Option<StatefulConfig>,
     pub script: Option<String>,
+    #[serde(default)]
+    pub script_lang: Option<ScriptLang>,
     pub file: Option<FileConfig>,
     pub pattern: Option<String>,
     pub llm: Option<LLMConfig>,
     pub database: Option<DatabaseConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ScriptLang {
+    Rhai,
+    Lua,
+    Js,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

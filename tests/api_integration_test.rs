@@ -30,6 +30,7 @@ async fn test_api_integration() {
         resources: vec![],
         tools: vec![],
         prompts: vec![],
+        rate_limit: None,
     };
     let settings = Arc::new(RwLock::new(settings));
 
@@ -49,7 +50,7 @@ async fn test_api_integration() {
         logging_handler,
     ));
 
-    let app = metis::create_app(protocol_handler, health_handler, metrics_handler);
+    let app = metis::create_app(protocol_handler, health_handler, metrics_handler, settings).await;
 
     // Test Initialize
     let request = Request::builder()

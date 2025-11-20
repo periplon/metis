@@ -1,4 +1,4 @@
-use metis::config::{Settings, ToolConfig, ResourceConfig, PromptConfig};
+use metis::config::Settings;
 use std::fs;
 use tempfile::TempDir;
 

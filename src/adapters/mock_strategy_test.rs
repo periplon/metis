@@ -23,6 +23,7 @@ async fn test_generate_template() {
         file: None,
         pattern: None,
         script: None,
+        script_lang: None,
         llm: None,
         database: None,
     };
@@ -45,6 +46,7 @@ async fn test_generate_template_missing_args() {
         file: None,
         pattern: None,
         script: None,
+        script_lang: None,
         llm: None,
         database: None,
     };
@@ -69,6 +71,7 @@ async fn test_generate_random() {
         file: None,
         pattern: None,
         script: None,
+        script_lang: None,
         llm: None,
         database: None,
     };
@@ -92,6 +95,7 @@ async fn test_generate_random_unknown_type() {
         file: None,
         pattern: None,
         script: None,
+        script_lang: None,
         llm: None,
         database: None,
     };
@@ -119,6 +123,7 @@ async fn test_generate_script() {
             let name = input.name;
             "Hello, " + name + "!"
         "#.to_string()),
+        script_lang: None,
         llm: None,
         database: None,
     };
@@ -128,4 +133,62 @@ async fn test_generate_script() {
     assert!(result.is_ok());
     let value = result.unwrap();
     assert_eq!(value, "Hello, Script!");
+}
+
+#[tokio::test]
+async fn test_generate_script_lua() {
+    use crate::config::ScriptLang;
+    let handler = MockStrategyHandler::new(Arc::new(StateManager::new()));
+    let config = MockConfig {
+        strategy: MockStrategyType::Script,
+        template: None,
+        faker_type: None,
+        stateful: None,
+        file: None,
+        pattern: None,
+        script: Some(r#"
+            return "Hello, " .. input.name .. "!"
+        "#.to_string()),
+        script_lang: Some(ScriptLang::Lua),
+        llm: None,
+        database: None,
+    };
+    let args = json!({ "name": "Lua" });
+
+    let result = handler.generate(&config, Some(&args)).await;
+    if let Err(e) = &result {
+        println!("Error: {}", e);
+    }
+    assert!(result.is_ok());
+    let value = result.unwrap();
+    assert_eq!(value, "Hello, Lua!");
+}
+
+#[tokio::test]
+async fn test_generate_script_js() {
+    use crate::config::ScriptLang;
+    let handler = MockStrategyHandler::new(Arc::new(StateManager::new()));
+    let config = MockConfig {
+        strategy: MockStrategyType::Script,
+        template: None,
+        faker_type: None,
+        stateful: None,
+        file: None,
+        pattern: None,
+        script: Some(r#"
+            "Hello, " + input.name + "!";
+        "#.to_string()),
+        script_lang: Some(ScriptLang::Js),
+        llm: None,
+        database: None,
+    };
+    let args = json!({ "name": "JS" });
+
+    let result = handler.generate(&config, Some(&args)).await;
+    if let Err(e) = &result {
+        println!("Error: {}", e);
+    }
+    assert!(result.is_ok());
+    let value = result.unwrap();
+    assert_eq!(value, "Hello, JS!");
 }

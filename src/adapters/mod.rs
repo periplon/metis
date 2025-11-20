@@ -11,6 +11,7 @@ pub mod state_manager;
 pub mod tool_handler;
 pub mod jwks;
 pub mod ui_handler;
+pub mod rate_limit;
 
 #[cfg(test)]
 mod mock_strategy_test;

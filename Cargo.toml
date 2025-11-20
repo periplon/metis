@@ -22,6 +22,9 @@ fake = { version = "2.9", features = ["derive"] }
 rand = "0.8"
 notify = "6.1"
 rhai = { version = "1.16", features = ["sync", "serde"] }
+mlua = { version = "0.10", features = ["lua54", "vendored", "async", "serialize", "send"] }
+boa_engine = { version = "0.19" }
+boa_gc = { version = "0.19" } # Needed for Gc pointers
 serde_yaml = "0.9"
 glob = "0.3"
 prometheus = "0.13"
@@ -32,11 +35,10 @@ tiktoken-rs = "0.5"
 backoff = { version = "0.4", features = ["tokio"] }
 reqwest = { version = "0.11", features = ["json"] }
 
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "any", "postgres", "mysql", "sqlite"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "any", "postgres", "mysql", "sqlite"] }
 base64 = "0.21"
 rust-embed = "8.9.0"
 mime_guess = "2.0.5"
-tower_governor = "0.8.0"
 governor = "0.10.2"
 
 [dev-dependencies]

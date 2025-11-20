@@ -1,10 +1,11 @@
 use crate::adapters::state_manager::StateManager;
-use crate::config::{MockConfig, MockStrategyType, StateOperation};
+use crate::config::{MockConfig, MockStrategyType, StateOperation, ScriptLang};
 use anyhow::Result;
 use fake::faker::internet::en::{SafeEmail, Username};
 use fake::faker::lorem::en::{Paragraph, Sentence, Word};
 use fake::faker::name::en::{Name, Title};
 use fake::Fake;
+use mlua::LuaSerdeExt;
 use rhai::{Engine, Scope};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -13,9 +14,9 @@ use tera::{Context, Tera};
 use tokio::sync::RwLock;
 
 pub struct MockStrategyHandler {
-    tera: Tera,
+    _tera: Tera,
     state_manager: Arc<StateManager>,
-    template_cache: Arc<RwLock<HashMap<String, String>>>,
+    _template_cache: Arc<RwLock<HashMap<String, String>>>,
     rhai_engine: Engine,
 }
 
@@ -29,9 +30,9 @@ impl MockStrategyHandler {
         engine.register_fn("fake_sentence", || Sentence(1..10).fake::<String>());
         
         Self {
-            tera: Tera::default(),
+            _tera: Tera::default(),
             state_manager,
-            template_cache: Arc::new(RwLock::new(HashMap::new())),
+            _template_cache: Arc::new(RwLock::new(HashMap::new())),
             rhai_engine: engine,
         }
     }
@@ -62,12 +63,11 @@ impl MockStrategyHandler {
         use sqlx::any::AnyPoolOptions;
         use sqlx::Row;
         use sqlx::Column;
-        use sqlx::TypeInfo;
 
         // Ensure drivers are installed (safe to call multiple times)
         sqlx::any::install_default_drivers();
 
-        let db_config = config.database.as_ref()
+        let db_config = config.database.as_ref() 
             .ok_or_else(|| anyhow::anyhow!("Database config not provided"))?;
 
         // Create connection pool (in a real app, we should cache this)
@@ -154,20 +154,20 @@ impl MockStrategyHandler {
         config: &MockConfig,
         args: Option<&serde_json::Value>,
     ) -> Result<Value> {
-        let llm_config = config.llm.as_ref()
+        let llm_config = config.llm.as_ref() 
             .ok_or_else(|| anyhow::anyhow!("LLM config not provided"))?;
 
         // Get API key from environment variable
         let api_key = if let Some(env_var) = &llm_config.api_key_env {
-            std::env::var(env_var)
-                .map_err(|_| anyhow::anyhow!("API key environment variable {} not set", env_var))?
+            std::env::var(env_var) 
+                .map_err(|_| anyhow::anyhow!("API key environment variable {} not set", env_var))? 
         } else {
             return Err(anyhow::anyhow!("No API key configuration provided"));
         };
 
         // Extract prompt from args
         let prompt = if let Some(args) = args {
-            args.get("prompt")
+            args.get("prompt") 
                 .and_then(|v| v.as_str())
                 .unwrap_or("Hello")
                 .to_string()
@@ -205,7 +205,7 @@ impl MockStrategyHandler {
             messages.push(ChatCompletionRequestMessage::System(
                 ChatCompletionRequestSystemMessageArgs::default()
                     .content(system_prompt.clone())
-                    .build()?
+                    .build()? 
             ));
         }
 
@@ -213,7 +213,7 @@ impl MockStrategyHandler {
         messages.push(ChatCompletionRequestMessage::User(
             ChatCompletionRequestUserMessageArgs::default()
                 .content(prompt.to_string())
-                .build()?
+                .build()? 
         ));
 
         let mut request_builder = CreateChatCompletionRequestArgs::default();
@@ -387,22 +387,63 @@ impl MockStrategyHandler {
 
     fn generate_script(&self, config: &MockConfig, args: Option<&Value>) -> Result<Value> {
         if let Some(script) = &config.script {
-            let mut scope = Scope::new();
-            
-            if let Some(args_val) = args {
-                // Convert serde_json::Value to Rhai Dynamic
-                let args_dynamic = serde_json::from_value::<rhai::Dynamic>(args_val.clone())?;
-                scope.push("input", args_dynamic);
-            }
+            match config.script_lang.as_ref().unwrap_or(&ScriptLang::Rhai) {
+                ScriptLang::Rhai => {
+                    let mut scope = Scope::new();
+                    
+                    if let Some(args_val) = args {
+                        // Convert serde_json::Value to Rhai Dynamic
+                        let args_dynamic = serde_json::from_value::<rhai::Dynamic>(args_val.clone())?;
+                        scope.push("input", args_dynamic);
+                    }
 
-            let result = self.rhai_engine.eval_with_scope::<rhai::Dynamic>(&mut scope, script)?;
-            
-            // Convert Rhai Dynamic back to serde_json::Value
-            let json_val = serde_json::to_value(&result)?;
-            Ok(json_val)
+                    let result = self.rhai_engine.eval_with_scope::<rhai::Dynamic>(&mut scope, script)?;
+                    
+                    // Convert Rhai Dynamic back to serde_json::Value
+                    let json_val = serde_json::to_value(&result)?;
+                    Ok(json_val)
+                },
+                ScriptLang::Lua => self.generate_script_lua(script, args),
+                ScriptLang::Js => self.generate_script_js(script, args),
+            }
         } else {
             Ok(Value::Null)
         }
+    }
+
+    fn generate_script_lua(&self, script: &str, args: Option<&Value>) -> Result<Value> {
+        let lua = mlua::Lua::new();
+        if let Some(args_val) = args {
+             let lua_val = lua.to_value(args_val)?;
+             lua.globals().set("input", lua_val)?;
+        }
+        let chunk = lua.load(script);
+        let result: mlua::Value = chunk.eval()?;
+        let json_val = serde_json::to_value(&result)?;
+        Ok(json_val)
+    }
+
+    fn generate_script_js(&self, script: &str, args: Option<&Value>) -> Result<Value> {
+        use boa_engine::{Context, Source};
+
+        let mut context = Context::default();
+        
+        if let Some(args_val) = args {
+             let json_str = serde_json::to_string(args_val)?;
+             // Boa doesn't have easy generic "to_value" without interop, but we can parse JSON string in JS
+             let setup_script = format!("const input = JSON.parse('{}');", json_str);
+             context.eval(Source::from_bytes(setup_script.as_bytes()))
+                .map_err(|e| anyhow::anyhow!("JS setup error: {}", e))?;
+        }
+
+        let result = context.eval(Source::from_bytes(script.as_bytes()))
+            .map_err(|e| anyhow::anyhow!("JS execution error: {}", e))?;
+
+        // Convert result to JSON
+        let json_val = result.to_json(&mut context)
+            .map_err(|e| anyhow::anyhow!("JS result conversion error: {}", e))?;
+            
+        Ok(json_val)
     }
 
     async fn generate_file(&self, config: &MockConfig) -> Result<Value> {

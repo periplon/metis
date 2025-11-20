@@ -224,6 +224,7 @@ mod tests {
             resources: vec![],
             tools: vec![],
             prompts: vec![],
+            rate_limit: None,
         };
 
         let result = ConfigValidator::validate(&settings);
@@ -241,6 +242,7 @@ mod tests {
             resources: vec![],
             tools: vec![],
             prompts: vec![],
+            rate_limit: None,
         };
 
         let result = ConfigValidator::validate(&settings);
@@ -277,6 +279,7 @@ mod tests {
             ],
             tools: vec![],
             prompts: vec![],
+            rate_limit: None,
         };
 
         let result = ConfigValidator::validate(&settings);

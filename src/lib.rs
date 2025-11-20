@@ -50,6 +50,7 @@ use axum::{
     Json,
 };
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 /// Creates the Axum application router with all endpoints configured.
 ///
@@ -62,12 +63,13 @@ use std::sync::Arc;
 /// # Returns
 ///
 /// Configured Axum Router
-pub fn create_app(
+pub async fn create_app(
     protocol_handler: Arc<McpProtocolHandler>,
     health_handler: Arc<HealthHandler>,
     metrics_handler: Arc<MetricsHandler>,
+    settings: Arc<RwLock<crate::config::Settings>>,
 ) -> Router {
-    Router::new()
+    let mut router = Router::new()
         // Health check endpoints
         .route("/health", get({
             let handler = health_handler.clone();
@@ -101,7 +103,24 @@ pub fn create_app(
         // MCP protocol endpoint
         .route("/mcp", post(handle_mcp))
         // UI endpoint (catch-all for SPA)
-        .fallback(crate::adapters::ui_handler::UIHandler::serve)
+        .fallback(crate::adapters::ui_handler::UIHandler::serve);
+
+    // Apply Rate Limiting if enabled (before state layer)
+    let settings_read = settings.read().await;
+    if let Some(rate_limit) = &settings_read.rate_limit {
+        if rate_limit.enabled {
+            let limiter = crate::adapters::rate_limit::create_limiter(
+                rate_limit.requests_per_second,
+                rate_limit.burst_size,
+            );
+            
+            router = router.layer(
+                axum::middleware::from_fn_with_state(limiter, crate::adapters::rate_limit::rate_limit_middleware)
+            );
+        }
+    }
+    
+    router
         .layer(
             tower_http::cors::CorsLayer::new()
                 .allow_origin(tower_http::cors::Any)

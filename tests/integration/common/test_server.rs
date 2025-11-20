@@ -32,6 +32,7 @@ impl TestServer {
             resources: vec![],
             tools: vec![],
             prompts: vec![],
+            rate_limit: None,
         }));
 
         // Initialize handlers
@@ -53,7 +54,7 @@ impl TestServer {
         ));
 
         // Create app
-        let app = metis::create_app(protocol_handler, health_handler, metrics_handler);
+        let app = metis::create_app(protocol_handler, health_handler, metrics_handler, settings).await;
 
         // Start server on random port
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

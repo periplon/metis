@@ -6,8 +6,7 @@ use crate::domain::ResourcePort;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-#[tokio::test]
-async fn test_get_resource_static() {
+#[tokio::test] async fn test_get_resource_static() {
     let mock_strategy = Arc::new(MockStrategyHandler::new(Arc::new(StateManager::new())));
     let config = vec![ResourceConfig {
         uri: "file:///test.txt".to_string(),
@@ -24,6 +23,7 @@ async fn test_get_resource_static() {
         resources: config,
         tools: vec![],
         prompts: vec![],
+        rate_limit: None,
     };
     let handler = InMemoryResourceHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -33,8 +33,7 @@ async fn test_get_resource_static() {
     assert_eq!(value.content, "Static Content");
 }
 
-#[tokio::test]
-async fn test_get_resource_mock() {
+#[tokio::test] async fn test_get_resource_mock() {
     let mock_strategy = Arc::new(MockStrategyHandler::new(Arc::new(StateManager::new())));
     let config = vec![ResourceConfig {
         uri: "file:///mock.txt".to_string(),
@@ -61,6 +60,7 @@ async fn test_get_resource_mock() {
         resources: config,
         tools: vec![],
         prompts: vec![],
+        rate_limit: None,
     };
     let handler = InMemoryResourceHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -70,8 +70,7 @@ async fn test_get_resource_mock() {
     assert_eq!(value.content, "Hello, !");
 }
 
-#[tokio::test]
-async fn test_get_resource_not_found() {
+#[tokio::test] async fn test_get_resource_not_found() {
     let mock_strategy = Arc::new(MockStrategyHandler::new(Arc::new(StateManager::new())));
     let settings = Settings {
         server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
@@ -79,6 +78,7 @@ async fn test_get_resource_not_found() {
             resources: vec![],
         tools: vec![],
         prompts: vec![],
+        rate_limit: None,
     };
     let handler = InMemoryResourceHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -86,8 +86,7 @@ async fn test_get_resource_not_found() {
     assert!(result.is_err());
 }
 
-#[tokio::test]
-async fn test_list_resources() {
+#[tokio::test] async fn test_list_resources() {
     let mock_strategy = Arc::new(MockStrategyHandler::new(Arc::new(StateManager::new())));
     let config = vec![
         ResourceConfig {
@@ -114,6 +113,7 @@ async fn test_list_resources() {
         resources: config,
         tools: vec![],
         prompts: vec![],
+        rate_limit: None,
     };
     let handler = InMemoryResourceHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
