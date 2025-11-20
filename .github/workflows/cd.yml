@@ -73,10 +73,16 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@main
+        uses: cargo-bins/cargo-binstall@v1.10.1
 
       - name: Install cargo-leptos
         run: cargo binstall cargo-leptos -y
+
+      - name: Install dart-sass
+        run: |
+          sudo snap install dart-sass
+          # Add to path if not automatically added
+          echo "/snap/bin" >> $GITHUB_PATH
 
       - name: Build UI
         run: |
