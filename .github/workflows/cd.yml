@@ -87,9 +87,7 @@ jobs:
           echo "/snap/bin" >> $GITHUB_PATH
 
       - name: Build UI
-        run: |
-          cd ui
-          cargo leptos build --release
+        run: cargo leptos build --release
       
       - name: Prepare UI dist
         run: |

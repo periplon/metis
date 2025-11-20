@@ -1,6 +1,14 @@
 [workspace]
 members = ["ui"]
 
+[workspace.metadata.leptos]
+name = "metis-app"
+bin-package = "metis"
+lib-package = "metis-ui"
+site-root = "target/site"
+site-pkg-dir = "pkg"
+style-file = "ui/style.css"
+
 [package]
 name = "metis"
 version = "0.1.0"
