@@ -1,7 +1,7 @@
 [workspace]
 members = ["ui"]
 
-[workspace.metadata.leptos]
+[[workspace.metadata.leptos]]
 name = "metis-app"
 bin-package = "metis"
 lib-package = "metis-ui"
