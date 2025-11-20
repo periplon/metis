@@ -1,6 +1,8 @@
-use config::{Config, ConfigError, File};
+use config::{Config, File};
 use serde::Deserialize;
 use serde_json::Value;
+
+pub mod watcher;
 
 #[derive(Debug, Deserialize)]
 pub struct Settings {
@@ -39,20 +41,22 @@ pub struct ToolConfig {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct MockConfig {
-    pub strategy: MockStrategyType,
-    pub template: Option<String>,
-    pub faker_type: Option<String>,
-    pub stateful: Option<StatefulConfig>,
-}
-
-#[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum MockStrategyType {
     Static,
     Template,
     Random,
     Stateful,
+    Script,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct MockConfig {
+    pub strategy: MockStrategyType,
+    pub template: Option<String>,
+    pub faker_type: Option<String>,
+    pub stateful: Option<StatefulConfig>,
+    pub script: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -92,13 +96,98 @@ pub struct PromptMessage {
 }
 
 impl Settings {
-    pub fn new() -> Result<Self, ConfigError> {
+    pub fn new() -> Result<Self, anyhow::Error> {
+        Self::from_root(".")
+    }
+
+    pub fn from_root(root: &str) -> Result<Self, anyhow::Error> {
+        let config_path = std::path::Path::new(root).join("metis");
         let s = Config::builder()
-            .add_source(File::with_name("metis").required(false))
+            .add_source(File::from(config_path).required(false))
             .set_default("server.host", "127.0.0.1")?
             .set_default("server.port", 3000)?
             .build()?;
 
-        s.try_deserialize()
+        let mut settings: Settings = s.try_deserialize()?;
+
+        settings.load_external_configs(root)?;
+
+        Ok(settings)
+    }
+
+    fn load_external_configs(&mut self, root: &str) -> Result<(), anyhow::Error> {
+        self.load_tools_from_dir(&format!("{}/config/tools", root))?;
+        self.load_resources_from_dir(&format!("{}/config/resources", root))?;
+        self.load_prompts_from_dir(&format!("{}/config/prompts", root))?;
+        Ok(())
+    }
+
+    fn load_tools_from_dir(&mut self, path: &str) -> Result<(), anyhow::Error> {
+        let pattern = format!("{}/*", path);
+        for entry in glob::glob(&pattern)? {
+            match entry {
+                Ok(path) => {
+                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                        if matches!(ext, "json" | "yaml" | "yml") {
+                            let content = std::fs::read_to_string(&path)?;
+                            let tool: ToolConfig = if ext == "json" {
+                                serde_json::from_str(&content)?
+                            } else {
+                                serde_yaml::from_str(&content)?
+                            };
+                            self.tools.push(tool);
+                        }
+                    }
+                }
+                Err(e) => tracing::warn!("Failed to read glob entry: {}", e),
+            }
+        }
+        Ok(())
+    }
+
+    fn load_resources_from_dir(&mut self, path: &str) -> Result<(), anyhow::Error> {
+        let pattern = format!("{}/*", path);
+        for entry in glob::glob(&pattern)? {
+            match entry {
+                Ok(path) => {
+                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                        if matches!(ext, "json" | "yaml" | "yml") {
+                            let content = std::fs::read_to_string(&path)?;
+                            let resource: ResourceConfig = if ext == "json" {
+                                serde_json::from_str(&content)?
+                            } else {
+                                serde_yaml::from_str(&content)?
+                            };
+                            self.resources.push(resource);
+                        }
+                    }
+                }
+                Err(e) => tracing::warn!("Failed to read glob entry: {}", e),
+            }
+        }
+        Ok(())
+    }
+
+    fn load_prompts_from_dir(&mut self, path: &str) -> Result<(), anyhow::Error> {
+        let pattern = format!("{}/*", path);
+        for entry in glob::glob(&pattern)? {
+            match entry {
+                Ok(path) => {
+                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                        if matches!(ext, "json" | "yaml" | "yml") {
+                            let content = std::fs::read_to_string(&path)?;
+                            let prompt: PromptConfig = if ext == "json" {
+                                serde_json::from_str(&content)?
+                            } else {
+                                serde_yaml::from_str(&content)?
+                            };
+                            self.prompts.push(prompt);
+                        }
+                    }
+                }
+                Err(e) => tracing::warn!("Failed to read glob entry: {}", e),
+            }
+        }
+        Ok(())
     }
 }

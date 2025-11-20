@@ -5,6 +5,7 @@ use fake::faker::internet::en::{FreeEmail, SafeEmail, Username};
 use fake::faker::lorem::en::{Paragraph, Sentence, Word};
 use fake::faker::name::en::{Name, Title};
 use fake::Fake;
+use rhai::{Engine, Scope, AST};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -15,14 +16,23 @@ pub struct MockStrategyHandler {
     tera: Tera,
     state_manager: Arc<StateManager>,
     template_cache: Arc<RwLock<HashMap<String, String>>>,
+    rhai_engine: Engine,
 }
 
 impl MockStrategyHandler {
     pub fn new(state_manager: Arc<StateManager>) -> Self {
+        let mut engine = Engine::new();
+        
+        // Register custom functions for Rhai
+        engine.register_fn("fake_name", || Name().fake::<String>());
+        engine.register_fn("fake_email", || SafeEmail().fake::<String>());
+        engine.register_fn("fake_sentence", || Sentence(1..10).fake::<String>());
+        
         Self {
             tera: Tera::default(),
             state_manager,
             template_cache: Arc::new(RwLock::new(HashMap::new())),
+            rhai_engine: engine,
         }
     }
 
@@ -32,6 +42,7 @@ impl MockStrategyHandler {
             MockStrategyType::Template => self.generate_template(config, args),
             MockStrategyType::Random => self.generate_random(config),
             MockStrategyType::Stateful => self.generate_stateful(config, args).await,
+            MockStrategyType::Script => self.generate_script(config, args),
         }
     }
 
@@ -111,6 +122,26 @@ impl MockStrategyHandler {
                     }
                 }
             }
+        } else {
+            Ok(Value::Null)
+        }
+    }
+
+    fn generate_script(&self, config: &MockConfig, args: Option<&Value>) -> Result<Value> {
+        if let Some(script) = &config.script {
+            let mut scope = Scope::new();
+            
+            if let Some(args_val) = args {
+                // Convert serde_json::Value to Rhai Dynamic
+                let args_dynamic = serde_json::from_value::<rhai::Dynamic>(args_val.clone())?;
+                scope.push("input", args_dynamic);
+            }
+
+            let result = self.rhai_engine.eval_with_scope::<rhai::Dynamic>(&mut scope, script)?;
+            
+            // Convert Rhai Dynamic back to serde_json::Value
+            let json_val = serde_json::to_value(&result)?;
+            Ok(json_val)
         } else {
             Ok(Value::Null)
         }

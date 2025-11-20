@@ -1,66 +1,70 @@
-use crate::config::PromptConfig;
-use crate::domain::PromptPort;
+use crate::config::{PromptConfig, Settings};
+use crate::domain::{GetPromptResult, Prompt, PromptArgument, PromptContent, PromptMessage, PromptPort};
+use anyhow::Result;
 use async_trait::async_trait;
-use serde_json::{json, Value};
-use std::collections::HashMap;
+use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 pub struct InMemoryPromptHandler {
-    prompts: Arc<RwLock<HashMap<String, PromptConfig>>>,
+    settings: Arc<RwLock<Settings>>,
 }
 
 impl InMemoryPromptHandler {
-    pub fn new(config: Vec<PromptConfig>) -> Self {
-        let mut prompts = HashMap::new();
-        for prompt in config {
-            prompts.insert(prompt.name.clone(), prompt);
-        }
-        Self {
-            prompts: Arc::new(RwLock::new(prompts)),
-        }
+    pub fn new(settings: Arc<RwLock<Settings>>) -> Self {
+        Self { settings }
+    }
+
+    async fn find_prompt_config(&self, name: &str) -> Option<PromptConfig> {
+        let settings = self.settings.read().await;
+        settings.prompts.iter().find(|p| p.name == name).cloned()
     }
 }
 
 #[async_trait]
 impl PromptPort for InMemoryPromptHandler {
-    async fn get_prompt(&self, name: &str, _arguments: Option<Value>) -> anyhow::Result<Value> {
-        let prompts = self.prompts.read().await;
-        if let Some(prompt) = prompts.get(name) {
-            if let Some(messages) = &prompt.messages {
-                Ok(json!({
-                    "messages": messages.iter().map(|m| {
-                        json!({
-                            "role": m.role,
-                            "content": m.content
+    async fn list_prompts(&self) -> Result<Vec<Prompt>> {
+        let settings = self.settings.read().await;
+        let prompts = settings
+            .prompts
+            .iter()
+            .map(|p| Prompt {
+                name: p.name.clone(),
+                description: p.description.clone(),
+                arguments: p.arguments.as_ref().map(|args| {
+                    args.iter()
+                        .map(|a| PromptArgument {
+                            name: a.name.clone(),
+                            description: a.description.clone(),
+                            required: a.required,
                         })
-                    }).collect::<Vec<_>>()
-                }))
-            } else {
-                // Fallback or error if no messages defined
-                Err(anyhow::anyhow!("No messages defined for prompt: {}", name))
-            }
+                        .collect()
+                }),
+            })
+            .collect();
+        Ok(prompts)
+    }
+
+    async fn get_prompt(&self, name: &str, _args: Option<Value>) -> Result<GetPromptResult> {
+        if let Some(config) = self.find_prompt_config(name).await {
+            let messages = config.messages.as_ref().map(|msgs| {
+                msgs.iter()
+                    .map(|m| PromptMessage {
+                        role: m.role.clone(),
+                        content: PromptContent {
+                            type_: "text".to_string(),
+                            text: m.content.clone(),
+                        },
+                    })
+                    .collect()
+            }).unwrap_or_default();
+
+            Ok(GetPromptResult {
+                description: Some(config.description.clone()),
+                messages,
+            })
         } else {
             Err(anyhow::anyhow!("Prompt not found: {}", name))
         }
-    }
-
-    async fn list_prompts(&self) -> anyhow::Result<Vec<Value>> {
-        let prompts = self.prompts.read().await;
-        Ok(prompts.values().map(|p| {
-            json!({
-                "name": p.name,
-                "description": p.description,
-                "arguments": p.arguments.as_ref().map(|args| {
-                    args.iter().map(|a| {
-                        json!({
-                            "name": a.name,
-                            "description": a.description,
-                            "required": a.required
-                        })
-                    }).collect::<Vec<_>>()
-                })
-            })
-        }).collect())
     }
 }

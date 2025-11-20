@@ -1,6 +1,6 @@
 use super::mcp_protocol_handler::{JsonRpcRequest, McpProtocolHandler};
 use crate::adapters::logging_handler::LoggingHandler;
-use crate::domain::{PromptPort, ResourcePort, ToolPort};
+use crate::domain::{PromptPort, ResourcePort, ToolPort, Resource, Tool, Prompt, ResourceReadResult, GetPromptResult};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -8,11 +8,20 @@ use std::sync::Arc;
 struct MockResourceHandler;
 #[async_trait]
 impl ResourcePort for MockResourceHandler {
-    async fn get_resource(&self, _uri: &str) -> anyhow::Result<Value> {
-        Ok(json!({ "text": "mock resource" }))
+    async fn get_resource(&self, uri: &str) -> anyhow::Result<ResourceReadResult> {
+        Ok(ResourceReadResult {
+            uri: uri.to_string(),
+            mime_type: Some("text/plain".to_string()),
+            content: "mock resource".to_string(),
+        })
     }
-    async fn list_resources(&self) -> anyhow::Result<Vec<Value>> {
-        Ok(vec![json!({ "name": "mock" })])
+    async fn list_resources(&self) -> anyhow::Result<Vec<Resource>> {
+        Ok(vec![Resource {
+            uri: "mock".to_string(),
+            name: "mock".to_string(),
+            description: None,
+            mime_type: None,
+        }])
     }
 }
 
@@ -22,19 +31,30 @@ impl ToolPort for MockToolHandler {
     async fn execute_tool(&self, _name: &str, _args: Value) -> anyhow::Result<Value> {
         Ok(json!({ "result": "mock tool" }))
     }
-    async fn list_tools(&self) -> anyhow::Result<Vec<Value>> {
-        Ok(vec![json!({ "name": "mock" })])
+    async fn list_tools(&self) -> anyhow::Result<Vec<Tool>> {
+        Ok(vec![Tool {
+            name: "mock".to_string(),
+            description: "mock".to_string(),
+            input_schema: json!({}),
+        }])
     }
 }
 
 struct MockPromptHandler;
 #[async_trait]
 impl PromptPort for MockPromptHandler {
-    async fn get_prompt(&self, _name: &str, _arguments: Option<Value>) -> anyhow::Result<Value> {
-        Ok(json!({ "text": "mock prompt" }))
+    async fn get_prompt(&self, _name: &str, _arguments: Option<Value>) -> anyhow::Result<GetPromptResult> {
+        Ok(GetPromptResult {
+            description: Some("mock prompt".to_string()),
+            messages: vec![],
+        })
     }
-    async fn list_prompts(&self) -> anyhow::Result<Vec<Value>> {
-        Ok(vec![json!({ "name": "mock" })])
+    async fn list_prompts(&self) -> anyhow::Result<Vec<Prompt>> {
+        Ok(vec![Prompt {
+            name: "mock".to_string(),
+            description: "mock".to_string(),
+            arguments: None,
+        }])
     }
 }
 

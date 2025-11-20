@@ -80,7 +80,11 @@ impl McpProtocolHandler {
                         self.resource_handler
                             .get_resource(uri)
                             .await
-                            .map(|r| json!({ "contents": [r] }))
+                            .map(|r| json!({ "contents": [{
+                                "uri": r.uri,
+                                "mimeType": r.mime_type,
+                                "text": r.content
+                            }] }))
                     } else {
                         Err(anyhow::anyhow!("Missing 'uri' parameter"))
                     }
@@ -117,7 +121,7 @@ impl McpProtocolHandler {
                 if let Some(params) = request.params {
                     if let Some(name) = params.get("name").and_then(|v| v.as_str()) {
                         let args = params.get("arguments").cloned();
-                        self.prompt_handler.get_prompt(name, args).await
+                        self.prompt_handler.get_prompt(name, args).await.map(|p| json!(p))
                     } else {
                         Err(anyhow::anyhow!("Missing 'name' parameter"))
                     }

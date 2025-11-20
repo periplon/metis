@@ -14,14 +14,25 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::util::ServiceExt; // Correct import for oneshot
 
+use metis::config::Settings;
+use tokio::sync::RwLock;
+
 #[tokio::test]
 async fn test_api_integration() {
     // Setup application
+    let settings = Settings {
+        server: metis::config::ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
+        resources: vec![],
+        tools: vec![],
+        prompts: vec![],
+    };
+    let settings = Arc::new(RwLock::new(settings));
+
     let state_manager = Arc::new(StateManager::new());
     let mock_strategy = Arc::new(MockStrategyHandler::new(state_manager));
-    let resource_handler = Arc::new(InMemoryResourceHandler::new(vec![], mock_strategy.clone()));
-    let tool_handler = Arc::new(BasicToolHandler::new(vec![], mock_strategy.clone()));
-    let prompt_handler = Arc::new(InMemoryPromptHandler::new(vec![]));
+    let resource_handler = Arc::new(InMemoryResourceHandler::new(settings.clone(), mock_strategy.clone()));
+    let tool_handler = Arc::new(BasicToolHandler::new(settings.clone(), mock_strategy.clone()));
+    let prompt_handler = Arc::new(InMemoryPromptHandler::new(settings.clone()));
     let logging_handler = Arc::new(LoggingHandler::new());
     let protocol_handler = Arc::new(McpProtocolHandler::new(
         resource_handler,

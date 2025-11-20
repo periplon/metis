@@ -11,6 +11,8 @@
 - **Full MCP Protocol Support**: Complete implementation of the Model Context Protocol specification
 - **Multiple Mock Strategies**: Template-based (Tera), Random (Faker), and extensible strategy system
 - **Declarative Configuration**: Simple TOML-based configuration with hot-reload support
+- **Configuration Hot-Reload**: Automatically reloads configuration changes without restarting the server
+- **MCP Logging Support**: Captures and handles client log messages via the MCP protocol
 - **High Performance**: Built with Rust and Tokio for async, high-throughput operations
 - **Hexagonal Architecture**: Clean separation of concerns following SOLID principles
 
@@ -290,6 +292,7 @@ Metis implements the following MCP protocol methods:
 ### Initialization
 - `initialize`: Handshake and capability negotiation
 - `notifications/initialized`: Confirm initialization complete
+- `notifications/message`: Handle client log messages
 
 ### Resources
 - `resources/list`: List all available resources
@@ -318,7 +321,7 @@ Metis implements the following MCP protocol methods:
 ### Planned Features
 - [ ] Additional mock strategies (LLM, Script, Database, File)
 - [ ] Authentication and authorization
-- [ ] Configuration hot-reload
+- [x] Configuration hot-reload
 - [ ] Workflow engine
 - [ ] Web UI for configuration management
 - [ ] Multi-language scripting support (Python, Lua, Rhai)

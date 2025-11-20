@@ -20,6 +20,7 @@ async fn test_generate_template() {
         template: Some("Hello, {{ name }}!".to_string()),
         faker_type: None,
         stateful: None,
+        script: None,
     };
     let args = json!({ "name": "World" });
 
@@ -37,6 +38,7 @@ async fn test_generate_template_missing_args() {
         template: Some("Hello, {{ name | default(value=\"\") }}!".to_string()),
         faker_type: None,
         stateful: None,
+        script: None,
     };
     
     // Tera renders missing variables as empty string by default or errors depending on config. 
@@ -56,6 +58,7 @@ async fn test_generate_random() {
         template: None,
         faker_type: Some("name".to_string()),
         stateful: None,
+        script: None,
     };
 
     let result = handler.generate(&config, None).await;
@@ -74,6 +77,7 @@ async fn test_generate_random_unknown_type() {
         template: None,
         faker_type: Some("unknown_type".to_string()),
         stateful: None,
+        script: None,
     };
 
     let result = handler.generate(&config, None).await;
@@ -83,4 +87,25 @@ async fn test_generate_random_unknown_type() {
     assert!(value.is_string());
     let text = value.as_str().unwrap();
     assert!(!text.is_empty());
+}
+
+#[tokio::test]
+async fn test_generate_script() {
+    let handler = MockStrategyHandler::new(Arc::new(StateManager::new()));
+    let config = MockConfig {
+        strategy: MockStrategyType::Script,
+        template: None,
+        faker_type: None,
+        stateful: None,
+        script: Some(r#"
+            let name = input.name;
+            "Hello, " + name + "!"
+        "#.to_string()),
+    };
+    let args = json!({ "name": "Script" });
+
+    let result = handler.generate(&config, Some(&args)).await;
+    assert!(result.is_ok());
+    let value = result.unwrap();
+    assert_eq!(value, "Hello, Script!");
 }

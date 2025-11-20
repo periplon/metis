@@ -1,9 +1,10 @@
 use super::resource_handler::InMemoryResourceHandler;
 use crate::adapters::mock_strategy::MockStrategyHandler;
 use crate::adapters::state_manager::StateManager;
-use crate::config::{MockConfig, MockStrategyType, ResourceConfig};
+use crate::config::{MockConfig, MockStrategyType, ResourceConfig, Settings, ServerSettings};
 use crate::domain::ResourcePort;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 
 #[tokio::test]
 async fn test_get_resource_static() {
@@ -16,12 +17,19 @@ async fn test_get_resource_static() {
         content: Some("Static Content".to_string()),
         mock: None,
     }];
-    let handler = InMemoryResourceHandler::new(config, mock_strategy);
+    
+    let settings = Settings {
+        server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
+        resources: config,
+        tools: vec![],
+        prompts: vec![],
+    };
+    let handler = InMemoryResourceHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
     let result = handler.get_resource("file:///test.txt").await;
     assert!(result.is_ok());
     let value = result.unwrap();
-    assert_eq!(value["text"], "Static Content");
+    assert_eq!(value.content, "Static Content");
 }
 
 #[tokio::test]
@@ -38,22 +46,34 @@ async fn test_get_resource_mock() {
             template: Some("Hello, {{ name | default(value=\"\") }}!".to_string()),
             faker_type: None,
             stateful: None,
+            script: None,
         }),
     }];
-    let handler = InMemoryResourceHandler::new(config, mock_strategy);
+    
+    let settings = Settings {
+        server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
+        resources: config,
+        tools: vec![],
+        prompts: vec![],
+    };
+    let handler = InMemoryResourceHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
-    // Note: ResourceHandler currently doesn't pass args to mock strategy for resources,
-    // so it will render with empty context.
     let result = handler.get_resource("file:///mock.txt").await;
     assert!(result.is_ok());
     let value = result.unwrap();
-    assert_eq!(value["text"], "Hello, !");
+    assert_eq!(value.content, "Hello, !");
 }
 
 #[tokio::test]
 async fn test_get_resource_not_found() {
     let mock_strategy = Arc::new(MockStrategyHandler::new(Arc::new(StateManager::new())));
-    let handler = InMemoryResourceHandler::new(vec![], mock_strategy);
+    let settings = Settings {
+        server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
+        resources: vec![],
+        tools: vec![],
+        prompts: vec![],
+    };
+    let handler = InMemoryResourceHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
     let result = handler.get_resource("file:///unknown.txt").await;
     assert!(result.is_err());
@@ -80,7 +100,14 @@ async fn test_list_resources() {
             mock: None,
         },
     ];
-    let handler = InMemoryResourceHandler::new(config, mock_strategy);
+    
+    let settings = Settings {
+        server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
+        resources: config,
+        tools: vec![],
+        prompts: vec![],
+    };
+    let handler = InMemoryResourceHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
     let result = handler.list_resources().await;
     assert!(result.is_ok());
