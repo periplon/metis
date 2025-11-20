@@ -309,9 +309,18 @@ Metis implements the following MCP protocol methods:
 
 ## 🛣️ Roadmap
 
-### Current Status (v0.1.0)
+### Current Status (Under Development)
 - ✅ Core MCP protocol implementation
-- ✅ 9 Mock Strategies (Template, Random, LLM, Script, Database, File, Pattern, Static, Stateful)
+- ⚠️ Mock Strategies:
+    - ✅ Template
+    - ✅ Random
+    - ✅ Static
+    - ✅ Stateful
+    - ✅ Database (SQLx)
+    - ✅ LLM (OpenAI/Anthropic)
+    - ⚠️ Script (Rhai implemented; Python/Lua/JS experimental)
+    - 🚧 File (Planned)
+    - 🚧 Pattern (Planned)
 - ✅ Resource, Tool, and Prompt handlers
 - ✅ TOML-based configuration with Hot Reload
 - ✅ Health Checks & Prometheus Metrics
@@ -320,10 +329,11 @@ Metis implements the following MCP protocol methods:
 - ✅ Comprehensive Test Coverage
 
 ### Planned Features
-- [ ] Authentication and authorization (Implemented, pending integration)
+- [ ] Fix compilation issues in Script strategy (Python integration)
+- [ ] Implement File and Pattern strategies
+- [ ] Authentication and authorization integration
 - [ ] Advanced Workflow engine
 - [ ] Enhanced Web UI for configuration management
-- [ ] Multi-language scripting support (Python, Lua)
 - [ ] Performance optimizations (>10k req/s)
 
 See [metis-implementation-plan.md](metis-implementation-plan.md) for detailed roadmap.
