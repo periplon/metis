@@ -203,7 +203,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: v${{ needs.version-and-tag.outputs.version }}
+          ref: ${{ needs.version-and-tag.outputs.version }}
           fetch-depth: 0
 
       - name: Download Artifacts
@@ -214,7 +214,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v${{ needs.version-and-tag.outputs.version }}
+          tag_name: ${{ needs.version-and-tag.outputs.version }}
           files: |
             artifacts/metis-linux-amd64/metis
             artifacts/metis-macos-amd64/metis
