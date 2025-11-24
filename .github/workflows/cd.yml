@@ -85,12 +85,6 @@ jobs:
       - name: Install cargo-leptos
         run: cargo binstall cargo-leptos -y
 
-      - name: Install dart-sass
-        run: |
-          sudo snap install dart-sass
-          # Add to path if not automatically added
-          echo "/snap/bin" >> $GITHUB_PATH
-
       - name: Build UI
         run: cargo leptos build --release
       
