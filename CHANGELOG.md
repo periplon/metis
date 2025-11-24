@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.1.9 - 2025-11-24
+#### Bug Fixes
+- **(ci)** use cargo-leptos 0.2.21 with --locked flag - (ce2abe6) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.1.8 - 2025-11-24
 #### Bug Fixes
 - **(ci)** update Rust version and pin cargo-leptos version - (2866d81) - Joan Marc Carbo Arnau
