@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.2.0 - 2025-11-24
+#### Features
+- **(config)** add S3 live reload configuration with CLI support - (48f3927) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.1.12 - 2025-11-24
 #### Bug Fixes
 - **(ci)** properly rename release binaries to avoid directory conflicts - (8f4c353) - Joan Marc Carbo Arnau
