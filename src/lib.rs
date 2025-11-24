@@ -48,7 +48,7 @@ use crate::adapters::health_handler::HealthHandler;
 use crate::adapters::metrics_handler::MetricsHandler;
 use crate::adapters::rmcp_server::MetisServer;
 use crate::adapters::state_manager::StateManager;
-use axum::{routing::{delete, get}, Router};
+use axum::{routing::{delete, get, post}, Router};
 use rmcp::transport::streamable_http_server::{
     session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
 };
@@ -129,22 +129,24 @@ pub async fn create_app(
         // Config overview and settings
         .route("/config", get(api_handler::get_config_overview))
         .route("/config/settings", get(api_handler::get_server_settings).put(api_handler::update_server_settings))
+        .route("/config/save-disk", post(api_handler::save_config_to_disk))
+        .route("/config/save-s3", post(api_handler::save_config_to_s3))
         .route("/metrics/json", get(api_handler::get_metrics_json))
         // Resources CRUD
         .route("/resources", get(api_handler::list_resources).post(api_handler::create_resource))
-        .route("/resources/{uri}", get(api_handler::get_resource).put(api_handler::update_resource).delete(api_handler::delete_resource))
+        .route("/resources/:uri", get(api_handler::get_resource).put(api_handler::update_resource).delete(api_handler::delete_resource))
         // Tools CRUD
         .route("/tools", get(api_handler::list_tools).post(api_handler::create_tool))
-        .route("/tools/{name}", get(api_handler::get_tool).put(api_handler::update_tool).delete(api_handler::delete_tool))
+        .route("/tools/:name", get(api_handler::get_tool).put(api_handler::update_tool).delete(api_handler::delete_tool))
         // Prompts CRUD
         .route("/prompts", get(api_handler::list_prompts).post(api_handler::create_prompt))
-        .route("/prompts/{name}", get(api_handler::get_prompt).put(api_handler::update_prompt).delete(api_handler::delete_prompt))
+        .route("/prompts/:name", get(api_handler::get_prompt).put(api_handler::update_prompt).delete(api_handler::delete_prompt))
         // Workflows CRUD
         .route("/workflows", get(api_handler::list_workflows).post(api_handler::create_workflow))
-        .route("/workflows/{name}", get(api_handler::get_workflow).put(api_handler::update_workflow).delete(api_handler::delete_workflow))
+        .route("/workflows/:name", get(api_handler::get_workflow).put(api_handler::update_workflow).delete(api_handler::delete_workflow))
         // State management
         .route("/state", get(api_handler::get_state).delete(api_handler::reset_state))
-        .route("/state/{key}", delete(api_handler::delete_state_key))
+        .route("/state/:key", delete(api_handler::delete_state_key))
         .with_state(api_state);
 
     let mut router = router
