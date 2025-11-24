@@ -566,10 +566,26 @@ impl MockStrategyHandler {
         if let Some(file_config) = &config.file {
             // Read file content
             let content = tokio::fs::read_to_string(&file_config.path).await?;
-            
-            // Parse as JSON array
-            let data: Vec<Value> = serde_json::from_str(&content)?;
-            
+
+            // Try to parse as JSON array first
+            let data: Vec<Value> = match serde_json::from_str(&content) {
+                Ok(arr) => arr,
+                Err(_) => {
+                    // Try parsing as JSON Lines (one JSON object per line)
+                    let lines: Vec<Value> = content
+                        .lines()
+                        .filter(|line| !line.trim().is_empty())
+                        .filter_map(|line| serde_json::from_str(line).ok())
+                        .collect();
+
+                    if lines.is_empty() {
+                        // Return raw content as string if not JSON
+                        return Ok(Value::String(content));
+                    }
+                    lines
+                }
+            };
+
             if data.is_empty() {
                 return Ok(Value::Null);
             }
@@ -580,16 +596,22 @@ impl MockStrategyHandler {
                     use rand::Rng;
                     let mut rng = rand::thread_rng();
                     let idx = rng.gen_range(0..data.len());
-                    &data[idx]
+                    data[idx].clone()
                 }
                 "sequential" => {
-                    // TODO: Implement sequential selection with state
-                    &data[0]
+                    // Use state manager for sequential selection
+                    let state_key = format!("__file_seq_{}", file_config.path);
+                    let current_idx = self.state_manager.increment(&state_key).await;
+                    // Wrap around using modulo
+                    let idx = ((current_idx - 1) as usize) % data.len();
+                    data[idx].clone()
                 }
-                _ => &data[0],
+                "first" => data[0].clone(),
+                "last" => data[data.len() - 1].clone(),
+                _ => data[0].clone(),
             };
 
-            Ok(selected.clone())
+            Ok(selected)
         } else {
             Ok(Value::Null)
         }
@@ -597,38 +619,152 @@ impl MockStrategyHandler {
 
     fn generate_pattern(&self, config: &MockConfig) -> Result<Value> {
         if let Some(pattern) = &config.pattern {
-            use rand::Rng;
-            let mut rng = rand::thread_rng();
-            
-            // Simple pattern generation - expand character classes
-            let mut result = String::new();
-            let mut chars = pattern.chars().peekable();
-            
-            while let Some(ch) = chars.next() {
-                match ch {
-                    '\\' => {
-                        if let Some(next) = chars.next() {
-                            match next {
-                                'd' => result.push_str(&rng.gen_range(0..10).to_string()),
-                                'w' => {
-                                    let c = if rng.gen_bool(0.5) {
-                                        rng.gen_range(b'a'..=b'z') as char
-                                    } else {
-                                        rng.gen_range(b'A'..=b'Z') as char
-                                    };
-                                    result.push(c);
-                                }
-                                _ => result.push(next),
-                            }
-                        }
-                    }
-                    _ => result.push(ch),
-                }
-            }
-            
+            let result = self.expand_pattern(pattern)?;
             Ok(json!(result))
         } else {
             Ok(Value::Null)
         }
+    }
+
+    /// Expand a pattern string into a generated value.
+    /// Supports:
+    /// - `\d` - random digit (0-9)
+    /// - `\D` - random non-digit (a-z)
+    /// - `\w` - random word character (a-zA-Z0-9_)
+    /// - `\W` - random non-word character (space, punctuation)
+    /// - `\a` - random lowercase letter (a-z)
+    /// - `\A` - random uppercase letter (A-Z)
+    /// - `\x` - random hex digit (0-9a-f)
+    /// - `\X` - random uppercase hex digit (0-9A-F)
+    /// - `\s` - space character
+    /// - `\n` - newline character
+    /// - `{n}` - repeat previous pattern n times
+    /// - `{n,m}` - repeat previous pattern n to m times
+    /// - `[abc]` - one of the characters in brackets
+    /// - `[a-z]` - one character from range
+    /// - `\\` - literal backslash
+    fn expand_pattern(&self, pattern: &str) -> Result<String> {
+        use rand::Rng;
+        let mut rng = rand::thread_rng();
+        let mut result = String::new();
+        let mut chars = pattern.chars().peekable();
+        let mut last_char: Option<char> = None;
+
+        while let Some(ch) = chars.next() {
+            match ch {
+                '\\' => {
+                    if let Some(next) = chars.next() {
+                        let generated = match next {
+                            'd' => rng.gen_range(0..10).to_string(),
+                            'D' => (rng.gen_range(b'a'..=b'z') as char).to_string(),
+                            'w' => {
+                                let choices: Vec<char> = ('a'..='z')
+                                    .chain('A'..='Z')
+                                    .chain('0'..='9')
+                                    .chain(std::iter::once('_'))
+                                    .collect();
+                                choices[rng.gen_range(0..choices.len())].to_string()
+                            }
+                            'W' => {
+                                let choices = [' ', '!', '@', '#', '$', '%', '^', '&', '*'];
+                                choices[rng.gen_range(0..choices.len())].to_string()
+                            }
+                            'a' => (rng.gen_range(b'a'..=b'z') as char).to_string(),
+                            'A' => (rng.gen_range(b'A'..=b'Z') as char).to_string(),
+                            'x' => {
+                                let hex_chars: Vec<char> = ('0'..='9').chain('a'..='f').collect();
+                                hex_chars[rng.gen_range(0..hex_chars.len())].to_string()
+                            }
+                            'X' => {
+                                let hex_chars: Vec<char> = ('0'..='9').chain('A'..='F').collect();
+                                hex_chars[rng.gen_range(0..hex_chars.len())].to_string()
+                            }
+                            's' => " ".to_string(),
+                            'n' => "\n".to_string(),
+                            't' => "\t".to_string(),
+                            '\\' => "\\".to_string(),
+                            _ => next.to_string(),
+                        };
+                        for c in generated.chars() {
+                            result.push(c);
+                            last_char = Some(c);
+                        }
+                    }
+                }
+                '[' => {
+                    // Character class [abc] or [a-z]
+                    let mut class_chars: Vec<char> = Vec::new();
+                    while let Some(&next) = chars.peek() {
+                        if next == ']' {
+                            chars.next();
+                            break;
+                        }
+                        let c = chars.next().unwrap();
+                        if chars.peek() == Some(&'-') {
+                            chars.next(); // consume '-'
+                            if let Some(&end) = chars.peek() {
+                                if end != ']' {
+                                    chars.next();
+                                    // Range like a-z
+                                    for range_char in c..=end {
+                                        class_chars.push(range_char);
+                                    }
+                                    continue;
+                                }
+                            }
+                        }
+                        class_chars.push(c);
+                    }
+                    if !class_chars.is_empty() {
+                        let selected = class_chars[rng.gen_range(0..class_chars.len())];
+                        result.push(selected);
+                        last_char = Some(selected);
+                    }
+                }
+                '{' => {
+                    // Repetition {n} or {n,m}
+                    let mut rep_str = String::new();
+                    while let Some(&next) = chars.peek() {
+                        if next == '}' {
+                            chars.next();
+                            break;
+                        }
+                        rep_str.push(chars.next().unwrap());
+                    }
+
+                    let (min, max) = if rep_str.contains(',') {
+                        let parts: Vec<&str> = rep_str.split(',').collect();
+                        let min_val = parts[0].trim().parse::<usize>().unwrap_or(1);
+                        let max_val = parts.get(1)
+                            .and_then(|s| s.trim().parse::<usize>().ok())
+                            .unwrap_or(min_val);
+                        (min_val, max_val)
+                    } else {
+                        let n = rep_str.trim().parse::<usize>().unwrap_or(1);
+                        (n, n)
+                    };
+
+                    let repeat_count = if min == max {
+                        min
+                    } else {
+                        rng.gen_range(min..=max)
+                    };
+
+                    // Repeat the last character
+                    if let Some(c) = last_char {
+                        // We already have one instance, add repeat_count - 1 more
+                        for _ in 1..repeat_count {
+                            result.push(c);
+                        }
+                    }
+                }
+                _ => {
+                    result.push(ch);
+                    last_char = Some(ch);
+                }
+            }
+        }
+
+        Ok(result)
     }
 }

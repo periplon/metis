@@ -221,3 +221,228 @@ output = "Hello, " + input["name"] + "!"
     let value = result.unwrap();
     assert_eq!(value, "Hello, Python!");
 }
+
+#[tokio::test]
+async fn test_generate_pattern_basic() {
+    let handler = MockStrategyHandler::new(Arc::new(StateManager::new()));
+    let config = MockConfig {
+        strategy: MockStrategyType::Pattern,
+        template: None,
+        faker_type: None,
+        stateful: None,
+        file: None,
+        pattern: Some(r"ID-\d\d\d\d".to_string()),
+        script: None,
+        script_lang: None,
+        llm: None,
+        database: None,
+    };
+
+    let result = handler.generate(&config, None).await;
+    assert!(result.is_ok());
+    let value = result.unwrap();
+    let text = value.as_str().unwrap();
+    // Should be "ID-" followed by 4 digits
+    assert!(text.starts_with("ID-"));
+    assert_eq!(text.len(), 7);
+    assert!(text[3..].chars().all(|c| c.is_ascii_digit()));
+}
+
+#[tokio::test]
+async fn test_generate_pattern_character_class() {
+    let handler = MockStrategyHandler::new(Arc::new(StateManager::new()));
+    let config = MockConfig {
+        strategy: MockStrategyType::Pattern,
+        template: None,
+        faker_type: None,
+        stateful: None,
+        file: None,
+        pattern: Some(r"[abc][0-9]".to_string()),
+        script: None,
+        script_lang: None,
+        llm: None,
+        database: None,
+    };
+
+    let result = handler.generate(&config, None).await;
+    assert!(result.is_ok());
+    let value = result.unwrap();
+    let text = value.as_str().unwrap();
+    assert_eq!(text.len(), 2);
+    assert!(['a', 'b', 'c'].contains(&text.chars().next().unwrap()));
+    assert!(text.chars().nth(1).unwrap().is_ascii_digit());
+}
+
+#[tokio::test]
+async fn test_generate_pattern_repetition() {
+    let handler = MockStrategyHandler::new(Arc::new(StateManager::new()));
+    let config = MockConfig {
+        strategy: MockStrategyType::Pattern,
+        template: None,
+        faker_type: None,
+        stateful: None,
+        file: None,
+        pattern: Some(r"x{5}".to_string()),
+        script: None,
+        script_lang: None,
+        llm: None,
+        database: None,
+    };
+
+    let result = handler.generate(&config, None).await;
+    assert!(result.is_ok());
+    let value = result.unwrap();
+    let text = value.as_str().unwrap();
+    assert_eq!(text, "xxxxx");
+}
+
+#[tokio::test]
+async fn test_generate_pattern_hex() {
+    let handler = MockStrategyHandler::new(Arc::new(StateManager::new()));
+    let config = MockConfig {
+        strategy: MockStrategyType::Pattern,
+        template: None,
+        faker_type: None,
+        stateful: None,
+        file: None,
+        pattern: Some(r"\x\x\x\x".to_string()),
+        script: None,
+        script_lang: None,
+        llm: None,
+        database: None,
+    };
+
+    let result = handler.generate(&config, None).await;
+    assert!(result.is_ok());
+    let value = result.unwrap();
+    let text = value.as_str().unwrap();
+    assert_eq!(text.len(), 4);
+    assert!(text.chars().all(|c| c.is_ascii_hexdigit()));
+}
+
+#[tokio::test]
+async fn test_generate_file_random() {
+    use crate::config::FileConfig;
+    use std::io::Write;
+
+    // Create a temporary test file
+    let temp_dir = std::env::temp_dir();
+    let test_file = temp_dir.join("metis_test_data.json");
+    let mut file = std::fs::File::create(&test_file).unwrap();
+    writeln!(file, r#"[{{"id": 1}}, {{"id": 2}}, {{"id": 3}}]"#).unwrap();
+
+    let handler = MockStrategyHandler::new(Arc::new(StateManager::new()));
+    let config = MockConfig {
+        strategy: MockStrategyType::File,
+        template: None,
+        faker_type: None,
+        stateful: None,
+        file: Some(FileConfig {
+            path: test_file.to_string_lossy().to_string(),
+            selection: "random".to_string(),
+        }),
+        pattern: None,
+        script: None,
+        script_lang: None,
+        llm: None,
+        database: None,
+    };
+
+    let result = handler.generate(&config, None).await;
+    assert!(result.is_ok());
+    let value = result.unwrap();
+    // Should be one of the objects
+    assert!(value.is_object());
+    let id = value.get("id").unwrap().as_i64().unwrap();
+    assert!((1..=3).contains(&id));
+
+    // Cleanup
+    std::fs::remove_file(&test_file).ok();
+}
+
+#[tokio::test]
+async fn test_generate_file_sequential() {
+    use crate::config::FileConfig;
+    use std::io::Write;
+
+    // Create a temporary test file
+    let temp_dir = std::env::temp_dir();
+    let test_file = temp_dir.join("metis_test_sequential.json");
+    let mut file = std::fs::File::create(&test_file).unwrap();
+    writeln!(file, r#"[{{"id": 1}}, {{"id": 2}}, {{"id": 3}}]"#).unwrap();
+
+    let handler = MockStrategyHandler::new(Arc::new(StateManager::new()));
+    let config = MockConfig {
+        strategy: MockStrategyType::File,
+        template: None,
+        faker_type: None,
+        stateful: None,
+        file: Some(FileConfig {
+            path: test_file.to_string_lossy().to_string(),
+            selection: "sequential".to_string(),
+        }),
+        pattern: None,
+        script: None,
+        script_lang: None,
+        llm: None,
+        database: None,
+    };
+
+    // First call should return id: 1
+    let result1 = handler.generate(&config, None).await.unwrap();
+    assert_eq!(result1.get("id").unwrap().as_i64().unwrap(), 1);
+
+    // Second call should return id: 2
+    let result2 = handler.generate(&config, None).await.unwrap();
+    assert_eq!(result2.get("id").unwrap().as_i64().unwrap(), 2);
+
+    // Third call should return id: 3
+    let result3 = handler.generate(&config, None).await.unwrap();
+    assert_eq!(result3.get("id").unwrap().as_i64().unwrap(), 3);
+
+    // Fourth call should wrap around to id: 1
+    let result4 = handler.generate(&config, None).await.unwrap();
+    assert_eq!(result4.get("id").unwrap().as_i64().unwrap(), 1);
+
+    // Cleanup
+    std::fs::remove_file(&test_file).ok();
+}
+
+#[tokio::test]
+async fn test_generate_file_jsonlines() {
+    use crate::config::FileConfig;
+    use std::io::Write;
+
+    // Create a temporary test file with JSON Lines format
+    let temp_dir = std::env::temp_dir();
+    let test_file = temp_dir.join("metis_test_jsonlines.jsonl");
+    let mut file = std::fs::File::create(&test_file).unwrap();
+    writeln!(file, r#"{{"name": "Alice"}}"#).unwrap();
+    writeln!(file, r#"{{"name": "Bob"}}"#).unwrap();
+    writeln!(file, r#"{{"name": "Charlie"}}"#).unwrap();
+
+    let handler = MockStrategyHandler::new(Arc::new(StateManager::new()));
+    let config = MockConfig {
+        strategy: MockStrategyType::File,
+        template: None,
+        faker_type: None,
+        stateful: None,
+        file: Some(FileConfig {
+            path: test_file.to_string_lossy().to_string(),
+            selection: "first".to_string(),
+        }),
+        pattern: None,
+        script: None,
+        script_lang: None,
+        llm: None,
+        database: None,
+    };
+
+    let result = handler.generate(&config, None).await;
+    assert!(result.is_ok());
+    let value = result.unwrap();
+    assert_eq!(value.get("name").unwrap().as_str().unwrap(), "Alice");
+
+    // Cleanup
+    std::fs::remove_file(&test_file).ok();
+}

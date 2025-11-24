@@ -286,6 +286,33 @@ template = "Your template content here with {{ variables }}"
 **Random Strategy Options:**
 - `faker_type`: Type of fake data to generate (e.g., "name", "email", "sentence", "paragraph")
 
+**File Strategy Options:**
+```toml
+[resources.mock]
+strategy = "file"
+[resources.mock.file]
+path = "data/users.json"  # JSON array, JSON Lines, or raw text
+selection = "sequential"   # "random", "sequential", "first", "last"
+```
+
+**Pattern Strategy Options:**
+```toml
+[resources.mock]
+strategy = "pattern"
+pattern = "ID-\\d\\d\\d\\d"  # Generate strings like "ID-1234"
+```
+
+Pattern syntax:
+- `\d` - random digit (0-9)
+- `\a` - random lowercase letter (a-z)
+- `\A` - random uppercase letter (A-Z)
+- `\w` - random word character (a-zA-Z0-9_)
+- `\x` - random hex digit (0-9a-f)
+- `[abc]` - one of the characters
+- `[a-z]` - character from range
+- `{n}` - repeat previous n times
+- `{n,m}` - repeat previous n to m times
+
 ### Tool Configuration
 
 Tools represent executable functions that can be called via the MCP protocol.
@@ -398,7 +425,7 @@ Metis implements the following MCP protocol methods:
 
 ### Current Status (Under Development)
 - ✅ Core MCP protocol implementation
-- ⚠️ Mock Strategies:
+- ✅ Mock Strategies:
     - ✅ Template
     - ✅ Random
     - ✅ Static
@@ -406,8 +433,8 @@ Metis implements the following MCP protocol methods:
     - ✅ Database (SQLx)
     - ✅ LLM (OpenAI/Anthropic)
     - ✅ Script (Rhai, Lua, JavaScript, Python)
-    - 🚧 File (Planned)
-    - 🚧 Pattern (Planned)
+    - ✅ File (JSON, JSON Lines, raw text; random/sequential/first/last selection)
+    - ✅ Pattern (regex-like patterns with character classes and repetition)
 - ✅ Resource, Tool, and Prompt handlers
 - ✅ TOML-based configuration with Hot Reload
 - ✅ S3 Configuration with Live Reload
@@ -418,7 +445,6 @@ Metis implements the following MCP protocol methods:
 - ✅ Authentication (API Key, JWT Bearer, Basic Auth, OAuth2/JWKS)
 
 ### Planned Features
-- [ ] Implement File and Pattern strategies
 - [ ] Advanced Workflow engine
 - [ ] Enhanced Web UI for configuration management
 - [ ] Performance optimizations (>10k req/s)
