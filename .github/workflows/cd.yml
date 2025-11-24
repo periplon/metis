@@ -16,7 +16,7 @@ jobs:
     name: Version & Tag
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      version: ${{ steps.cog_bump.outputs.version }}
       skipped: ${{ steps.cog_bump.outputs.skipped }}
     steps:
       - uses: actions/checkout@v4
