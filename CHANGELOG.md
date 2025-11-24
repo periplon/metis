@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.9.3 - 2025-11-24
+#### Bug Fixes
+- **(api)** use correct axum path parameter syntax - (0dd2038) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.9.2 - 2025-11-24
 #### Bug Fixes
 - **(ci)** use trunk instead of cargo-leptos for UI build - (fbd929f) - Joan Marc Carbo Arnau
