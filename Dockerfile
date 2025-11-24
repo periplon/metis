@@ -1,11 +1,11 @@
 # UI build stage
-FROM rust:1.75 as frontend-builder
+FROM rust:1.82 as frontend-builder
 
 WORKDIR /app
 
 # Install wasm target and cargo-leptos
 RUN rustup target add wasm32-unknown-unknown
-RUN cargo install cargo-leptos
+RUN cargo install cargo-leptos --version 0.2.24
 
 # Copy UI source
 COPY ui ./ui
@@ -18,7 +18,7 @@ WORKDIR /app/ui
 RUN cargo leptos build --release
 
 # Rust backend build stage
-FROM rust:1.75 as builder
+FROM rust:1.82 as builder
 
 WORKDIR /app
 
