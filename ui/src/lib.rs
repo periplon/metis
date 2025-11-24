@@ -9,9 +9,9 @@ mod components;
 use components::dashboard::Dashboard;
 use components::config::Config;
 use components::logs::Logs;
-use components::resources::{Resources, ResourceForm};
-use components::tools::{Tools, ToolForm};
-use components::prompts::{Prompts, PromptForm};
+use components::resources::{Resources, ResourceForm, ResourceEditForm};
+use components::tools::{Tools, ToolForm, ToolEditForm};
+use components::prompts::{Prompts, PromptForm, PromptEditForm};
 use components::workflows::{Workflows, WorkflowForm};
 
 #[component]
@@ -42,10 +42,13 @@ pub fn App() -> impl IntoView {
                     <Routes fallback=|| "Not found.">
                         <Route path=path!("/") view=Dashboard/>
                         <Route path=path!("/resources/new") view=ResourceForm/>
+                        <Route path=path!("/resources/edit/:uri") view=ResourceEditForm/>
                         <Route path=path!("/resources") view=Resources/>
                         <Route path=path!("/tools/new") view=ToolForm/>
+                        <Route path=path!("/tools/edit/:name") view=ToolEditForm/>
                         <Route path=path!("/tools") view=Tools/>
                         <Route path=path!("/prompts/new") view=PromptForm/>
+                        <Route path=path!("/prompts/edit/:name") view=PromptEditForm/>
                         <Route path=path!("/prompts") view=Prompts/>
                         <Route path=path!("/workflows/new") view=WorkflowForm/>
                         <Route path=path!("/workflows") view=Workflows/>
@@ -70,5 +73,6 @@ fn NavLink(href: &'static str, label: &'static str) -> impl IntoView {
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn main() {
     console_error_panic_hook::set_once();
+    console_log::init_with_level(log::Level::Debug).unwrap();
     leptos::mount::mount_to_body(App);
 }

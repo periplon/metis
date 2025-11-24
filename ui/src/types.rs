@@ -24,6 +24,7 @@ pub struct ConfigOverview {
     pub auth_enabled: bool,
     pub rate_limit_enabled: bool,
     pub s3_enabled: bool,
+    pub config_file_loaded: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -45,6 +46,8 @@ pub struct AuthConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub jwt_algorithm: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub basic_users: Option<std::collections::HashMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub jwks_url: Option<String>,
 }
 
@@ -56,12 +59,29 @@ pub struct RateLimitConfig {
     pub burst_size: u32,
 }
 
+/// S3 configuration
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct S3Config {
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bucket: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    pub poll_interval_secs: u64,
+}
+
 /// Server settings that can be edited via the UI
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ServerSettings {
     pub auth: AuthConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rate_limit: Option<RateLimitConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub s3: Option<S3Config>,
 }
 
 /// Resource configuration

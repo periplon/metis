@@ -1,17 +1,30 @@
 use leptos::prelude::*;
 use leptos::web_sys;
+use std::collections::HashMap;
 use wasm_bindgen::JsCast;
 use crate::api;
-use crate::types::{ConfigOverview, ServerSettings, AuthConfig, RateLimitConfig};
+use crate::types::{ConfigOverview, ServerSettings, AuthConfig, RateLimitConfig, S3Config};
 
 #[component]
 pub fn Config() -> impl IntoView {
     let config = LocalResource::new(|| async move {
-        api::get_config().await.ok()
+        log::info!("Fetching config...");
+        let result = api::get_config().await;
+        match &result {
+            Ok(_) => log::info!("Config result: OK"),
+            Err(e) => log::error!("Config result: ERROR - {}", e),
+        }
+        result.ok()
     });
 
     let settings = LocalResource::new(|| async move {
-        api::get_server_settings().await.ok()
+        log::info!("Fetching settings...");
+        let result = api::get_server_settings().await;
+        match &result {
+            Ok(_) => log::info!("Settings result: OK"),
+            Err(e) => log::error!("Settings result: ERROR - {}", e),
+        }
+        result.ok()
     });
 
     view! {
@@ -23,45 +36,80 @@ pub fn Config() -> impl IntoView {
                     let config_data = config.get();
                     let settings_data = settings.get();
 
+                    log::info!("Config data: {:?}", config_data.is_some());
+                    log::info!("Settings data: {:?}", settings_data.is_some());
+
                     match (config_data, settings_data) {
-                        (Some(Some(overview)), Some(Some(server_settings))) => view! {
-                            <div class="space-y-6">
-                                <ServerConfigCard overview=overview.clone() />
-                                <SettingsEditorCard initial_settings=server_settings />
-                                <QuickLinksCard overview=overview />
-                            </div>
-                        }.into_any(),
-                        (Some(Some(overview)), _) => view! {
-                            <div class="space-y-6">
-                                <ServerConfigCard overview=overview.clone() />
-                                <FeaturesCard overview=overview.clone() />
-                                <QuickLinksCard overview=overview />
-                            </div>
-                        }.into_any(),
-                        // No config exists - show editor with defaults to create new config
-                        _ => {
-                            let default_settings = ServerSettings {
-                                auth: AuthConfig {
-                                    enabled: false,
-                                    mode: "None".to_string(),
-                                    api_keys: None,
-                                    jwt_secret: None,
-                                    jwt_algorithm: None,
-                                    jwks_url: None,
-                                },
-                                rate_limit: Some(RateLimitConfig {
-                                    enabled: false,
-                                    requests_per_second: 100,
-                                    burst_size: 10,
-                                }),
-                            };
-                            view! {
-                                <div class="space-y-6">
-                                    <NewConfigBanner />
-                                    <SettingsEditorCard initial_settings=default_settings />
-                                </div>
-                            }.into_any()
+                        (Some(Some(overview)), Some(Some(server_settings))) => {
+                            // Check if config file was loaded
+                            if !overview.config_file_loaded {
+                                // No config file - show banner and editor with defaults
+                                view! {
+                                    <div class="space-y-6">
+                                        <NewConfigBanner />
+                                        <SettingsEditorCard initial_settings=server_settings />
+                                    </div>
+                                }.into_any()
+                            } else {
+                                // Config file exists - show normal view
+                                view! {
+                                    <div class="space-y-6">
+                                        <ServerConfigCard overview=overview.clone() />
+                                        <SettingsEditorCard initial_settings=server_settings />
+                                        <QuickLinksCard overview=overview />
+                                    </div>
+                                }.into_any()
+                            }
                         },
+                        (Some(Some(overview)), _) => {
+                            // Handle case where settings API failed but we have overview
+                            if !overview.config_file_loaded {
+                                // No config file - show default editor even if settings API failed
+                                let default_settings = ServerSettings {
+                                    auth: AuthConfig {
+                                        enabled: false,
+                                        mode: "None".to_string(),
+                                        api_keys: None,
+                                        jwt_secret: None,
+                                        jwt_algorithm: None,
+                                        basic_users: None,
+                                        jwks_url: None,
+                                    },
+                                    rate_limit: Some(RateLimitConfig {
+                                        enabled: false,
+                                        requests_per_second: 100,
+                                        burst_size: 10,
+                                    }),
+                                    s3: Some(S3Config {
+                                        enabled: false,
+                                        bucket: None,
+                                        prefix: None,
+                                        region: None,
+                                        endpoint: None,
+                                        poll_interval_secs: 30,
+                                    }),
+                                };
+                                view! {
+                                    <div class="space-y-6">
+                                        <NewConfigBanner />
+                                        <SettingsEditorCard initial_settings=default_settings />
+                                    </div>
+                                }.into_any()
+                            } else {
+                                // Config file exists - show normal view without settings editor
+                                view! {
+                                    <div class="space-y-6">
+                                        <ServerConfigCard overview=overview.clone() />
+                                        <FeaturesCard overview=overview.clone() />
+                                        <QuickLinksCard overview=overview />
+                                    </div>
+                                }.into_any()
+                            }
+                        },
+                        // Still loading or error - show loading/error state
+                        _ => view! {
+                            <div class="text-gray-500">"Loading configuration..."</div>
+                        }.into_any(),
                     }
                 }}
             </Suspense>
@@ -80,12 +128,22 @@ fn NewConfigBanner() -> impl IntoView {
                     </svg>
                 </div>
                 <div class="ml-4">
-                    <h3 class="text-lg font-semibold text-blue-800">"Create New Configuration"</h3>
+                    <h3 class="text-lg font-semibold text-blue-800">"No Configuration File"</h3>
                     <p class="mt-1 text-blue-700">
-                        "No configuration file found. Configure your settings below and click "
-                        <strong>"Save Changes"</strong>
-                        " to create a new configuration."
+                        "No "
+                        <code class="bg-blue-100 px-1 rounded">"metis.toml"</code>
+                        " found. Settings are currently running with defaults."
                     </p>
+                    <div class="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded">
+                        <p class="text-sm text-yellow-800">
+                            <strong>"⚠️ Important:"</strong>
+                            " Changes made here are only saved "
+                            <strong>"in memory"</strong>
+                            " and will be lost when the server restarts. To persist settings, create a "
+                            <code class="bg-yellow-100 px-1 rounded">"metis.toml"</code>
+                            " file in the server's working directory."
+                        </p>
+                    </div>
                 </div>
             </div>
         </div>
@@ -120,6 +178,31 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
     let (auth_enabled, set_auth_enabled) = signal(initial_settings.auth.enabled);
     let (auth_mode, set_auth_mode) = signal(initial_settings.auth.mode.clone());
 
+    // Auth mode-specific fields
+    let (api_keys, set_api_keys) = signal(
+        initial_settings.auth.api_keys.clone()
+            .map(|keys| keys.join(", "))
+            .unwrap_or_default()
+    );
+    let (jwt_secret, set_jwt_secret) = signal(
+        initial_settings.auth.jwt_secret.clone().unwrap_or_default()
+    );
+    let (jwt_algorithm, set_jwt_algorithm) = signal(
+        initial_settings.auth.jwt_algorithm.clone().unwrap_or_else(|| "HS256".to_string())
+    );
+    let (jwks_url, set_jwks_url) = signal(
+        initial_settings.auth.jwks_url.clone().unwrap_or_default()
+    );
+
+    // Basic Auth users - stored as Vec<(username, password)> for easy UI management
+    let (basic_users, set_basic_users) = signal(
+        initial_settings.auth.basic_users.clone()
+            .map(|users| users.into_iter().collect::<Vec<_>>())
+            .unwrap_or_default()
+    );
+    let (new_username, set_new_username) = signal(String::new());
+    let (new_password, set_new_password) = signal(String::new());
+
     let initial_rate_limit = initial_settings.rate_limit.clone().unwrap_or(RateLimitConfig {
         enabled: false,
         requests_per_second: 100,
@@ -130,6 +213,22 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
     let (requests_per_second, set_requests_per_second) = signal(initial_rate_limit.requests_per_second);
     let (burst_size, set_burst_size) = signal(initial_rate_limit.burst_size);
 
+    let initial_s3 = initial_settings.s3.clone().unwrap_or(S3Config {
+        enabled: false,
+        bucket: None,
+        prefix: None,
+        region: None,
+        endpoint: None,
+        poll_interval_secs: 30,
+    });
+
+    let (s3_enabled, set_s3_enabled) = signal(initial_s3.enabled);
+    let (s3_bucket, set_s3_bucket) = signal(initial_s3.bucket.unwrap_or_default());
+    let (s3_prefix, set_s3_prefix) = signal(initial_s3.prefix.unwrap_or_default());
+    let (s3_region, set_s3_region) = signal(initial_s3.region.unwrap_or_default());
+    let (s3_endpoint, set_s3_endpoint) = signal(initial_s3.endpoint.unwrap_or_default());
+    let (s3_poll_interval, set_s3_poll_interval) = signal(initial_s3.poll_interval_secs);
+
     let (saving, set_saving) = signal(false);
     let (message, set_message) = signal(Option::<(String, bool)>::None);
 
@@ -137,26 +236,65 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
         set_saving.set(true);
         set_message.set(None);
 
+        let bucket_val = s3_bucket.get();
+        let prefix_val = s3_prefix.get();
+        let region_val = s3_region.get();
+        let endpoint_val = s3_endpoint.get();
+
+        // Parse API keys from comma-separated string
+        let api_keys_val = api_keys.get();
+        let api_keys_vec: Option<Vec<String>> = if api_keys_val.is_empty() {
+            None
+        } else {
+            Some(api_keys_val.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+        };
+
+        let jwt_secret_val = jwt_secret.get();
+        let jwt_algorithm_val = jwt_algorithm.get();
+        let jwks_url_val = jwks_url.get();
+        let current_mode = auth_mode.get();
+
+        // Convert basic_users Vec back to HashMap
+        let basic_users_map: Option<HashMap<String, String>> = if current_mode == "BasicAuth" {
+            let users = basic_users.get();
+            if users.is_empty() {
+                None
+            } else {
+                Some(users.into_iter().collect())
+            }
+        } else {
+            None
+        };
+
         let settings = ServerSettings {
             auth: AuthConfig {
                 enabled: auth_enabled.get(),
-                mode: auth_mode.get(),
-                api_keys: None,
-                jwt_secret: None,
-                jwt_algorithm: None,
-                jwks_url: None,
+                mode: current_mode.clone(),
+                api_keys: if current_mode == "ApiKey" { api_keys_vec } else { None },
+                jwt_secret: if current_mode == "BearerToken" && !jwt_secret_val.is_empty() { Some(jwt_secret_val) } else { None },
+                jwt_algorithm: if current_mode == "BearerToken" { Some(jwt_algorithm_val) } else { None },
+                basic_users: basic_users_map,
+                jwks_url: if current_mode == "OAuth2" && !jwks_url_val.is_empty() { Some(jwks_url_val) } else { None },
             },
             rate_limit: Some(RateLimitConfig {
                 enabled: rate_limit_enabled.get(),
                 requests_per_second: requests_per_second.get(),
                 burst_size: burst_size.get(),
             }),
+            s3: Some(S3Config {
+                enabled: s3_enabled.get(),
+                bucket: if bucket_val.is_empty() { None } else { Some(bucket_val) },
+                prefix: if prefix_val.is_empty() { None } else { Some(prefix_val) },
+                region: if region_val.is_empty() { None } else { Some(region_val) },
+                endpoint: if endpoint_val.is_empty() { None } else { Some(endpoint_val) },
+                poll_interval_secs: s3_poll_interval.get(),
+            }),
         };
 
         wasm_bindgen_futures::spawn_local(async move {
             match api::update_server_settings(&settings).await {
                 Ok(_) => {
-                    set_message.set(Some(("Settings saved successfully".to_string(), true)));
+                    set_message.set(Some(("Settings saved to memory. Restart server to revert changes unless saved to metis.toml.".to_string(), true)));
                 }
                 Err(e) => {
                     set_message.set(Some((format!("Failed to save: {}", e), false)));
@@ -166,17 +304,67 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
         });
     };
 
+    let (saving_disk, set_saving_disk) = signal(false);
+    let on_save_disk = move |_| {
+        set_saving_disk.set(true);
+        wasm_bindgen_futures::spawn_local(async move {
+            match api::save_config_to_disk().await {
+                Ok(_) => {
+                    set_message.set(Some(("Configuration saved to metis.toml successfully!".to_string(), true)));
+                }
+                Err(e) => {
+                    set_message.set(Some((format!("Failed to save to disk: {}", e), false)));
+                }
+            }
+            set_saving_disk.set(false);
+        });
+    };
+
+    let (saving_s3, set_saving_s3) = signal(false);
+    let on_save_s3 = move |_| {
+        set_saving_s3.set(true);
+        wasm_bindgen_futures::spawn_local(async move {
+            match api::save_config_to_s3().await {
+                Ok(_) => {
+                    set_message.set(Some(("Configuration saved to S3 successfully!".to_string(), true)));
+                }
+                Err(e) => {
+                    set_message.set(Some((format!("Failed to save to S3: {}", e), false)));
+                }
+            }
+            set_saving_s3.set(false);
+        });
+    };
+
     view! {
         <div class="bg-white rounded-lg shadow overflow-hidden">
-            <div class="px-6 py-4 border-b border-gray-200 bg-gray-50 flex justify-between items-center">
-                <h3 class="text-lg font-semibold text-gray-800">"Settings Editor"</h3>
-                <button
-                    on:click=on_save
-                    disabled=move || saving.get()
-                    class="px-4 py-2 bg-blue-500 text-white text-sm rounded hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                    {move || if saving.get() { "Saving..." } else { "Save Changes" }}
-                </button>
+            <div class="px-6 py-4 border-b border-gray-200 bg-gray-50">
+                <div class="flex justify-between items-center mb-2">
+                    <h3 class="text-lg font-semibold text-gray-800">"Settings Editor"</h3>
+                </div>
+                <div class="flex gap-2">
+                    <button
+                        on:click=on_save
+                        disabled=move || saving.get()
+                        class="px-4 py-2 bg-blue-500 text-white text-sm rounded hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {move || if saving.get() { "Saving..." } else { "Save to Memory" }}
+                    </button>
+                    <button
+                        on:click=on_save_disk
+                        disabled=move || saving_disk.get()
+                        class="px-4 py-2 bg-green-500 text-white text-sm rounded hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {move || if saving_disk.get() { "Saving..." } else { "Save to Disk" }}
+                    </button>
+                    <button
+                        on:click=on_save_s3
+                        disabled=move || saving_s3.get()
+                        class="px-4 py-2 bg-purple-500 text-white text-sm rounded hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {move || if saving_s3.get() { "Saving..." } else { "Save to S3" }}
+                    </button>
+                </div>
             </div>
 
             {move || message.get().map(|(msg, success)| {
@@ -225,6 +413,232 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
                                 <option value="OAuth2">"OAuth2"</option>
                             </select>
                         </div>
+
+                        // API Key mode fields
+                        {move || {
+                            let mode = auth_mode.get();
+                            let enabled = auth_enabled.get();
+                            if mode == "ApiKey" && enabled {
+                                view! {
+                                    <div class="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                                        <label class="block text-sm font-medium text-gray-700 mb-1">"API Keys"</label>
+                                        <textarea
+                                            rows=3
+                                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+                                            placeholder="key1, key2, key3"
+                                            prop:value=move || api_keys.get()
+                                            on:input=move |ev| {
+                                                let target = ev.target().unwrap();
+                                                let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
+                                                set_api_keys.set(textarea.value());
+                                            }
+                                        />
+                                        <p class="mt-1 text-xs text-gray-500">"Comma-separated list of valid API keys"</p>
+                                    </div>
+                                }.into_any()
+                            } else {
+                                view! { <div></div> }.into_any()
+                            }
+                        }}
+
+                        // Bearer Token (JWT) mode fields
+                        {move || {
+                            let mode = auth_mode.get();
+                            let enabled = auth_enabled.get();
+                            if mode == "BearerToken" && enabled {
+                                view! {
+                                    <div class="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200 space-y-4">
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700 mb-1">"JWT Secret"</label>
+                                            <input
+                                                type="password"
+                                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                                                placeholder="your-secret-key"
+                                                prop:value=move || jwt_secret.get()
+                                                on:input=move |ev| {
+                                                    let target = ev.target().unwrap();
+                                                    let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                                    set_jwt_secret.set(input.value());
+                                                }
+                                            />
+                                            <p class="mt-1 text-xs text-gray-500">"Secret key for JWT validation"</p>
+                                        </div>
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700 mb-1">"JWT Algorithm"</label>
+                                            <select
+                                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                prop:value=move || jwt_algorithm.get()
+                                                on:change=move |ev| {
+                                                    let target = ev.target().unwrap();
+                                                    let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
+                                                    set_jwt_algorithm.set(select.value());
+                                                }
+                                            >
+                                                <option value="HS256">"HS256"</option>
+                                                <option value="HS384">"HS384"</option>
+                                                <option value="HS512">"HS512"</option>
+                                                <option value="RS256">"RS256"</option>
+                                                <option value="RS384">"RS384"</option>
+                                                <option value="RS512">"RS512"</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                }.into_any()
+                            } else {
+                                view! { <div></div> }.into_any()
+                            }
+                        }}
+
+                        // OAuth2 mode fields
+                        {move || {
+                            let mode = auth_mode.get();
+                            let enabled = auth_enabled.get();
+                            if mode == "OAuth2" && enabled {
+                                view! {
+                                    <div class="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                                        <label class="block text-sm font-medium text-gray-700 mb-1">"JWKS URL"</label>
+                                        <input
+                                            type="url"
+                                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                            placeholder="https://your-auth-server/.well-known/jwks.json"
+                                            prop:value=move || jwks_url.get()
+                                            on:input=move |ev| {
+                                                let target = ev.target().unwrap();
+                                                let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                                set_jwks_url.set(input.value());
+                                            }
+                                        />
+                                        <p class="mt-1 text-xs text-gray-500">"URL to fetch JSON Web Key Set for token validation"</p>
+                                    </div>
+                                }.into_any()
+                            } else {
+                                view! { <div></div> }.into_any()
+                            }
+                        }}
+
+                        // BasicAuth user editor
+                        {move || {
+                            let mode = auth_mode.get();
+                            let enabled = auth_enabled.get();
+                            if mode == "BasicAuth" && enabled {
+                                let add_user = move |_| {
+                                    let username = new_username.get();
+                                    let password = new_password.get();
+                                    if !username.is_empty() && !password.is_empty() {
+                                        set_basic_users.update(|users| {
+                                            // Check if username already exists
+                                            if !users.iter().any(|(u, _)| u == &username) {
+                                                users.push((username.clone(), password.clone()));
+                                            }
+                                        });
+                                        set_new_username.set(String::new());
+                                        set_new_password.set(String::new());
+                                    }
+                                };
+
+                                view! {
+                                    <div class="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200 space-y-4">
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700 mb-2">"Basic Auth Users"</label>
+
+                                            // Existing users list
+                                            <div class="space-y-2 mb-4">
+                                                {move || {
+                                                    let users = basic_users.get();
+                                                    if users.is_empty() {
+                                                        view! {
+                                                            <p class="text-sm text-gray-500 italic">"No users configured"</p>
+                                                        }.into_any()
+                                                    } else {
+                                                        view! {
+                                                            <div class="bg-white rounded border border-gray-200 divide-y">
+                                                                {users.into_iter().enumerate().map(|(idx, (username, _password))| {
+                                                                    let username_display = username.clone();
+                                                                    view! {
+                                                                        <div class="flex items-center justify-between px-3 py-2">
+                                                                            <div class="flex items-center gap-2">
+                                                                                <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+                                                                                </svg>
+                                                                                <span class="font-mono text-sm">{username_display}</span>
+                                                                                <span class="text-gray-400 text-xs">"(password hidden)"</span>
+                                                                            </div>
+                                                                            <button
+                                                                                type="button"
+                                                                                class="text-red-500 hover:text-red-700 text-sm"
+                                                                                on:click=move |_| {
+                                                                                    set_basic_users.update(|users| {
+                                                                                        users.remove(idx);
+                                                                                    });
+                                                                                }
+                                                                            >
+                                                                                "Remove"
+                                                                            </button>
+                                                                        </div>
+                                                                    }
+                                                                }).collect::<Vec<_>>()}
+                                                            </div>
+                                                        }.into_any()
+                                                    }
+                                                }}
+                                            </div>
+
+                                            // Add new user form
+                                            <div class="flex gap-2">
+                                                <input
+                                                    type="text"
+                                                    placeholder="Username"
+                                                    class="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                                    prop:value=move || new_username.get()
+                                                    on:input=move |ev| {
+                                                        let target = ev.target().unwrap();
+                                                        let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                                        set_new_username.set(input.value());
+                                                    }
+                                                />
+                                                <input
+                                                    type="password"
+                                                    placeholder="Password"
+                                                    class="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                                    prop:value=move || new_password.get()
+                                                    on:input=move |ev| {
+                                                        let target = ev.target().unwrap();
+                                                        let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                                        set_new_password.set(input.value());
+                                                    }
+                                                    on:keypress=move |ev: web_sys::KeyboardEvent| {
+                                                        if ev.key() == "Enter" {
+                                                            ev.prevent_default();
+                                                            let username = new_username.get();
+                                                            let password = new_password.get();
+                                                            if !username.is_empty() && !password.is_empty() {
+                                                                set_basic_users.update(|users| {
+                                                                    if !users.iter().any(|(u, _)| u == &username) {
+                                                                        users.push((username.clone(), password.clone()));
+                                                                    }
+                                                                });
+                                                                set_new_username.set(String::new());
+                                                                set_new_password.set(String::new());
+                                                            }
+                                                        }
+                                                    }
+                                                />
+                                                <button
+                                                    type="button"
+                                                    class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm whitespace-nowrap"
+                                                    on:click=add_user
+                                                >
+                                                    "Add User"
+                                                </button>
+                                            </div>
+                                            <p class="mt-2 text-xs text-gray-500">"Add username/password pairs for Basic Auth authentication"</p>
+                                        </div>
+                                    </div>
+                                }.into_any()
+                            } else {
+                                view! { <div></div> }.into_any()
+                            }
+                        }}
                     </div>
                 </div>
 
@@ -280,6 +694,109 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
                                         }
                                     }
                                 />
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                // S3 Configuration Section
+                <div>
+                    <h4 class="text-md font-semibold text-gray-700 mb-4 flex items-center">
+                        <span class="w-2 h-2 bg-purple-500 rounded-full mr-2"></span>
+                        "S3 Storage"
+                    </h4>
+                    <div class="space-y-4 pl-4">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <label class="font-medium text-gray-700">"Enable S3 Configuration Storage"</label>
+                                <p class="text-sm text-gray-500">"Store configuration in AWS S3 or compatible storage"</p>
+                            </div>
+                            <ToggleSwitch
+                                enabled=s3_enabled
+                                on_toggle=move |v| set_s3_enabled.set(v)
+                            />
+                        </div>
+
+                        <div class=move || format!("space-y-4 {}", if s3_enabled.get() { "" } else { "opacity-50 pointer-events-none" })>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">"Bucket Name"</label>
+                                <input
+                                    type="text"
+                                    placeholder="my-config-bucket"
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    prop:value=move || s3_bucket.get()
+                                    on:input=move |ev| {
+                                        let target = ev.target().unwrap();
+                                        let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                        set_s3_bucket.set(input.value());
+                                    }
+                                />
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">"Prefix (optional)"</label>
+                                    <input
+                                        type="text"
+                                        placeholder="config/"
+                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        prop:value=move || s3_prefix.get()
+                                        on:input=move |ev| {
+                                            let target = ev.target().unwrap();
+                                            let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                            set_s3_prefix.set(input.value());
+                                        }
+                                    />
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">"Region (optional)"</label>
+                                    <input
+                                        type="text"
+                                        placeholder="us-east-1"
+                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        prop:value=move || s3_region.get()
+                                        on:input=move |ev| {
+                                            let target = ev.target().unwrap();
+                                            let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                            set_s3_region.set(input.value());
+                                        }
+                                    />
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">"Custom Endpoint (optional)"</label>
+                                <input
+                                    type="text"
+                                    placeholder="https://s3.example.com"
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    prop:value=move || s3_endpoint.get()
+                                    on:input=move |ev| {
+                                        let target = ev.target().unwrap();
+                                        let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                        set_s3_endpoint.set(input.value());
+                                    }
+                                />
+                                <p class="text-xs text-gray-500 mt-1">"For MinIO, LocalStack, or S3-compatible services"</p>
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">"Poll Interval (seconds)"</label>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    max="3600"
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    prop:value=move || s3_poll_interval.get().to_string()
+                                    on:input=move |ev| {
+                                        let target = ev.target().unwrap();
+                                        let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                        if let Ok(v) = input.value().parse::<u64>() {
+                                            set_s3_poll_interval.set(v);
+                                        }
+                                    }
+                                />
+                                <p class="text-xs text-gray-500 mt-1">"How often to check for configuration changes"</p>
                             </div>
                         </div>
                     </div>

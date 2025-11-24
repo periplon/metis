@@ -1,44 +1,136 @@
 use leptos::prelude::*;
 use leptos::web_sys;
+use leptos_router::hooks::use_params_map;
 use wasm_bindgen::JsCast;
 use crate::api;
 use crate::types::{Prompt, PromptArgument, PromptMessage};
 
+#[derive(Clone, Copy, PartialEq)]
+enum ViewMode {
+    Table,
+    Card,
+}
+
 #[component]
 pub fn Prompts() -> impl IntoView {
-    let prompts = LocalResource::new(|| async move {
-        api::list_prompts().await.ok()
+    let (view_mode, set_view_mode) = signal(ViewMode::Table);
+    let (refresh_trigger, set_refresh_trigger) = signal(0u32);
+    let (delete_target, set_delete_target) = signal(Option::<String>::None);
+    let (deleting, set_deleting) = signal(false);
+
+    let prompts = LocalResource::new(move || {
+        let _ = refresh_trigger.get();
+        async move { api::list_prompts().await.ok() }
     });
+
+    let on_delete_confirm = move |_| {
+        if let Some(name) = delete_target.get() {
+            set_deleting.set(true);
+            wasm_bindgen_futures::spawn_local(async move {
+                match api::delete_prompt(&name).await {
+                    Ok(_) => {
+                        set_delete_target.set(None);
+                        set_refresh_trigger.update(|n| *n += 1);
+                    }
+                    Err(e) => {
+                        web_sys::window()
+                            .and_then(|w| w.alert_with_message(&format!("Failed to delete: {}", e)).ok());
+                    }
+                }
+                set_deleting.set(false);
+            });
+        }
+    };
 
     view! {
         <div class="p-6">
+            // Header with title, view toggle, and new button
             <div class="flex justify-between items-center mb-6">
                 <h2 class="text-2xl font-bold">"Prompts"</h2>
-                <a href="/prompts/new" class="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded">
-                    "+ New Prompt"
-                </a>
+                <div class="flex items-center gap-4">
+                    // View mode toggle
+                    <div class="flex bg-gray-100 rounded-lg p-1">
+                        <button
+                            class=move || format!(
+                                "px-3 py-1 rounded text-sm font-medium transition-colors {}",
+                                if view_mode.get() == ViewMode::Table { "bg-white shadow text-gray-900" } else { "text-gray-600 hover:text-gray-900" }
+                            )
+                            on:click=move |_| set_view_mode.set(ViewMode::Table)
+                        >
+                            <span class="flex items-center gap-1">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/>
+                                </svg>
+                                "Table"
+                            </span>
+                        </button>
+                        <button
+                            class=move || format!(
+                                "px-3 py-1 rounded text-sm font-medium transition-colors {}",
+                                if view_mode.get() == ViewMode::Card { "bg-white shadow text-gray-900" } else { "text-gray-600 hover:text-gray-900" }
+                            )
+                            on:click=move |_| set_view_mode.set(ViewMode::Card)
+                        >
+                            <span class="flex items-center gap-1">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/>
+                                </svg>
+                                "Cards"
+                            </span>
+                        </button>
+                    </div>
+                    <a href="/prompts/new" class="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded flex items-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                        </svg>
+                        "New Prompt"
+                    </a>
+                </div>
             </div>
 
-            <Suspense fallback=move || view! { <div class="text-gray-500">"Loading..."</div> }>
+            // Delete confirmation modal
+            {move || delete_target.get().map(|name| view! {
+                <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div class="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+                        <h3 class="text-lg font-semibold text-gray-900 mb-2">"Delete Prompt?"</h3>
+                        <p class="text-gray-600 mb-4">
+                            "Are you sure you want to delete "
+                            <span class="font-mono text-sm bg-gray-100 px-1 rounded">{name.clone()}</span>
+                            "? This action cannot be undone."
+                        </p>
+                        <div class="flex justify-end gap-3">
+                            <button
+                                class="px-4 py-2 text-gray-700 border border-gray-300 rounded hover:bg-gray-50"
+                                on:click=move |_| set_delete_target.set(None)
+                                disabled=move || deleting.get()
+                            >
+                                "Cancel"
+                            </button>
+                            <button
+                                class="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 disabled:opacity-50"
+                                on:click=on_delete_confirm
+                                disabled=move || deleting.get()
+                            >
+                                {move || if deleting.get() { "Deleting..." } else { "Delete" }}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            })}
+
+            <Suspense fallback=move || view! { <LoadingState /> }>
                 {move || {
                     prompts.get().map(|data| {
                         match data {
-                            Some(list) if !list.is_empty() => view! {
-                                <div class="space-y-4">
-                                    {list.into_iter().map(|prompt| {
-                                        view! { <PromptCard prompt=prompt /> }
-                                    }).collect::<Vec<_>>()}
-                                </div>
-                            }.into_any(),
-                            Some(_) => view! {
-                                <div class="text-center py-12 bg-white rounded-lg shadow">
-                                    <p class="text-gray-500 mb-4">"No prompts configured"</p>
-                                    <a href="/prompts/new" class="text-purple-500 hover:underline">"Create your first prompt"</a>
-                                </div>
-                            }.into_any(),
-                            None => view! {
-                                <div class="text-red-500">"Failed to load prompts"</div>
-                            }.into_any(),
+                            Some(list) if !list.is_empty() => {
+                                if view_mode.get() == ViewMode::Table {
+                                    view! { <PromptTable prompts=list set_delete_target=set_delete_target /> }.into_any()
+                                } else {
+                                    view! { <PromptCards prompts=list set_delete_target=set_delete_target /> }.into_any()
+                                }
+                            },
+                            Some(_) => view! { <EmptyState /> }.into_any(),
+                            None => view! { <ErrorState /> }.into_any(),
                         }
                     })
                 }}
@@ -48,30 +140,160 @@ pub fn Prompts() -> impl IntoView {
 }
 
 #[component]
-fn PromptCard(prompt: Prompt) -> impl IntoView {
-    let args_count = prompt.arguments.as_ref().map(|a| a.len()).unwrap_or(0);
-    let msgs_count = prompt.messages.as_ref().map(|m| m.len()).unwrap_or(0);
-
+fn LoadingState() -> impl IntoView {
     view! {
-        <div class="bg-white rounded-lg shadow p-4 hover:shadow-md transition-shadow">
-            <div class="flex justify-between items-start mb-2">
-                <div>
-                    <h3 class="font-bold text-lg text-gray-900">{prompt.name.clone()}</h3>
-                    <p class="text-gray-600 text-sm">{prompt.description.clone()}</p>
-                </div>
-                <div class="flex space-x-2">
-                    <span class="px-2 py-1 text-xs rounded bg-purple-100 text-purple-800">
-                        {format!("{} args", args_count)}
-                    </span>
-                    <span class="px-2 py-1 text-xs rounded bg-gray-100 text-gray-800">
-                        {format!("{} messages", msgs_count)}
-                    </span>
-                </div>
+        <div class="flex items-center justify-center py-12">
+            <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500"></div>
+            <span class="ml-3 text-gray-500">"Loading prompts..."</span>
+        </div>
+    }
+}
+
+#[component]
+fn EmptyState() -> impl IntoView {
+    view! {
+        <div class="text-center py-12 bg-white rounded-lg shadow">
+            <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+            </svg>
+            <h3 class="mt-2 text-sm font-medium text-gray-900">"No prompts"</h3>
+            <p class="mt-1 text-sm text-gray-500">"Get started by creating a new prompt."</p>
+            <div class="mt-6">
+                <a href="/prompts/new" class="inline-flex items-center px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600">
+                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                    </svg>
+                    "New Prompt"
+                </a>
             </div>
-            <div class="flex justify-end space-x-2 mt-4">
-                <button class="text-sm text-blue-600 hover:text-blue-900">"Edit"</button>
-                <button class="text-sm text-red-600 hover:text-red-900">"Delete"</button>
-            </div>
+        </div>
+    }
+}
+
+#[component]
+fn ErrorState() -> impl IntoView {
+    view! {
+        <div class="text-center py-12 bg-red-50 rounded-lg border border-red-200">
+            <svg class="mx-auto h-12 w-12 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+            </svg>
+            <h3 class="mt-2 text-sm font-medium text-red-800">"Failed to load prompts"</h3>
+            <p class="mt-1 text-sm text-red-600">"Please check your connection and try again."</p>
+        </div>
+    }
+}
+
+#[component]
+fn PromptTable(
+    prompts: Vec<Prompt>,
+    set_delete_target: WriteSignal<Option<String>>,
+) -> impl IntoView {
+    view! {
+        <div class="bg-white rounded-lg shadow overflow-hidden">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Name"</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Description"</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Arguments"</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Messages"</th>
+                        <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">"Actions"</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {prompts.into_iter().map(|prompt| {
+                        let name_for_edit = prompt.name.clone();
+                        let name_for_delete = prompt.name.clone();
+                        let args_count = prompt.arguments.as_ref().map(|a| a.len()).unwrap_or(0);
+                        let msgs_count = prompt.messages.as_ref().map(|m| m.len()).unwrap_or(0);
+
+                        view! {
+                            <tr class="hover:bg-gray-50">
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <div class="font-medium text-gray-900">{prompt.name.clone()}</div>
+                                </td>
+                                <td class="px-6 py-4">
+                                    <div class="text-sm text-gray-500 truncate max-w-md">{prompt.description.clone()}</div>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <span class="px-2 py-1 text-xs font-semibold rounded-full bg-purple-100 text-purple-800">
+                                        {format!("{} args", args_count)}
+                                    </span>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <span class="px-2 py-1 text-xs font-semibold rounded-full bg-gray-100 text-gray-800">
+                                        {format!("{} msgs", msgs_count)}
+                                    </span>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                    <a
+                                        href=format!("/prompts/edit/{}", name_for_edit)
+                                        class="text-blue-600 hover:text-blue-900 mr-3"
+                                    >
+                                        "Edit"
+                                    </a>
+                                    <button
+                                        class="text-red-600 hover:text-red-900"
+                                        on:click=move |_| set_delete_target.set(Some(name_for_delete.clone()))
+                                    >
+                                        "Delete"
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    }).collect::<Vec<_>>()}
+                </tbody>
+            </table>
+        </div>
+    }
+}
+
+#[component]
+fn PromptCards(
+    prompts: Vec<Prompt>,
+    set_delete_target: WriteSignal<Option<String>>,
+) -> impl IntoView {
+    view! {
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {prompts.into_iter().map(|prompt| {
+                let name_for_edit = prompt.name.clone();
+                let name_for_delete = prompt.name.clone();
+                let args_count = prompt.arguments.as_ref().map(|a| a.len()).unwrap_or(0);
+                let msgs_count = prompt.messages.as_ref().map(|m| m.len()).unwrap_or(0);
+
+                view! {
+                    <div class="bg-white rounded-lg shadow hover:shadow-md transition-shadow p-4">
+                        <div class="flex justify-between items-start mb-3">
+                            <div class="flex-1 min-w-0">
+                                <h3 class="font-semibold text-gray-900 truncate">{prompt.name.clone()}</h3>
+                                <p class="text-sm text-gray-500 line-clamp-2">{prompt.description.clone()}</p>
+                            </div>
+                        </div>
+                        <div class="flex gap-2 mb-4">
+                            <span class="px-2 py-1 text-xs font-semibold rounded-full bg-purple-100 text-purple-800">
+                                {format!("{} args", args_count)}
+                            </span>
+                            <span class="px-2 py-1 text-xs font-semibold rounded-full bg-gray-100 text-gray-800">
+                                {format!("{} msgs", msgs_count)}
+                            </span>
+                        </div>
+                        <div class="flex justify-end gap-2 pt-3 border-t border-gray-100">
+                            <a
+                                href=format!("/prompts/edit/{}", name_for_edit)
+                                class="px-3 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded"
+                            >
+                                "Edit"
+                            </a>
+                            <button
+                                class="px-3 py-1 text-sm text-red-600 hover:bg-red-50 rounded"
+                                on:click=move |_| set_delete_target.set(Some(name_for_delete.clone()))
+                            >
+                                "Delete"
+                            </button>
+                        </div>
+                    </div>
+                }
+            }).collect::<Vec<_>>()}
         </div>
     }
 }
@@ -235,6 +457,217 @@ pub fn PromptForm() -> impl IntoView {
                     </a>
                 </div>
             </form>
+        </div>
+    }
+}
+
+#[component]
+pub fn PromptEditForm() -> impl IntoView {
+    let params = use_params_map();
+    let prompt_name = move || params.read().get("name").unwrap_or_default();
+
+    let (name, set_name) = signal(String::new());
+    let (description, set_description) = signal(String::new());
+    let (args_json, set_args_json) = signal(String::new());
+    let (messages_json, set_messages_json) = signal(String::new());
+    let (error, set_error) = signal(Option::<String>::None);
+    let (saving, set_saving) = signal(false);
+    let (loading, set_loading) = signal(true);
+    let (original_name, set_original_name) = signal(String::new());
+
+    // Load existing prompt
+    Effect::new(move |_| {
+        let name_param = prompt_name();
+        set_loading.set(true);
+        wasm_bindgen_futures::spawn_local(async move {
+            match api::get_prompt(&name_param).await {
+                Ok(prompt) => {
+                    set_original_name.set(prompt.name.clone());
+                    set_name.set(prompt.name.clone());
+                    set_description.set(prompt.description.clone());
+                    if let Some(args) = &prompt.arguments {
+                        set_args_json.set(serde_json::to_string_pretty(args).unwrap_or_default());
+                    }
+                    if let Some(msgs) = &prompt.messages {
+                        set_messages_json.set(serde_json::to_string_pretty(msgs).unwrap_or_default());
+                    }
+                }
+                Err(e) => {
+                    set_error.set(Some(format!("Failed to load prompt: {}", e)));
+                }
+            }
+            set_loading.set(false);
+        });
+    });
+
+    let on_submit = move |ev: web_sys::SubmitEvent| {
+        ev.prevent_default();
+        set_saving.set(true);
+        set_error.set(None);
+
+        let orig_name = original_name.get();
+
+        let arguments: Option<Vec<PromptArgument>> = if args_json.get().is_empty() {
+            None
+        } else {
+            match serde_json::from_str(&args_json.get()) {
+                Ok(args) => Some(args),
+                Err(e) => {
+                    set_error.set(Some(format!("Invalid arguments JSON: {}", e)));
+                    set_saving.set(false);
+                    return;
+                }
+            }
+        };
+
+        let messages: Option<Vec<PromptMessage>> = if messages_json.get().is_empty() {
+            None
+        } else {
+            match serde_json::from_str(&messages_json.get()) {
+                Ok(msgs) => Some(msgs),
+                Err(e) => {
+                    set_error.set(Some(format!("Invalid messages JSON: {}", e)));
+                    set_saving.set(false);
+                    return;
+                }
+            }
+        };
+
+        let prompt = Prompt {
+            name: name.get(),
+            description: description.get(),
+            arguments,
+            messages,
+        };
+
+        wasm_bindgen_futures::spawn_local(async move {
+            match api::update_prompt(&orig_name, &prompt).await {
+                Ok(_) => {
+                    if let Some(window) = web_sys::window() {
+                        let _ = window.location().set_href("/prompts");
+                    }
+                }
+                Err(e) => {
+                    set_error.set(Some(e));
+                    set_saving.set(false);
+                }
+            }
+        });
+    };
+
+    view! {
+        <div class="p-6">
+            <div class="mb-6">
+                <a href="/prompts" class="text-purple-500 hover:underline flex items-center gap-1">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+                    </svg>
+                    "Back to Prompts"
+                </a>
+            </div>
+
+            <h2 class="text-2xl font-bold mb-6">"Edit Prompt"</h2>
+
+            {move || if loading.get() {
+                view! {
+                    <div class="flex items-center justify-center py-12">
+                        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500"></div>
+                        <span class="ml-3 text-gray-500">"Loading prompt..."</span>
+                    </div>
+                }.into_any()
+            } else {
+                view! {
+                    <form on:submit=on_submit class="bg-white rounded-lg shadow p-6 max-w-2xl">
+                        {move || error.get().map(|e| view! {
+                            <div class="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+                                {e}
+                            </div>
+                        })}
+
+                        <div class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">"Name *"</label>
+                                <input
+                                    type="text"
+                                    required=true
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                    placeholder="my-prompt"
+                                    prop:value=move || name.get()
+                                    on:input=move |ev| {
+                                        let target = ev.target().unwrap();
+                                        let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                        set_name.set(input.value());
+                                    }
+                                />
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">"Description *"</label>
+                                <input
+                                    type="text"
+                                    required=true
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                    placeholder="What this prompt does"
+                                    prop:value=move || description.get()
+                                    on:input=move |ev| {
+                                        let target = ev.target().unwrap();
+                                        let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                        set_description.set(input.value());
+                                    }
+                                />
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">"Arguments (JSON Array)"</label>
+                                <textarea
+                                    rows=4
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono text-sm"
+                                    placeholder=r#"[{"name": "topic", "required": true}]"#
+                                    prop:value=move || args_json.get()
+                                    on:input=move |ev| {
+                                        let target = ev.target().unwrap();
+                                        let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
+                                        set_args_json.set(textarea.value());
+                                    }
+                                />
+                                <p class="mt-1 text-xs text-gray-500">"Optional array of argument definitions"</p>
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">"Messages (JSON Array)"</label>
+                                <textarea
+                                    rows=6
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono text-sm"
+                                    placeholder=r#"[{"role": "user", "content": "Hello"}]"#
+                                    prop:value=move || messages_json.get()
+                                    on:input=move |ev| {
+                                        let target = ev.target().unwrap();
+                                        let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
+                                        set_messages_json.set(textarea.value());
+                                    }
+                                />
+                                <p class="mt-1 text-xs text-gray-500">"Optional array of prompt messages"</p>
+                            </div>
+                        </div>
+
+                        <div class="mt-6 flex gap-3">
+                            <button
+                                type="submit"
+                                disabled=move || saving.get()
+                                class="px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                {move || if saving.get() { "Saving..." } else { "Save Changes" }}
+                            </button>
+                            <a
+                                href="/prompts"
+                                class="px-4 py-2 border border-gray-300 text-gray-700 rounded hover:bg-gray-50"
+                            >
+                                "Cancel"
+                            </a>
+                        </div>
+                    </form>
+                }.into_any()
+            }}
         </div>
     }
 }
