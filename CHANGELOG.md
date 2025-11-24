@@ -2,6 +2,14 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.3.0 - 2025-11-24
+#### Documentation
+- update script strategy status to reflect all languages working - (dbed445) - Joan Marc Carbo Arnau
+#### Features
+- **(auth)** integrate authentication middleware into application - (5b97d41) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.2.0 - 2025-11-24
 #### Features
 - **(config)** add S3 live reload configuration with CLI support - (48f3927) - Joan Marc Carbo Arnau
