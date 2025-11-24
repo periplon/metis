@@ -226,6 +226,7 @@ mod tests {
             prompts: vec![],
             rate_limit: None,
             s3: None,
+            workflows: vec![],
         };
 
         let result = ConfigValidator::validate(&settings);
@@ -245,6 +246,7 @@ mod tests {
             prompts: vec![],
             rate_limit: None,
             s3: None,
+            workflows: vec![],
         };
 
         let result = ConfigValidator::validate(&settings);
@@ -283,6 +285,7 @@ mod tests {
             prompts: vec![],
             rate_limit: None,
             s3: None,
+            workflows: vec![],
         };
 
         let result = ConfigValidator::validate(&settings);

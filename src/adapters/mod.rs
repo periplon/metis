@@ -11,6 +11,7 @@ pub mod sampling_handler;
 pub mod state_manager;
 pub mod tool_handler;
 pub mod ui_handler;
+pub mod workflow_engine;
 
 #[cfg(test)]
 mod database_strategy_test;

@@ -25,6 +25,7 @@ use tokio::sync::RwLock;
         prompts: vec![],
         rate_limit: None,
         s3: None,
+        workflows: vec![],
     };
     let handler = InMemoryResourceHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -64,6 +65,7 @@ use tokio::sync::RwLock;
         prompts: vec![],
         rate_limit: None,
         s3: None,
+        workflows: vec![],
     };
     let handler = InMemoryResourceHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -83,6 +85,7 @@ use tokio::sync::RwLock;
         prompts: vec![],
         rate_limit: None,
         s3: None,
+        workflows: vec![],
     };
     let handler = InMemoryResourceHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -119,6 +122,7 @@ use tokio::sync::RwLock;
         prompts: vec![],
         rate_limit: None,
         s3: None,
+        workflows: vec![],
     };
     let handler = InMemoryResourceHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 

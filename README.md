@@ -39,7 +39,8 @@ metis/
 │   │   ├── tool_handler.rs
 │   │   ├── prompt_handler.rs
 │   │   ├── mock_strategy.rs
-│   │   └── state_manager.rs
+│   │   ├── state_manager.rs
+│   │   └── workflow_engine.rs
 │   ├── application/        # Application layer
 │   │   └── mod.rs
 │   ├── domain/            # Domain layer (Business logic)
@@ -344,6 +345,51 @@ arguments = [
 template = "Review this {{ language }} code for best practices."
 ```
 
+### Workflow Configuration
+
+Workflows allow you to chain multiple tool calls together with conditional logic, loops, and data passing between steps.
+
+```toml
+[[workflows]]
+name = "process_items"
+description = "Process a list of items with validation"
+input_schema = { type = "object", properties = { items = { type = "array" } } }
+on_error = "fail"  # Options: "fail", "continue", { retry = { max_attempts = 3, delay_ms = 1000 } }, { fallback = { value = {} } }
+
+[[workflows.steps]]
+id = "validate"
+tool = "validator"
+args = { data = "{{ input.items }}" }
+
+[[workflows.steps]]
+id = "process_each"
+tool = "processor"
+condition = "steps.validate.success == true"  # Rhai expression
+loop_over = "input.items"                      # Array to iterate over
+loop_var = "item"                              # Variable name for current item (default: "item")
+loop_concurrency = 4                           # Parallel execution (0 = sequential)
+args = { item = "{{ item }}", index = "{{ loop.index }}" }
+
+[[workflows.steps]]
+id = "summarize"
+tool = "summarizer"
+args = { results = "{{ steps.process_each }}" }
+```
+
+**Workflow Features:**
+- **Sequential Execution**: Steps run in order with data passing via `{{ steps.<id> }}`
+- **Conditional Steps**: Skip steps based on Rhai expressions (`condition` field)
+- **Looping**: Iterate over arrays with `loop_over`, access current item via `loop_var`
+- **Parallel Loops**: Set `loop_concurrency > 0` for concurrent processing
+- **Error Handling**: Per-step or workflow-level error strategies
+- **Template Arguments**: Use Tera templates to reference input and previous step results
+
+**Available Context in Templates:**
+- `{{ input }}` - Original workflow input
+- `{{ steps.<step_id> }}` - Result from a previous step
+- `{{ item }}` - Current loop item (when using `loop_over`)
+- `{{ loop.index }}` - Current loop index (0-based)
+
 ## 🧪 Testing
 
 ### Run All Tests
@@ -445,7 +491,7 @@ Metis implements the following MCP protocol methods:
 - ✅ Authentication (API Key, JWT Bearer, Basic Auth, OAuth2/JWKS)
 
 ### Planned Features
-- [ ] Advanced Workflow engine
+- ✅ Advanced Workflow engine
 - [ ] Enhanced Web UI for configuration management
 - [ ] Performance optimizations (>10k req/s)
 

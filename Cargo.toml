@@ -54,6 +54,8 @@ governor = "0.10.2"
 clap = { version = "4", features = ["derive", "env"] }
 aws-config = "1.5"
 aws-sdk-s3 = "1.65"
+futures = "0.3"
+toml = "0.8"
 
 [dev-dependencies]
 tower = { version = "0.4", features = ["util"] }

@@ -58,6 +58,7 @@ impl TestServer {
             prompts,
             rate_limit: None,
             s3: None,
+            workflows: vec![],
         }));
 
         let state_manager = Arc::new(StateManager::new());

@@ -24,6 +24,8 @@ pub struct Settings {
     #[serde(default)]
     pub prompts: Vec<PromptConfig>,
     #[serde(default)]
+    pub workflows: Vec<WorkflowConfig>,
+    #[serde(default)]
     pub rate_limit: Option<RateLimitConfig>,
     #[serde(default)]
     pub s3: Option<S3Config>,
@@ -175,6 +177,92 @@ pub struct PromptMessage {
     pub content: String,
 }
 
+// ============================================================================
+// Workflow Configuration Types
+// ============================================================================
+
+/// Configuration for a workflow that can be executed as a tool
+#[derive(Debug, Deserialize, Clone)]
+pub struct WorkflowConfig {
+    /// Unique name for the workflow (becomes the tool name)
+    pub name: String,
+    /// Description of what the workflow does
+    pub description: String,
+    /// JSON schema for workflow inputs
+    #[serde(default = "default_workflow_schema")]
+    pub input_schema: Value,
+    /// Ordered list of steps to execute
+    pub steps: Vec<WorkflowStep>,
+    /// Default error handling strategy for the workflow
+    #[serde(default)]
+    pub on_error: ErrorStrategy,
+}
+
+fn default_workflow_schema() -> Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {}
+    })
+}
+
+/// A single step in a workflow
+#[derive(Debug, Deserialize, Clone)]
+pub struct WorkflowStep {
+    /// Unique identifier for this step (used for referencing results)
+    pub id: String,
+    /// Name of the tool to call
+    pub tool: String,
+    /// Arguments to pass to the tool (supports Tera templates)
+    #[serde(default)]
+    pub args: Option<Value>,
+    /// Rhai expression that must evaluate to true for step to execute
+    #[serde(default)]
+    pub condition: Option<String>,
+    /// Rhai expression returning an array to iterate over
+    #[serde(default)]
+    pub loop_over: Option<String>,
+    /// Variable name for current loop item (default: "item")
+    #[serde(default = "default_loop_var")]
+    pub loop_var: String,
+    /// Maximum concurrent loop iterations (default: 1 = sequential)
+    #[serde(default = "default_concurrency")]
+    pub loop_concurrency: u32,
+    /// Error handling strategy for this step
+    #[serde(default)]
+    pub on_error: ErrorStrategy,
+}
+
+fn default_loop_var() -> String {
+    "item".to_string()
+}
+
+fn default_concurrency() -> u32 {
+    1
+}
+
+/// Strategy for handling errors in workflow execution
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorStrategy {
+    /// Stop workflow execution and return error
+    #[default]
+    Fail,
+    /// Log error and continue to next step
+    Continue,
+    /// Retry the step with exponential backoff
+    Retry {
+        /// Maximum number of retry attempts
+        max_attempts: u32,
+        /// Initial delay in milliseconds
+        delay_ms: u64,
+    },
+    /// Use a fallback value on error
+    Fallback {
+        /// Value to use when step fails
+        value: Value,
+    },
+}
+
 impl Settings {
     pub fn new() -> Result<Self, anyhow::Error> {
         Self::from_root(".")
@@ -264,6 +352,7 @@ impl Settings {
         self.load_tools_from_dir(&format!("{}/config/tools", root))?;
         self.load_resources_from_dir(&format!("{}/config/resources", root))?;
         self.load_prompts_from_dir(&format!("{}/config/prompts", root))?;
+        self.load_workflows_from_dir(&format!("{}/config/workflows", root))?;
         Ok(())
     }
 
@@ -327,6 +416,29 @@ impl Settings {
                                 serde_yaml::from_str(&content)?
                             };
                             self.prompts.push(prompt);
+                        }
+                    }
+                }
+                Err(e) => tracing::warn!("Failed to read glob entry: {}", e),
+            }
+        }
+        Ok(())
+    }
+
+    fn load_workflows_from_dir(&mut self, path: &str) -> Result<(), anyhow::Error> {
+        let pattern = format!("{}/*", path);
+        for entry in glob::glob(&pattern)? {
+            match entry {
+                Ok(path) => {
+                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                        if matches!(ext, "json" | "yaml" | "yml" | "toml") {
+                            let content = std::fs::read_to_string(&path)?;
+                            let workflow: WorkflowConfig = match ext {
+                                "json" => serde_json::from_str(&content)?,
+                                "toml" => toml::from_str(&content)?,
+                                _ => serde_yaml::from_str(&content)?,
+                            };
+                            self.workflows.push(workflow);
                         }
                     }
                 }

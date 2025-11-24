@@ -99,6 +99,7 @@ mod tests {
             prompts: vec![],
             rate_limit: None,
             s3: None,
+            workflows: vec![],
         };
         let handler = HealthHandler::new(Arc::new(RwLock::new(settings)));
 
@@ -119,6 +120,7 @@ mod tests {
             prompts: vec![],
             rate_limit: None,
             s3: None,
+            workflows: vec![],
         };
         let handler = HealthHandler::new(Arc::new(RwLock::new(settings)));
 
@@ -140,6 +142,7 @@ mod tests {
             prompts: vec![],
             rate_limit: None,
             s3: None,
+            workflows: vec![],
         };
         let handler = HealthHandler::new(Arc::new(RwLock::new(settings)));
 
