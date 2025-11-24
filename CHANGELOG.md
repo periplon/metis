@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.9.0 - 2025-11-24
+#### Features
+- **(ui)** add working edit/delete for workflows with view modes - (a73163b) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.8.1 - 2025-11-24
 #### Bug Fixes
 - **(ui)** handle API responses without data for save operations - (a20e502) - Joan Marc Carbo Arnau
