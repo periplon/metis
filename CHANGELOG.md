@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.1.12 - 2025-11-24
+#### Bug Fixes
+- **(ci)** properly rename release binaries to avoid directory conflicts - (8f4c353) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.1.11 - 2025-11-24
 #### Bug Fixes
 - **(ci)** remove v prefix from tag references in release job - (0ff5a39) - Joan Marc Carbo Arnau
