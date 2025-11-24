@@ -211,13 +211,31 @@ jobs:
         with:
           path: artifacts
 
+      - name: Rename binaries for release
+        run: |
+          mv artifacts/metis-linux-amd64/metis artifacts/metis-linux-amd64.tmp
+          rm -rf artifacts/metis-linux-amd64
+          mv artifacts/metis-linux-amd64.tmp artifacts/metis-linux-amd64
+
+          mv artifacts/metis-macos-amd64/metis artifacts/metis-macos-amd64.tmp
+          rm -rf artifacts/metis-macos-amd64
+          mv artifacts/metis-macos-amd64.tmp artifacts/metis-macos-amd64
+
+          mv artifacts/metis-macos-arm64/metis artifacts/metis-macos-arm64.tmp
+          rm -rf artifacts/metis-macos-arm64
+          mv artifacts/metis-macos-arm64.tmp artifacts/metis-macos-arm64
+
+          mv artifacts/metis-windows-amd64.exe/metis.exe artifacts/metis-windows-amd64.exe.tmp
+          rm -rf artifacts/metis-windows-amd64.exe
+          mv artifacts/metis-windows-amd64.exe.tmp artifacts/metis-windows-amd64.exe
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ needs.version-and-tag.outputs.version }}
           files: |
-            artifacts/metis-linux-amd64/metis
-            artifacts/metis-macos-amd64/metis
-            artifacts/metis-macos-arm64/metis
-            artifacts/metis-windows-amd64.exe/metis.exe
+            artifacts/metis-linux-amd64
+            artifacts/metis-macos-amd64
+            artifacts/metis-macos-arm64
+            artifacts/metis-windows-amd64.exe
           generate_release_notes: true
