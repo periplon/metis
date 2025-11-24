@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.8.0 - 2025-11-24
+#### Features
+- **(ui)** add edit/delete functionality and unified list views - (5b731e6) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.7.0 - 2025-11-24
 #### Features
 - **(ui)** add mock strategy editors and improve config handling - (4eba766) - Joan Marc Carbo Arnau
