@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.10.0 - 2025-11-24
+#### Features
+- **(ui)** add test functionality for tools, resources, prompts, and workflows - (8fca53b) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.9.4 - 2025-11-24
 #### Bug Fixes
 - **(ui)** use gloo-net instead of reqwest for HTTP requests - (e452c63) - Joan Marc Carbo Arnau
