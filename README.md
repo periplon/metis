@@ -75,8 +75,9 @@ metis/
 
 ### 💻 Developer Experience
 - **Web UI**: Basic dashboard for monitoring
-- **CLI**: Simple command-line interface
+- **CLI**: Full-featured command-line interface with environment variable support
 - **TOML Config**: Human-readable configuration
+- **S3 Config**: Load configuration from S3 buckets with live reload
 - **Validation**: Startup configuration checks
 
 ## 🚀 Quick Start
@@ -105,6 +106,30 @@ cargo run
 ```
 
 The server will start on `http://127.0.0.1:3000` by default.
+
+### Command Line Options
+
+```bash
+metis [OPTIONS]
+
+Options:
+  -c, --config <CONFIG>           Path to config file [default: metis.toml]
+      --host <HOST>               Server host address
+      --port <PORT>               Server port
+      --s3-enabled                Enable S3 configuration source
+      --s3-bucket <BUCKET>        S3 bucket name for configuration files
+      --s3-prefix <PREFIX>        S3 key prefix (e.g., "config/")
+      --s3-region <REGION>        AWS region for S3
+      --s3-endpoint <ENDPOINT>    S3 endpoint URL (for MinIO/LocalStack)
+      --s3-poll-interval <SECS>   S3 polling interval in seconds
+  -h, --help                      Print help
+  -V, --version                   Print version
+```
+
+All CLI options can also be set via environment variables:
+- `METIS_CONFIG`, `METIS_HOST`, `METIS_PORT`
+- `METIS_S3_ENABLED`, `METIS_S3_BUCKET`, `METIS_S3_PREFIX`
+- `METIS_S3_REGION`, `METIS_S3_ENDPOINT`, `METIS_S3_POLL_INTERVAL`
 
 ### Basic Usage
 
@@ -168,6 +193,36 @@ RUST_LOG=info cargo run
 host = "127.0.0.1"  # Server host
 port = 3000         # Server port
 ```
+
+### S3 Configuration (Optional)
+
+Load configuration files from an S3 bucket with automatic live reload:
+
+```toml
+[s3]
+enabled = true
+bucket = "my-metis-config"
+prefix = "config/"              # Optional: key prefix
+region = "us-east-1"            # Optional: AWS region
+endpoint = "http://localhost:9000"  # Optional: for MinIO/LocalStack
+poll_interval_secs = 30         # Default: 30 seconds
+```
+
+S3 configuration can also be provided via CLI or environment variables:
+
+```bash
+# Via CLI
+metis --s3-enabled --s3-bucket my-bucket --s3-prefix config/
+
+# Via environment variables
+export METIS_S3_ENABLED=true
+export METIS_S3_BUCKET=my-bucket
+export METIS_S3_PREFIX=config/
+export METIS_S3_REGION=us-east-1
+metis
+```
+
+**Configuration Precedence:** CLI > Environment Variables > Config File > Defaults
 
 ### Resource Configuration
 
@@ -323,6 +378,8 @@ Metis implements the following MCP protocol methods:
     - 🚧 Pattern (Planned)
 - ✅ Resource, Tool, and Prompt handlers
 - ✅ TOML-based configuration with Hot Reload
+- ✅ S3 Configuration with Live Reload
+- ✅ CLI with Environment Variable Support
 - ✅ Health Checks & Prometheus Metrics
 - ✅ Rate Limiting
 - ✅ Basic Web UI (Embedded)

@@ -57,6 +57,7 @@ impl TestServer {
             tools,
             prompts,
             rate_limit: None,
+            s3: None,
         }));
 
         let state_manager = Arc::new(StateManager::new());

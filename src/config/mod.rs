@@ -2,8 +2,15 @@ use config::{Config, File};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub mod watcher;
+pub mod s3;
+pub mod s3_watcher;
 pub mod validator;
+pub mod watcher;
+
+pub use s3::S3Config;
+pub use s3_watcher::S3Watcher;
+
+use crate::cli::Cli;
 
 #[derive(Debug, Deserialize)]
 pub struct Settings {
@@ -18,6 +25,8 @@ pub struct Settings {
     pub prompts: Vec<PromptConfig>,
     #[serde(default)]
     pub rate_limit: Option<RateLimitConfig>,
+    #[serde(default)]
+    pub s3: Option<S3Config>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -169,6 +178,64 @@ pub struct PromptMessage {
 impl Settings {
     pub fn new() -> Result<Self, anyhow::Error> {
         Self::from_root(".")
+    }
+
+    /// Create settings from CLI arguments (includes config file and CLI overrides)
+    pub fn new_with_cli(cli: &Cli) -> Result<Self, anyhow::Error> {
+        let config_path = &cli.config;
+        let root = config_path
+            .parent()
+            .map(|p| p.to_str().unwrap_or("."))
+            .unwrap_or(".");
+
+        // Build config from file
+        let s = Config::builder()
+            .add_source(File::from(config_path.clone()).required(false))
+            .set_default("server.host", "127.0.0.1")?
+            .set_default("server.port", 3000)?
+            .build()?;
+
+        let mut settings: Settings = s.try_deserialize()?;
+
+        // Apply CLI overrides (CLI > env vars > config file)
+        settings.apply_cli_overrides(cli);
+
+        settings.load_external_configs(root)?;
+
+        // Validate configuration
+        validator::ConfigValidator::validate(&settings).map_err(|errors| {
+            let error_messages: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
+            anyhow::anyhow!(
+                "Configuration validation failed:\n{}",
+                error_messages.join("\n")
+            )
+        })?;
+
+        // Validate S3 configuration if present
+        if let Some(s3_config) = &settings.s3 {
+            s3_config.validate().map_err(|errors| {
+                anyhow::anyhow!("S3 configuration validation failed:\n{}", errors.join("\n"))
+            })?;
+        }
+
+        Ok(settings)
+    }
+
+    /// Apply CLI argument overrides to settings
+    fn apply_cli_overrides(&mut self, cli: &Cli) {
+        // Server overrides
+        if let Some(host) = &cli.host {
+            self.server.host = host.clone();
+        }
+        if let Some(port) = cli.port {
+            self.server.port = port;
+        }
+
+        // S3 overrides - initialize S3Config if any S3 CLI args are provided
+        if cli.has_s3_config() {
+            let s3_config = self.s3.get_or_insert_with(S3Config::default);
+            s3_config.merge_cli(cli);
+        }
     }
 
     pub fn from_root(root: &str) -> Result<Self, anyhow::Error> {

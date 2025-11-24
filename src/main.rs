@@ -1,10 +1,12 @@
+use clap::Parser;
 use metis::adapters::mock_strategy::MockStrategyHandler;
 use metis::adapters::prompt_handler::InMemoryPromptHandler;
 use metis::adapters::resource_handler::InMemoryResourceHandler;
 use metis::adapters::rmcp_server::MetisServer;
 use metis::adapters::state_manager::StateManager;
 use metis::adapters::tool_handler::BasicToolHandler;
-use metis::config::{watcher::ConfigWatcher, Settings};
+use metis::cli::Cli;
+use metis::config::{watcher::ConfigWatcher, S3Watcher, Settings};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -15,10 +17,14 @@ async fn main() -> anyhow::Result<()> {
     // Initialize tracing
     tracing_subscriber::fmt::init();
 
-    // Load configuration
-    let settings = Settings::new()?;
+    // Parse CLI arguments
+    let cli = Cli::parse();
+
+    // Load configuration with CLI overrides
+    let settings = Settings::new_with_cli(&cli)?;
     let host = settings.server.host.clone();
     let port = settings.server.port;
+    let s3_config = settings.s3.clone();
 
     info!("Starting Metis MCP Mock Server on {}:{}", host, port);
 
@@ -43,6 +49,39 @@ async fn main() -> anyhow::Result<()> {
             Err(e) => error!("Failed to reload configuration: {}", e),
         }
     })?;
+
+    // Start S3 watcher if enabled
+    let _s3_watcher = if let Some(ref s3_cfg) = s3_config {
+        if s3_cfg.is_active() {
+            info!(
+                "Starting S3 configuration watcher for bucket: {}",
+                s3_cfg.bucket.as_ref().unwrap_or(&"unknown".to_string())
+            );
+            let s3_watcher = S3Watcher::new(s3_cfg).await?;
+            let settings_for_s3 = settings.clone();
+            let cli_clone = cli.clone();
+            s3_watcher
+                .start(move || {
+                    match Settings::new_with_cli(&cli_clone) {
+                        Ok(new_settings) => {
+                            let rt = tokio::runtime::Handle::current();
+                            rt.block_on(async {
+                                let mut w = settings_for_s3.write().await;
+                                *w = new_settings;
+                            });
+                            info!("Configuration reloaded from S3 successfully");
+                        }
+                        Err(e) => error!("Failed to reload configuration from S3: {}", e),
+                    }
+                })
+                .await?;
+            Some(s3_watcher)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     // Initialize state manager
     let state_manager = Arc::new(StateManager::new());
