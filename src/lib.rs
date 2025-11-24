@@ -46,6 +46,7 @@ use crate::adapters::api_handler::{self, ApiState};
 use crate::adapters::auth_middleware::{auth_middleware, AuthMiddleware, SharedAuthMiddleware};
 use crate::adapters::health_handler::HealthHandler;
 use crate::adapters::metrics_handler::MetricsHandler;
+use crate::adapters::mock_strategy::MockStrategyHandler;
 use crate::adapters::rmcp_server::MetisServer;
 use crate::adapters::state_manager::StateManager;
 use axum::{routing::{delete, get, post}, Router};
@@ -118,10 +119,14 @@ pub async fn create_app(
         // MCP protocol endpoint using rmcp streamable HTTP transport
         .nest_service("/mcp", mcp_service);
 
+    // Create mock strategy handler for test endpoints
+    let mock_strategy = Arc::new(MockStrategyHandler::new(state_manager.clone()));
+
     // Create API state for REST endpoints
     let api_state = ApiState {
         settings: settings.clone(),
         state_manager,
+        mock_strategy,
     };
 
     // API routes for Web UI
@@ -132,18 +137,22 @@ pub async fn create_app(
         .route("/config/save-disk", post(api_handler::save_config_to_disk))
         .route("/config/save-s3", post(api_handler::save_config_to_s3))
         .route("/metrics/json", get(api_handler::get_metrics_json))
-        // Resources CRUD
+        // Resources CRUD + Test
         .route("/resources", get(api_handler::list_resources).post(api_handler::create_resource))
         .route("/resources/:uri", get(api_handler::get_resource).put(api_handler::update_resource).delete(api_handler::delete_resource))
-        // Tools CRUD
+        .route("/resources/:uri/test", post(api_handler::test_resource))
+        // Tools CRUD + Test
         .route("/tools", get(api_handler::list_tools).post(api_handler::create_tool))
         .route("/tools/:name", get(api_handler::get_tool).put(api_handler::update_tool).delete(api_handler::delete_tool))
-        // Prompts CRUD
+        .route("/tools/:name/test", post(api_handler::test_tool))
+        // Prompts CRUD + Test
         .route("/prompts", get(api_handler::list_prompts).post(api_handler::create_prompt))
         .route("/prompts/:name", get(api_handler::get_prompt).put(api_handler::update_prompt).delete(api_handler::delete_prompt))
-        // Workflows CRUD
+        .route("/prompts/:name/test", post(api_handler::test_prompt))
+        // Workflows CRUD + Test
         .route("/workflows", get(api_handler::list_workflows).post(api_handler::create_workflow))
         .route("/workflows/:name", get(api_handler::get_workflow).put(api_handler::update_workflow).delete(api_handler::delete_workflow))
+        .route("/workflows/:name/test", post(api_handler::test_workflow))
         // State management
         .route("/state", get(api_handler::get_state).delete(api_handler::reset_state))
         .route("/state/:key", delete(api_handler::delete_state_key))

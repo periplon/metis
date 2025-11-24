@@ -13,6 +13,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use crate::adapters::mock_strategy::MockStrategyHandler;
 use crate::adapters::state_manager::StateManager;
 use crate::config::{
     MockConfig, PromptArgument, PromptConfig, PromptMessage, RateLimitConfig, ResourceConfig,
@@ -24,6 +25,7 @@ use crate::config::{
 pub struct ApiState {
     pub settings: Arc<RwLock<Settings>>,
     pub state_manager: Arc<StateManager>,
+    pub mock_strategy: Arc<MockStrategyHandler>,
 }
 
 // ============================================================================
@@ -79,6 +81,7 @@ pub struct ConfigOverview {
     pub auth_enabled: bool,
     pub rate_limit_enabled: bool,
     pub s3_enabled: bool,
+    pub config_file_loaded: bool,
 }
 
 #[derive(Serialize)]
@@ -350,6 +353,9 @@ pub async fn get_config_overview(
 ) -> impl IntoResponse {
     let settings = state.settings.read().await;
 
+    // Check if config file exists (default: metis.toml)
+    let config_file_loaded = std::path::Path::new("metis.toml").exists();
+
     let overview = ConfigOverview {
         server: ServerInfo {
             host: settings.server.host.clone(),
@@ -363,6 +369,7 @@ pub async fn get_config_overview(
         auth_enabled: settings.auth.enabled,
         rate_limit_enabled: settings.rate_limit.as_ref().is_some_and(|r| r.enabled),
         s3_enabled: settings.s3.as_ref().is_some_and(|s| s.enabled),
+        config_file_loaded,
     };
 
     (StatusCode::OK, Json(ApiResponse::success(overview)))
@@ -417,10 +424,39 @@ impl From<&RateLimitConfig> for RateLimitConfigDto {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
+pub struct S3ConfigDto {
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bucket: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    pub poll_interval_secs: u64,
+}
+
+impl From<&crate::config::s3::S3Config> for S3ConfigDto {
+    fn from(s: &crate::config::s3::S3Config) -> Self {
+        Self {
+            enabled: s.enabled,
+            bucket: s.bucket.clone(),
+            prefix: s.prefix.clone(),
+            region: s.region.clone(),
+            endpoint: s.endpoint.clone(),
+            poll_interval_secs: s.poll_interval_secs,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
 pub struct ServerSettingsDto {
     pub auth: AuthConfigDto,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rate_limit: Option<RateLimitConfigDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub s3: Option<S3ConfigDto>,
 }
 
 /// GET /api/config/settings - Get editable server settings
@@ -432,6 +468,7 @@ pub async fn get_server_settings(
     let dto = ServerSettingsDto {
         auth: AuthConfigDto::from(&settings.auth),
         rate_limit: settings.rate_limit.as_ref().map(RateLimitConfigDto::from),
+        s3: settings.s3.as_ref().map(S3ConfigDto::from),
     };
 
     (StatusCode::OK, Json(ApiResponse::success(dto)))
@@ -474,9 +511,31 @@ pub async fn update_server_settings(
         }
     }
 
+    // Update S3 settings
+    if let Some(s3_dto) = dto.s3 {
+        if let Some(ref mut s3) = settings.s3 {
+            s3.enabled = s3_dto.enabled;
+            s3.bucket = s3_dto.bucket;
+            s3.prefix = s3_dto.prefix;
+            s3.region = s3_dto.region;
+            s3.endpoint = s3_dto.endpoint;
+            s3.poll_interval_secs = s3_dto.poll_interval_secs;
+        } else {
+            settings.s3 = Some(crate::config::s3::S3Config {
+                enabled: s3_dto.enabled,
+                bucket: s3_dto.bucket,
+                prefix: s3_dto.prefix,
+                region: s3_dto.region,
+                endpoint: s3_dto.endpoint,
+                poll_interval_secs: s3_dto.poll_interval_secs,
+            });
+        }
+    }
+
     let response_dto = ServerSettingsDto {
         auth: AuthConfigDto::from(&settings.auth),
         rate_limit: settings.rate_limit.as_ref().map(RateLimitConfigDto::from),
+        s3: settings.s3.as_ref().map(S3ConfigDto::from),
     };
 
     (StatusCode::OK, Json(ApiResponse::success(response_dto)))
@@ -880,4 +939,373 @@ pub async fn delete_state_key(
 ) -> impl IntoResponse {
     state.state_manager.delete(&key).await;
     (StatusCode::OK, Json(ApiResponse::<()>::ok()))
+}
+
+// ============================================================================
+// Config Persistence Endpoints
+// ============================================================================
+
+/// POST /api/config/save-disk - Save current configuration to metis.toml
+pub async fn save_config_to_disk(
+    State(state): State<ApiState>,
+) -> impl IntoResponse {
+    let settings = state.settings.read().await;
+
+    // Serialize settings to TOML
+    let toml_content = match toml::to_string_pretty(&*settings) {
+        Ok(content) => content,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::<()>::error(format!("Failed to serialize config: {}", e)))
+            );
+        }
+    };
+
+    // Write to metis.toml
+    if let Err(e) = std::fs::write("metis.toml", toml_content) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse::<()>::error(format!("Failed to write metis.toml: {}", e)))
+        );
+    }
+
+    (StatusCode::OK, Json(ApiResponse::<()>::ok()))
+}
+
+/// POST /api/config/save-s3 - Save current configuration to S3
+pub async fn save_config_to_s3(
+    State(state): State<ApiState>,
+) -> impl IntoResponse {
+    let settings = state.settings.read().await;
+
+    // Check if S3 is configured
+    let s3_config = match &settings.s3 {
+        Some(cfg) if cfg.is_active() => cfg.clone(),
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ApiResponse::<()>::error(
+                    "S3 is not configured or enabled. Please configure S3 settings first."
+                ))
+            );
+        }
+    };
+
+    // Serialize settings to TOML
+    let toml_content = match toml::to_string_pretty(&*settings) {
+        Ok(content) => content,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::<()>::error(format!("Failed to serialize config: {}", e)))
+            );
+        }
+    };
+
+    // Drop the read lock before async S3 operations
+    drop(settings);
+
+    // Build S3 client
+    let sdk_config = match build_s3_config(&s3_config).await {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::<()>::error(format!("Failed to configure S3 client: {}", e)))
+            );
+        }
+    };
+    let client = aws_sdk_s3::Client::new(&sdk_config);
+
+    // Upload to S3
+    let bucket = s3_config.bucket.as_ref().unwrap();
+    let key = format!("{}metis.toml", s3_config.get_prefix());
+
+    match client
+        .put_object()
+        .bucket(bucket)
+        .key(&key)
+        .body(toml_content.into_bytes().into())
+        .content_type("application/toml")
+        .send()
+        .await
+    {
+        Ok(_) => (StatusCode::OK, Json(ApiResponse::<()>::ok())),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse::<()>::error(format!("Failed to upload to S3: {}", e)))
+        ),
+    }
+}
+
+/// Build AWS SDK configuration for S3 operations
+async fn build_s3_config(config: &crate::config::s3::S3Config) -> anyhow::Result<aws_config::SdkConfig> {
+    use aws_config::BehaviorVersion;
+
+    let mut loader = aws_config::defaults(BehaviorVersion::latest());
+
+    if let Some(region) = &config.region {
+        loader = loader.region(aws_config::Region::new(region.clone()));
+    }
+
+    if let Some(endpoint) = &config.endpoint {
+        loader = loader.endpoint_url(endpoint);
+    }
+
+    Ok(loader.load().await)
+}
+
+// ============================================================================
+// Test Endpoints - Execute tools, resources, prompts, workflows
+// ============================================================================
+
+/// Request body for test endpoints
+#[derive(Deserialize)]
+pub struct TestRequest {
+    #[serde(default)]
+    pub args: Value,
+}
+
+/// Response for test endpoints
+#[derive(Serialize)]
+pub struct TestResult {
+    pub output: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub execution_time_ms: u64,
+}
+
+/// POST /api/tools/:name/test - Execute a tool with test inputs
+pub async fn test_tool(
+    State(state): State<ApiState>,
+    Path(name): Path<String>,
+    Json(req): Json<TestRequest>,
+) -> impl IntoResponse {
+    let start = std::time::Instant::now();
+    let settings = state.settings.read().await;
+
+    // Find the tool
+    let tool = match settings.tools.iter().find(|t| t.name == name) {
+        Some(t) => t.clone(),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ApiResponse::<TestResult>::error("Tool not found")),
+            );
+        }
+    };
+    drop(settings);
+
+    // Execute the mock strategy
+    let output = if let Some(mock_config) = &tool.mock {
+        match state.mock_strategy.generate(mock_config, Some(&req.args)).await {
+            Ok(result) => result,
+            Err(e) => {
+                let elapsed = start.elapsed().as_millis() as u64;
+                return (
+                    StatusCode::OK,
+                    Json(ApiResponse::success(TestResult {
+                        output: Value::Null,
+                        error: Some(format!("Mock strategy error: {}", e)),
+                        execution_time_ms: elapsed,
+                    })),
+                );
+            }
+        }
+    } else if let Some(static_response) = &tool.static_response {
+        static_response.clone()
+    } else {
+        Value::Null
+    };
+
+    let elapsed = start.elapsed().as_millis() as u64;
+    (
+        StatusCode::OK,
+        Json(ApiResponse::success(TestResult {
+            output,
+            error: None,
+            execution_time_ms: elapsed,
+        })),
+    )
+}
+
+/// POST /api/resources/:uri/test - Read a resource and get its content
+pub async fn test_resource(
+    State(state): State<ApiState>,
+    Path(uri): Path<String>,
+) -> impl IntoResponse {
+    let start = std::time::Instant::now();
+    let decoded_uri = urlencoding::decode(&uri).map(|s| s.into_owned()).unwrap_or(uri);
+    let settings = state.settings.read().await;
+
+    // Find the resource
+    let resource = match settings.resources.iter().find(|r| r.uri == decoded_uri) {
+        Some(r) => r.clone(),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ApiResponse::<TestResult>::error("Resource not found")),
+            );
+        }
+    };
+    drop(settings);
+
+    // Generate resource content
+    let output = if let Some(mock_config) = &resource.mock {
+        match state.mock_strategy.generate(mock_config, None).await {
+            Ok(result) => {
+                // Return as structured content
+                json!({
+                    "uri": resource.uri,
+                    "name": resource.name,
+                    "mime_type": resource.mime_type,
+                    "content": result
+                })
+            }
+            Err(e) => {
+                let elapsed = start.elapsed().as_millis() as u64;
+                return (
+                    StatusCode::OK,
+                    Json(ApiResponse::success(TestResult {
+                        output: Value::Null,
+                        error: Some(format!("Mock strategy error: {}", e)),
+                        execution_time_ms: elapsed,
+                    })),
+                );
+            }
+        }
+    } else if let Some(content) = &resource.content {
+        json!({
+            "uri": resource.uri,
+            "name": resource.name,
+            "mime_type": resource.mime_type,
+            "content": content
+        })
+    } else {
+        json!({
+            "uri": resource.uri,
+            "name": resource.name,
+            "mime_type": resource.mime_type,
+            "content": ""
+        })
+    };
+
+    let elapsed = start.elapsed().as_millis() as u64;
+    (
+        StatusCode::OK,
+        Json(ApiResponse::success(TestResult {
+            output,
+            error: None,
+            execution_time_ms: elapsed,
+        })),
+    )
+}
+
+/// POST /api/prompts/:name/test - Get prompt messages with arguments
+pub async fn test_prompt(
+    State(state): State<ApiState>,
+    Path(name): Path<String>,
+    Json(req): Json<TestRequest>,
+) -> impl IntoResponse {
+    let start = std::time::Instant::now();
+    let settings = state.settings.read().await;
+
+    // Find the prompt
+    let prompt = match settings.prompts.iter().find(|p| p.name == name) {
+        Some(p) => p.clone(),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ApiResponse::<TestResult>::error("Prompt not found")),
+            );
+        }
+    };
+    drop(settings);
+
+    // Build prompt output with arguments substituted in messages
+    let messages: Vec<Value> = prompt.messages.as_ref().map(|msgs| {
+        msgs.iter().map(|m| {
+            let mut content = m.content.clone();
+            // Simple variable substitution from args
+            if let Some(args_obj) = req.args.as_object() {
+                for (key, value) in args_obj {
+                    let placeholder = format!("{{{{{}}}}}", key);
+                    if let Some(val_str) = value.as_str() {
+                        content = content.replace(&placeholder, val_str);
+                    } else {
+                        content = content.replace(&placeholder, &value.to_string());
+                    }
+                }
+            }
+            json!({
+                "role": m.role,
+                "content": content
+            })
+        }).collect()
+    }).unwrap_or_default();
+
+    let output = json!({
+        "name": prompt.name,
+        "description": prompt.description,
+        "messages": messages
+    });
+
+    let elapsed = start.elapsed().as_millis() as u64;
+    (
+        StatusCode::OK,
+        Json(ApiResponse::success(TestResult {
+            output,
+            error: None,
+            execution_time_ms: elapsed,
+        })),
+    )
+}
+
+/// POST /api/workflows/:name/test - Execute a workflow with test inputs
+pub async fn test_workflow(
+    State(state): State<ApiState>,
+    Path(name): Path<String>,
+    Json(req): Json<TestRequest>,
+) -> impl IntoResponse {
+    let start = std::time::Instant::now();
+    let settings = state.settings.read().await;
+
+    // Find the workflow
+    let workflow = match settings.workflows.iter().find(|w| w.name == name) {
+        Some(w) => w.clone(),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ApiResponse::<TestResult>::error("Workflow not found")),
+            );
+        }
+    };
+    drop(settings);
+
+    // For workflows, we'll just show the workflow definition with inputs
+    // Full workflow execution would require the WorkflowEngine
+    let output = json!({
+        "name": workflow.name,
+        "description": workflow.description,
+        "input": req.args,
+        "steps": workflow.steps.iter().map(|s| json!({
+            "id": s.id,
+            "tool": s.tool,
+            "args": s.args,
+            "condition": s.condition,
+            "loop_over": s.loop_over
+        })).collect::<Vec<_>>(),
+        "note": "Full workflow execution not yet implemented in test mode. This shows the workflow definition with your inputs."
+    });
+
+    let elapsed = start.elapsed().as_millis() as u64;
+    (
+        StatusCode::OK,
+        Json(ApiResponse::success(TestResult {
+            output,
+            error: None,
+            execution_time_ms: elapsed,
+        })),
+    )
 }

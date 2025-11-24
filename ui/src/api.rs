@@ -75,6 +75,13 @@ pub async fn delete_resource(uri: &str) -> Result<(), String> {
     delete_request(&url).await
 }
 
+pub async fn test_resource(uri: &str, args: &serde_json::Value) -> Result<crate::types::TestResult, String> {
+    let encoded_uri = urlencoding_encode(uri);
+    let url = format!("{}/resources/{}/test", API_BASE, encoded_uri);
+    let req = crate::types::TestRequest { args: args.clone() };
+    post_json::<crate::types::TestRequest, crate::types::TestResult>(&url, &req).await
+}
+
 // ============================================================================
 // Tools
 // ============================================================================
@@ -102,6 +109,12 @@ pub async fn update_tool(name: &str, tool: &Tool) -> Result<Tool, String> {
 pub async fn delete_tool(name: &str) -> Result<(), String> {
     let url = format!("{}/tools/{}", API_BASE, name);
     delete_request(&url).await
+}
+
+pub async fn test_tool(name: &str, args: &serde_json::Value) -> Result<crate::types::TestResult, String> {
+    let url = format!("{}/tools/{}/test", API_BASE, name);
+    let req = crate::types::TestRequest { args: args.clone() };
+    post_json::<crate::types::TestRequest, crate::types::TestResult>(&url, &req).await
 }
 
 // ============================================================================
@@ -133,6 +146,12 @@ pub async fn delete_prompt(name: &str) -> Result<(), String> {
     delete_request(&url).await
 }
 
+pub async fn test_prompt(name: &str, args: &serde_json::Value) -> Result<crate::types::TestResult, String> {
+    let url = format!("{}/prompts/{}/test", API_BASE, name);
+    let req = crate::types::TestRequest { args: args.clone() };
+    post_json::<crate::types::TestRequest, crate::types::TestResult>(&url, &req).await
+}
+
 // ============================================================================
 // Workflows
 // ============================================================================
@@ -160,6 +179,12 @@ pub async fn update_workflow(name: &str, workflow: &Workflow) -> Result<Workflow
 pub async fn delete_workflow(name: &str) -> Result<(), String> {
     let url = format!("{}/workflows/{}", API_BASE, name);
     delete_request(&url).await
+}
+
+pub async fn test_workflow(name: &str, args: &serde_json::Value) -> Result<crate::types::TestResult, String> {
+    let url = format!("{}/workflows/{}/test", API_BASE, name);
+    let req = crate::types::TestRequest { args: args.clone() };
+    post_json::<crate::types::TestRequest, crate::types::TestResult>(&url, &req).await
 }
 
 // ============================================================================

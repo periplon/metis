@@ -295,3 +295,19 @@ pub struct DatabaseConfig {
     #[serde(default)]
     pub params: Vec<String>,
 }
+
+/// Request for testing tools, resources, prompts, workflows
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct TestRequest {
+    #[serde(default)]
+    pub args: Value,
+}
+
+/// Response from test endpoints
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TestResult {
+    pub output: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub execution_time_ms: u64,
+}

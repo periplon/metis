@@ -21,6 +21,12 @@ pub fn Resources() -> impl IntoView {
     let (delete_target, set_delete_target) = signal(Option::<String>::None);
     let (deleting, set_deleting) = signal(false);
 
+    // Test modal state
+    let (test_target, set_test_target) = signal(Option::<String>::None);
+    let (test_input, set_test_input) = signal(String::from("{}"));
+    let (test_result, set_test_result) = signal(Option::<Result<crate::types::TestResult, String>>::None);
+    let (testing, set_testing) = signal(false);
+
     let resources = LocalResource::new(move || {
         let _ = refresh_trigger.get();
         async move { api::list_resources().await.ok() }
@@ -43,6 +49,27 @@ pub fn Resources() -> impl IntoView {
                 set_deleting.set(false);
             });
         }
+    };
+
+    let on_test_run = move |_| {
+        if let Some(uri) = test_target.get() {
+            set_testing.set(true);
+            set_test_result.set(None);
+            let input_json = test_input.get();
+            wasm_bindgen_futures::spawn_local(async move {
+                let args: serde_json::Value = serde_json::from_str(&input_json)
+                    .unwrap_or(serde_json::json!({}));
+                let result = api::test_resource(&uri, &args).await;
+                set_test_result.set(Some(result));
+                set_testing.set(false);
+            });
+        }
+    };
+
+    let on_test_close = move |_| {
+        set_test_target.set(None);
+        set_test_input.set("{}".to_string());
+        set_test_result.set(None);
     };
 
     view! {
@@ -121,15 +148,120 @@ pub fn Resources() -> impl IntoView {
                 </div>
             })}
 
+            // Test modal
+            {move || test_target.get().map(|uri| view! {
+                <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div class="bg-white rounded-lg shadow-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-lg font-semibold text-gray-900">
+                                "Test Resource: "
+                                <span class="font-mono text-blue-600">{uri.clone()}</span>
+                            </h3>
+                            <button
+                                class="text-gray-400 hover:text-gray-600"
+                                on:click=on_test_close
+                            >
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                </svg>
+                            </button>
+                        </div>
+
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">"Input Arguments (JSON)"</label>
+                            <textarea
+                                rows=6
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+                                placeholder=r#"{"key": "value"}"#
+                                prop:value=move || test_input.get()
+                                on:input=move |ev| {
+                                    let target = ev.target().unwrap();
+                                    let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
+                                    set_test_input.set(textarea.value());
+                                }
+                            />
+                        </div>
+
+                        <div class="flex gap-3 mb-4">
+                            <button
+                                class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50 flex items-center gap-2"
+                                on:click=on_test_run
+                                disabled=move || testing.get()
+                            >
+                                {move || if testing.get() {
+                                    view! {
+                                        <span class="flex items-center gap-2">
+                                            <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                            </svg>
+                                            "Running..."
+                                        </span>
+                                    }.into_any()
+                                } else {
+                                    view! {
+                                        <span class="flex items-center gap-2">
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                            </svg>
+                                            "Run Test"
+                                        </span>
+                                    }.into_any()
+                                }}
+                            </button>
+                            <button
+                                class="px-4 py-2 text-gray-700 border border-gray-300 rounded hover:bg-gray-50"
+                                on:click=on_test_close
+                            >
+                                "Close"
+                            </button>
+                        </div>
+
+                        // Test result display
+                        {move || test_result.get().map(|result| {
+                            match result {
+                                Ok(res) => view! {
+                                    <div class="border-t pt-4">
+                                        <div class="flex items-center justify-between mb-2">
+                                            <h4 class="font-medium text-gray-900">"Output"</h4>
+                                            <span class="text-sm text-gray-500">
+                                                {format!("{}ms", res.execution_time_ms)}
+                                            </span>
+                                        </div>
+                                        {res.error.clone().map(|err| view! {
+                                            <div class="mb-2 p-2 bg-red-50 border border-red-200 rounded text-red-700 text-sm">
+                                                {err}
+                                            </div>
+                                        })}
+                                        <pre class="bg-gray-900 text-blue-400 p-4 rounded-lg overflow-x-auto text-sm font-mono">
+                                            {serde_json::to_string_pretty(&res.output).unwrap_or_else(|_| res.output.to_string())}
+                                        </pre>
+                                    </div>
+                                }.into_any(),
+                                Err(e) => view! {
+                                    <div class="border-t pt-4">
+                                        <div class="p-3 bg-red-50 border border-red-200 rounded-lg">
+                                            <h4 class="font-medium text-red-800 mb-1">"Error"</h4>
+                                            <p class="text-red-600 text-sm">{e}</p>
+                                        </div>
+                                    </div>
+                                }.into_any(),
+                            }
+                        })}
+                    </div>
+                </div>
+            })}
+
             <Suspense fallback=move || view! { <LoadingState /> }>
                 {move || {
                     resources.get().map(|data| {
                         match data {
                             Some(list) if !list.is_empty() => {
                                 if view_mode.get() == ViewMode::Table {
-                                    view! { <ResourceTable resources=list set_delete_target=set_delete_target /> }.into_any()
+                                    view! { <ResourceTable resources=list set_delete_target=set_delete_target set_test_target=set_test_target /> }.into_any()
                                 } else {
-                                    view! { <ResourceCards resources=list set_delete_target=set_delete_target /> }.into_any()
+                                    view! { <ResourceCards resources=list set_delete_target=set_delete_target set_test_target=set_test_target /> }.into_any()
                                 }
                             },
                             Some(_) => view! { <EmptyState /> }.into_any(),
@@ -190,6 +322,7 @@ fn ErrorState() -> impl IntoView {
 fn ResourceTable(
     resources: Vec<Resource>,
     set_delete_target: WriteSignal<Option<String>>,
+    set_test_target: WriteSignal<Option<String>>,
 ) -> impl IntoView {
     view! {
         <div class="bg-white rounded-lg shadow overflow-hidden">
@@ -207,6 +340,7 @@ fn ResourceTable(
                     {resources.into_iter().map(|resource| {
                         let uri_for_edit = resource.uri.clone();
                         let uri_for_delete = resource.uri.clone();
+                        let uri_for_test = resource.uri.clone();
                         let strategy = resource.mock.as_ref()
                             .map(|m| format!("{:?}", m.strategy))
                             .unwrap_or_else(|| if resource.content.is_some() { "Static".to_string() } else { "-".to_string() });
@@ -230,6 +364,12 @@ fn ResourceTable(
                                     </span>
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                    <button
+                                        class="text-blue-600 hover:text-blue-900 mr-3"
+                                        on:click=move |_| set_test_target.set(Some(uri_for_test.clone()))
+                                    >
+                                        "Test"
+                                    </button>
                                     <a
                                         href=format!("/resources/edit/{}", urlencoding::encode(&uri_for_edit))
                                         class="text-blue-600 hover:text-blue-900 mr-3"
@@ -256,12 +396,14 @@ fn ResourceTable(
 fn ResourceCards(
     resources: Vec<Resource>,
     set_delete_target: WriteSignal<Option<String>>,
+    set_test_target: WriteSignal<Option<String>>,
 ) -> impl IntoView {
     view! {
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {resources.into_iter().map(|resource| {
                 let uri_for_edit = resource.uri.clone();
                 let uri_for_delete = resource.uri.clone();
+                let uri_for_test = resource.uri.clone();
                 let strategy = resource.mock.as_ref()
                     .map(|m| format!("{:?}", m.strategy))
                     .unwrap_or_else(|| if resource.content.is_some() { "Static".to_string() } else { "-".to_string() });
@@ -289,6 +431,12 @@ fn ResourceCards(
                             </div>
                         </div>
                         <div class="flex justify-end gap-2 pt-3 border-t border-gray-100">
+                            <button
+                                class="px-3 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded"
+                                on:click=move |_| set_test_target.set(Some(uri_for_test.clone()))
+                            >
+                                "Test"
+                            </button>
                             <a
                                 href=format!("/resources/edit/{}", urlencoding::encode(&uri_for_edit))
                                 class="px-3 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded"
