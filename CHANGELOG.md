@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.1.6 - 2025-11-24
+#### Bug Fixes
+- **(ci)** set wasm-bindgen version to match rust dependency - (94a9a3e) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.1.5 - 2025-11-24
 #### Bug Fixes
 - **(ci)** remove unnecessary dart-sass installation - (dd14017) - Joan Marc Carbo Arnau
