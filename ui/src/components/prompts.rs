@@ -478,6 +478,10 @@ pub fn PromptEditForm() -> impl IntoView {
     // Load existing prompt
     Effect::new(move |_| {
         let name_param = prompt_name();
+        // Skip if name is empty (params not ready yet)
+        if name_param.is_empty() {
+            return;
+        }
         set_loading.set(true);
         wasm_bindgen_futures::spawn_local(async move {
             match api::get_prompt(&name_param).await {

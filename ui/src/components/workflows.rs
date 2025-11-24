@@ -485,6 +485,10 @@ pub fn WorkflowEditForm() -> impl IntoView {
     // Load existing workflow
     Effect::new(move |_| {
         let name_param = workflow_name();
+        // Skip if name is empty (params not ready yet)
+        if name_param.is_empty() {
+            return;
+        }
         set_loading.set(true);
         wasm_bindgen_futures::spawn_local(async move {
             match api::get_workflow(&name_param).await {

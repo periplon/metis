@@ -1087,7 +1087,12 @@ pub fn ResourceEditForm() -> impl IntoView {
 
     // Load existing resource
     Effect::new(move |_| {
-        let decoded_uri = urlencoding::decode(&uri());
+        let uri_param = uri();
+        // Skip if uri is empty (params not ready yet)
+        if uri_param.is_empty() {
+            return;
+        }
+        let decoded_uri = urlencoding::decode(&uri_param);
         set_loading.set(true);
         wasm_bindgen_futures::spawn_local(async move {
             match api::get_resource(&decoded_uri).await {
