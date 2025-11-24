@@ -2,9 +2,8 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub mod mcp_types;
-pub mod sampling;
 pub mod auth;
+pub mod sampling;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Resource {

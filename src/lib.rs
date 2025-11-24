@@ -5,12 +5,13 @@
 //!
 //! ## Features
 //!
-//! - **7 Mock Strategies**: Static, Template, Random, Stateful, Script, File, Pattern
+//! - **9 Mock Strategies**: Static, Template, Random, Stateful, Script, File, Pattern, LLM, Database
 //! - **Authentication**: API Key and JWT Bearer Token support
 //! - **Metrics**: Prometheus metrics for monitoring
 //! - **Health Checks**: Kubernetes-ready health endpoints
 //! - **Live Reload**: Automatic configuration reloading
 //! - **Validation**: Comprehensive configuration validation
+//! - **Standards-compliant**: Uses official rmcp SDK for MCP protocol
 //!
 //! ## Quick Start
 //!
@@ -21,7 +22,7 @@
 //! async fn main() -> anyhow::Result<()> {
 //!     // Load configuration
 //!     let settings = Settings::new()?;
-//!     
+//!
 //!     // Server will start on configured host:port
 //!     Ok(())
 //! }
@@ -40,14 +41,12 @@ pub mod application;
 pub mod config;
 pub mod domain;
 
-use crate::adapters::mcp_protocol_handler::{McpProtocolHandler, JsonRpcRequest, JsonRpcResponse};
 use crate::adapters::health_handler::HealthHandler;
 use crate::adapters::metrics_handler::MetricsHandler;
-use axum::{
-    routing::{get, post},
-    Router,
-    extract::State,
-    Json,
+use crate::adapters::rmcp_server::MetisServer;
+use axum::{routing::get, Router};
+use rmcp::transport::streamable_http_server::{
+    session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -56,19 +55,29 @@ use tokio::sync::RwLock;
 ///
 /// # Arguments
 ///
-/// * `protocol_handler` - MCP protocol handler
+/// * `metis_server` - MCP server implementation using rmcp SDK
 /// * `health_handler` - Health check handler
 /// * `metrics_handler` - Metrics collection handler
+/// * `settings` - Application settings
 ///
 /// # Returns
 ///
 /// Configured Axum Router
 pub async fn create_app(
-    protocol_handler: Arc<McpProtocolHandler>,
+    metis_server: MetisServer,
     health_handler: Arc<HealthHandler>,
     metrics_handler: Arc<MetricsHandler>,
     settings: Arc<RwLock<crate::config::Settings>>,
 ) -> Router {
+    // Create rmcp HTTP transport service
+    let session_manager = Arc::new(LocalSessionManager::default());
+    let config = StreamableHttpServerConfig::default();
+    let mcp_service = StreamableHttpService::new(
+        move || Ok(metis_server.clone()),
+        session_manager,
+        config,
+    );
+
     let mut router = Router::new()
         // Health check endpoints
         .route("/health", get({
@@ -100,8 +109,8 @@ pub async fn create_app(
                 async move { h.metrics().await }
             }
         }))
-        // MCP protocol endpoint
-        .route("/mcp", post(handle_mcp))
+        // MCP protocol endpoint using rmcp streamable HTTP transport
+        .nest_service("/mcp", mcp_service)
         // UI endpoint (catch-all for SPA)
         .fallback(crate::adapters::ui_handler::UIHandler::serve);
 
@@ -113,27 +122,18 @@ pub async fn create_app(
                 rate_limit.requests_per_second,
                 rate_limit.burst_size,
             );
-            
-            router = router.layer(
-                axum::middleware::from_fn_with_state(limiter, crate::adapters::rate_limit::rate_limit_middleware)
-            );
+
+            router = router.layer(axum::middleware::from_fn_with_state(
+                limiter,
+                crate::adapters::rate_limit::rate_limit_middleware,
+            ));
         }
     }
-    
-    router
-        .layer(
-            tower_http::cors::CorsLayer::new()
-                .allow_origin(tower_http::cors::Any)
-                .allow_methods(tower_http::cors::Any)
-                .allow_headers(tower_http::cors::Any),
-        )
-        .with_state(protocol_handler)
-}
 
-async fn handle_mcp(
-    State(handler): State<Arc<McpProtocolHandler>>,
-    Json(request): Json<JsonRpcRequest>,
-) -> Json<JsonRpcResponse> {
-    let response = handler.handle_request(request).await;
-    Json(response)
+    router.layer(
+        tower_http::cors::CorsLayer::new()
+            .allow_origin(tower_http::cors::Any)
+            .allow_methods(tower_http::cors::Any)
+            .allow_headers(tower_http::cors::Any),
+    )
 }

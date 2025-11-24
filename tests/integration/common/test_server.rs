@@ -1,19 +1,17 @@
-use metis::config::Settings;
 use metis::adapters::{
-    mcp_protocol_handler::McpProtocolHandler,
     health_handler::HealthHandler,
     metrics_handler::{MetricsCollector, MetricsHandler},
-    resource_handler::InMemoryResourceHandler,
-    tool_handler::BasicToolHandler,
-    prompt_handler::InMemoryPromptHandler,
-    logging_handler::LoggingHandler,
     mock_strategy::MockStrategyHandler,
+    prompt_handler::InMemoryPromptHandler,
+    resource_handler::InMemoryResourceHandler,
+    rmcp_server::MetisServer,
     state_manager::StateManager,
+    tool_handler::BasicToolHandler,
 };
-use axum::Router;
+use metis::config::Settings;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use std::net::SocketAddr;
 
 pub struct TestServer {
     pub addr: SocketAddr,
@@ -38,23 +36,25 @@ impl TestServer {
         // Initialize handlers
         let state_manager = Arc::new(StateManager::new());
         let mock_strategy = Arc::new(MockStrategyHandler::new(state_manager));
-        let resource_handler = Arc::new(InMemoryResourceHandler::new(settings.clone(), mock_strategy.clone()));
-        let tool_handler = Arc::new(BasicToolHandler::new(settings.clone(), mock_strategy.clone()));
+        let resource_handler = Arc::new(InMemoryResourceHandler::new(
+            settings.clone(),
+            mock_strategy.clone(),
+        ));
+        let tool_handler = Arc::new(BasicToolHandler::new(
+            settings.clone(),
+            mock_strategy.clone(),
+        ));
         let prompt_handler = Arc::new(InMemoryPromptHandler::new(settings.clone()));
-        let logging_handler = Arc::new(LoggingHandler::new());
         let health_handler = Arc::new(HealthHandler::new(settings.clone()));
         let metrics_collector = Arc::new(MetricsCollector::new().unwrap());
         let metrics_handler = Arc::new(MetricsHandler::new(metrics_collector));
 
-        let protocol_handler = Arc::new(McpProtocolHandler::new(
-            resource_handler,
-            tool_handler,
-            prompt_handler,
-            logging_handler,
-        ));
+        // Create MetisServer using rmcp SDK
+        let metis_server = MetisServer::new(resource_handler, tool_handler, prompt_handler);
 
         // Create app
-        let app = metis::create_app(protocol_handler, health_handler, metrics_handler, settings).await;
+        let app =
+            metis::create_app(metis_server, health_handler, metrics_handler, settings).await;
 
         // Start server on random port
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
