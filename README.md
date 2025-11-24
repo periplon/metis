@@ -61,7 +61,7 @@ metis/
 - **Template**: Dynamic responses using Tera templates
 - **Random**: Generate realistic fake data (names, emails, etc.)
 - **Stateful**: Get, set, and increment state variables
-- **Script**: Execute Rhai scripts for complex logic
+- **Script**: Execute scripts in Rhai, Lua, JavaScript, or Python
 - **File**: Serve content from local files (sequential or random selection)
 - **Pattern**: Generate strings from regex-like patterns
 - **LLM**: Proxy to OpenAI or Anthropic for AI-generated mocks
@@ -245,7 +245,7 @@ template = "Your template content here with {{ variables }}"
 - `random`: Generate random data using Faker library
 - `static`: Return null/empty response
 - `stateful`: Persist and retrieve state across requests
-- `script`: Execute Rhai scripts
+- `script`: Execute scripts (Rhai, Lua, JavaScript, Python)
 - `file`: Read from external files
 - `pattern`: Generate data from patterns
 - `llm`: Generate content using OpenAI/Anthropic
@@ -373,7 +373,7 @@ Metis implements the following MCP protocol methods:
     - ✅ Stateful
     - ✅ Database (SQLx)
     - ✅ LLM (OpenAI/Anthropic)
-    - ⚠️ Script (Rhai implemented; Python/Lua/JS experimental & currently broken)
+    - ✅ Script (Rhai, Lua, JavaScript, Python)
     - 🚧 File (Planned)
     - 🚧 Pattern (Planned)
 - ✅ Resource, Tool, and Prompt handlers
@@ -386,7 +386,6 @@ Metis implements the following MCP protocol methods:
 - ⚠️ Authentication (Implemented but not integrated)
 
 ### Planned Features
-- [ ] Fix compilation issues in Script strategy (Python integration)
 - [ ] Implement File and Pattern strategies
 - [ ] Integrate Authentication middleware
 - [ ] Advanced Workflow engine
