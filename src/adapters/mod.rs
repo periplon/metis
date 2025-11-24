@@ -1,3 +1,4 @@
+pub mod api_handler;
 pub mod auth_middleware;
 pub mod health_handler;
 pub mod jwks;

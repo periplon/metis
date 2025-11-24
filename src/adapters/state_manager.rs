@@ -45,6 +45,22 @@ impl StateManager {
         let mut state = self.state.write().await;
         state.clear();
     }
+
+    /// Get all state entries (for API/UI inspection)
+    pub async fn get_all(&self) -> HashMap<String, Value> {
+        let state = self.state.read().await;
+        state.clone()
+    }
+
+    /// Clear all state (alias for reset_all)
+    pub async fn clear(&self) {
+        self.reset_all().await;
+    }
+
+    /// Delete a specific key
+    pub async fn delete(&self, key: &str) {
+        self.reset(key).await;
+    }
 }
 
 impl Default for StateManager {

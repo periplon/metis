@@ -62,7 +62,7 @@ impl TestServer {
         }));
 
         let state_manager = Arc::new(StateManager::new());
-        let mock_strategy = Arc::new(MockStrategyHandler::new(state_manager));
+        let mock_strategy = Arc::new(MockStrategyHandler::new(state_manager.clone()));
         let resource_handler =
             Arc::new(InMemoryResourceHandler::new(settings.clone(), mock_strategy.clone()));
         let tool_handler = Arc::new(BasicToolHandler::new(settings.clone(), mock_strategy.clone()));
@@ -75,7 +75,7 @@ impl TestServer {
         let metis_server = MetisServer::new(resource_handler, tool_handler, prompt_handler);
 
         let app =
-            metis::create_app(metis_server, health_handler, metrics_handler, settings).await;
+            metis::create_app(metis_server, health_handler, metrics_handler, settings, state_manager).await;
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

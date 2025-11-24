@@ -42,11 +42,13 @@ pub mod cli;
 pub mod config;
 pub mod domain;
 
+use crate::adapters::api_handler::{self, ApiState};
 use crate::adapters::auth_middleware::{auth_middleware, AuthMiddleware, SharedAuthMiddleware};
 use crate::adapters::health_handler::HealthHandler;
 use crate::adapters::metrics_handler::MetricsHandler;
 use crate::adapters::rmcp_server::MetisServer;
-use axum::{routing::get, Router};
+use crate::adapters::state_manager::StateManager;
+use axum::{routing::{delete, get}, Router};
 use rmcp::transport::streamable_http_server::{
     session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
 };
@@ -61,6 +63,7 @@ use tokio::sync::RwLock;
 /// * `health_handler` - Health check handler
 /// * `metrics_handler` - Metrics collection handler
 /// * `settings` - Application settings
+/// * `state_manager` - State manager for stateful mocks
 ///
 /// # Returns
 ///
@@ -70,6 +73,7 @@ pub async fn create_app(
     health_handler: Arc<HealthHandler>,
     metrics_handler: Arc<MetricsHandler>,
     settings: Arc<RwLock<crate::config::Settings>>,
+    state_manager: Arc<StateManager>,
 ) -> Router {
     // Create rmcp HTTP transport service
     let session_manager = Arc::new(LocalSessionManager::default());
@@ -80,7 +84,7 @@ pub async fn create_app(
         config,
     );
 
-    let mut router = Router::new()
+    let router = Router::new()
         // Health check endpoints
         .route("/health", get({
             let handler = health_handler.clone();
@@ -112,7 +116,38 @@ pub async fn create_app(
             }
         }))
         // MCP protocol endpoint using rmcp streamable HTTP transport
-        .nest_service("/mcp", mcp_service)
+        .nest_service("/mcp", mcp_service);
+
+    // Create API state for REST endpoints
+    let api_state = ApiState {
+        settings: settings.clone(),
+        state_manager,
+    };
+
+    // API routes for Web UI
+    let api_router = Router::new()
+        // Config overview
+        .route("/config", get(api_handler::get_config_overview))
+        .route("/metrics/json", get(api_handler::get_metrics_json))
+        // Resources CRUD
+        .route("/resources", get(api_handler::list_resources).post(api_handler::create_resource))
+        .route("/resources/{uri}", get(api_handler::get_resource).put(api_handler::update_resource).delete(api_handler::delete_resource))
+        // Tools CRUD
+        .route("/tools", get(api_handler::list_tools).post(api_handler::create_tool))
+        .route("/tools/{name}", get(api_handler::get_tool).put(api_handler::update_tool).delete(api_handler::delete_tool))
+        // Prompts CRUD
+        .route("/prompts", get(api_handler::list_prompts).post(api_handler::create_prompt))
+        .route("/prompts/{name}", get(api_handler::get_prompt).put(api_handler::update_prompt).delete(api_handler::delete_prompt))
+        // Workflows CRUD
+        .route("/workflows", get(api_handler::list_workflows).post(api_handler::create_workflow))
+        .route("/workflows/{name}", get(api_handler::get_workflow).put(api_handler::update_workflow).delete(api_handler::delete_workflow))
+        // State management
+        .route("/state", get(api_handler::get_state).delete(api_handler::reset_state))
+        .route("/state/{key}", delete(api_handler::delete_state_key))
+        .with_state(api_state);
+
+    let mut router = router
+        .nest("/api", api_router)
         // UI endpoint (catch-all for SPA)
         .fallback(crate::adapters::ui_handler::UIHandler::serve);
 

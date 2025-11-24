@@ -241,7 +241,7 @@ fn default_concurrency() -> u32 {
 }
 
 /// Strategy for handling errors in workflow execution
-#[derive(Debug, Deserialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorStrategy {
     /// Stop workflow execution and return error

@@ -56,6 +56,7 @@ aws-config = "1.5"
 aws-sdk-s3 = "1.65"
 futures = "0.3"
 toml = "0.8"
+urlencoding = "2.1"
 
 [dev-dependencies]
 tower = { version = "0.4", features = ["util"] }

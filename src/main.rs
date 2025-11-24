@@ -87,7 +87,7 @@ async fn main() -> anyhow::Result<()> {
     let state_manager = Arc::new(StateManager::new());
 
     // Initialize mock strategy handler
-    let mock_strategy = Arc::new(MockStrategyHandler::new(state_manager));
+    let mock_strategy = Arc::new(MockStrategyHandler::new(state_manager.clone()));
 
     // Initialize handlers
     let resource_handler = Arc::new(InMemoryResourceHandler::new(
@@ -113,7 +113,7 @@ async fn main() -> anyhow::Result<()> {
     let metis_server = MetisServer::new(resource_handler, tool_handler, prompt_handler);
 
     // Create application using the library function
-    let app = metis::create_app(metis_server, health_handler, metrics_handler, settings).await;
+    let app = metis::create_app(metis_server, health_handler, metrics_handler, settings, state_manager).await;
 
     // Start server
     let addr: SocketAddr = format!("{}:{}", host, port).parse()?;
