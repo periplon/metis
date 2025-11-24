@@ -5,7 +5,7 @@ WORKDIR /app
 
 # Install wasm target and cargo-leptos
 RUN rustup target add wasm32-unknown-unknown
-RUN cargo install cargo-leptos --version 0.2.24
+RUN cargo install cargo-leptos --locked --version 0.2.21
 
 # Copy UI source
 COPY ui ./ui
