@@ -33,6 +33,37 @@ pub struct ServerInfo {
     pub version: String,
 }
 
+/// Editable authentication configuration
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct AuthConfig {
+    pub enabled: bool,
+    pub mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_keys: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jwt_secret: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jwt_algorithm: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jwks_url: Option<String>,
+}
+
+/// Editable rate limit configuration
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct RateLimitConfig {
+    pub enabled: bool,
+    pub requests_per_second: u32,
+    pub burst_size: u32,
+}
+
+/// Server settings that can be edited via the UI
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ServerSettings {
+    pub auth: AuthConfig,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<RateLimitConfig>,
+}
+
 /// Resource configuration
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct Resource {

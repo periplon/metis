@@ -1,5 +1,7 @@
 //! API client for the Metis backend
 
+#![allow(dead_code)]
+
 use crate::types::*;
 
 const API_BASE: &str = "/api";
@@ -8,6 +10,18 @@ const API_BASE: &str = "/api";
 pub async fn get_config() -> Result<ConfigOverview, String> {
     let url = format!("{}/config", API_BASE);
     fetch_json::<ConfigOverview>(&url).await
+}
+
+/// Fetch editable server settings
+pub async fn get_server_settings() -> Result<ServerSettings, String> {
+    let url = format!("{}/config/settings", API_BASE);
+    fetch_json::<ServerSettings>(&url).await
+}
+
+/// Update server settings
+pub async fn update_server_settings(settings: &ServerSettings) -> Result<ServerSettings, String> {
+    let url = format!("{}/config/settings", API_BASE);
+    put_json::<ServerSettings, ServerSettings>(&url, settings).await
 }
 
 /// Fetch metrics as JSON

@@ -1,6 +1,8 @@
 use leptos::prelude::*;
+use leptos::web_sys;
+use wasm_bindgen::JsCast;
 use crate::api;
-use crate::types::Prompt;
+use crate::types::{Prompt, PromptArgument, PromptMessage};
 
 #[component]
 pub fn Prompts() -> impl IntoView {
@@ -70,6 +72,169 @@ fn PromptCard(prompt: Prompt) -> impl IntoView {
                 <button class="text-sm text-blue-600 hover:text-blue-900">"Edit"</button>
                 <button class="text-sm text-red-600 hover:text-red-900">"Delete"</button>
             </div>
+        </div>
+    }
+}
+
+#[component]
+pub fn PromptForm() -> impl IntoView {
+    let (name, set_name) = signal(String::new());
+    let (description, set_description) = signal(String::new());
+    let (args_json, set_args_json) = signal(String::new());
+    let (messages_json, set_messages_json) = signal(String::new());
+    let (error, set_error) = signal(Option::<String>::None);
+    let (saving, set_saving) = signal(false);
+
+    let on_submit = move |ev: web_sys::SubmitEvent| {
+        ev.prevent_default();
+        set_saving.set(true);
+        set_error.set(None);
+
+        let arguments: Option<Vec<PromptArgument>> = if args_json.get().is_empty() {
+            None
+        } else {
+            match serde_json::from_str(&args_json.get()) {
+                Ok(args) => Some(args),
+                Err(e) => {
+                    set_error.set(Some(format!("Invalid arguments JSON: {}", e)));
+                    set_saving.set(false);
+                    return;
+                }
+            }
+        };
+
+        let messages: Option<Vec<PromptMessage>> = if messages_json.get().is_empty() {
+            None
+        } else {
+            match serde_json::from_str(&messages_json.get()) {
+                Ok(msgs) => Some(msgs),
+                Err(e) => {
+                    set_error.set(Some(format!("Invalid messages JSON: {}", e)));
+                    set_saving.set(false);
+                    return;
+                }
+            }
+        };
+
+        let prompt = Prompt {
+            name: name.get(),
+            description: description.get(),
+            arguments,
+            messages,
+        };
+
+        wasm_bindgen_futures::spawn_local(async move {
+            match api::create_prompt(&prompt).await {
+                Ok(_) => {
+                    if let Some(window) = web_sys::window() {
+                        let _ = window.location().set_href("/prompts");
+                    }
+                }
+                Err(e) => {
+                    set_error.set(Some(e));
+                    set_saving.set(false);
+                }
+            }
+        });
+    };
+
+    view! {
+        <div class="p-6">
+            <div class="mb-6">
+                <a href="/prompts" class="text-purple-500 hover:underline">"← Back to Prompts"</a>
+            </div>
+
+            <h2 class="text-2xl font-bold mb-6">"New Prompt"</h2>
+
+            <form on:submit=on_submit class="bg-white rounded-lg shadow p-6 max-w-2xl">
+                {move || error.get().map(|e| view! {
+                    <div class="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+                        {e}
+                    </div>
+                })}
+
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">"Name *"</label>
+                        <input
+                            type="text"
+                            required=true
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
+                            placeholder="my-prompt"
+                            prop:value=move || name.get()
+                            on:input=move |ev| {
+                                let target = ev.target().unwrap();
+                                let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                set_name.set(input.value());
+                            }
+                        />
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">"Description *"</label>
+                        <input
+                            type="text"
+                            required=true
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
+                            placeholder="What this prompt does"
+                            prop:value=move || description.get()
+                            on:input=move |ev| {
+                                let target = ev.target().unwrap();
+                                let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                set_description.set(input.value());
+                            }
+                        />
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">"Arguments (JSON Array)"</label>
+                        <textarea
+                            rows=4
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono text-sm"
+                            placeholder=r#"[{"name": "topic", "required": true}]"#
+                            prop:value=move || args_json.get()
+                            on:input=move |ev| {
+                                let target = ev.target().unwrap();
+                                let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
+                                set_args_json.set(textarea.value());
+                            }
+                        />
+                        <p class="mt-1 text-xs text-gray-500">"Optional array of argument definitions"</p>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">"Messages (JSON Array)"</label>
+                        <textarea
+                            rows=6
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono text-sm"
+                            placeholder=r#"[{"role": "user", "content": "Hello"}]"#
+                            prop:value=move || messages_json.get()
+                            on:input=move |ev| {
+                                let target = ev.target().unwrap();
+                                let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
+                                set_messages_json.set(textarea.value());
+                            }
+                        />
+                        <p class="mt-1 text-xs text-gray-500">"Optional array of prompt messages"</p>
+                    </div>
+                </div>
+
+                <div class="mt-6 flex gap-3">
+                    <button
+                        type="submit"
+                        disabled=move || saving.get()
+                        class="px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {move || if saving.get() { "Creating..." } else { "Create Prompt" }}
+                    </button>
+                    <a
+                        href="/prompts"
+                        class="px-4 py-2 border border-gray-300 text-gray-700 rounded hover:bg-gray-50"
+                    >
+                        "Cancel"
+                    </a>
+                </div>
+            </form>
         </div>
     }
 }

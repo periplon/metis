@@ -40,3 +40,20 @@ start-full:
 	just build
 	just ui-build
 	RUST_LOG=info cargo run --all-features
+
+# Build release binaries
+build-release:
+	cargo build --release
+
+# Build all release binaries including UI (UI embedded)
+build-release-all:
+	cd ui && cargo leptos build --release
+	cargo build --release
+
+# Build Docker image
+docker-build:
+	docker build -t metis .
+
+# Show available commands
+help:
+	@just --list

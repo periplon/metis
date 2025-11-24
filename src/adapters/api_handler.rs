@@ -15,8 +15,8 @@ use tokio::sync::RwLock;
 
 use crate::adapters::state_manager::StateManager;
 use crate::config::{
-    MockConfig, PromptArgument, PromptConfig, PromptMessage, ResourceConfig, Settings, ToolConfig,
-    WorkflowConfig, WorkflowStep,
+    MockConfig, PromptArgument, PromptConfig, PromptMessage, RateLimitConfig, ResourceConfig,
+    Settings, ToolConfig, WorkflowConfig, WorkflowStep,
 };
 
 /// Shared application state for API handlers
@@ -366,6 +366,120 @@ pub async fn get_config_overview(
     };
 
     (StatusCode::OK, Json(ApiResponse::success(overview)))
+}
+
+// ============================================================================
+// Server Settings DTOs for editing
+// ============================================================================
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AuthConfigDto {
+    pub enabled: bool,
+    pub mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_keys: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jwt_secret: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jwt_algorithm: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jwks_url: Option<String>,
+}
+
+impl From<&crate::domain::auth::AuthConfig> for AuthConfigDto {
+    fn from(a: &crate::domain::auth::AuthConfig) -> Self {
+        Self {
+            enabled: a.enabled,
+            mode: format!("{:?}", a.mode),
+            api_keys: a.api_keys.clone(),
+            jwt_secret: a.jwt_secret.clone(),
+            jwt_algorithm: a.jwt_algorithm.clone(),
+            jwks_url: a.jwks_url.clone(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct RateLimitConfigDto {
+    pub enabled: bool,
+    pub requests_per_second: u32,
+    pub burst_size: u32,
+}
+
+impl From<&RateLimitConfig> for RateLimitConfigDto {
+    fn from(r: &RateLimitConfig) -> Self {
+        Self {
+            enabled: r.enabled,
+            requests_per_second: r.requests_per_second,
+            burst_size: r.burst_size,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ServerSettingsDto {
+    pub auth: AuthConfigDto,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rate_limit: Option<RateLimitConfigDto>,
+}
+
+/// GET /api/config/settings - Get editable server settings
+pub async fn get_server_settings(
+    State(state): State<ApiState>,
+) -> impl IntoResponse {
+    let settings = state.settings.read().await;
+
+    let dto = ServerSettingsDto {
+        auth: AuthConfigDto::from(&settings.auth),
+        rate_limit: settings.rate_limit.as_ref().map(RateLimitConfigDto::from),
+    };
+
+    (StatusCode::OK, Json(ApiResponse::success(dto)))
+}
+
+/// PUT /api/config/settings - Update server settings
+pub async fn update_server_settings(
+    State(state): State<ApiState>,
+    Json(dto): Json<ServerSettingsDto>,
+) -> impl IntoResponse {
+    let mut settings = state.settings.write().await;
+
+    // Update auth settings
+    settings.auth.enabled = dto.auth.enabled;
+    if let Some(keys) = dto.auth.api_keys {
+        settings.auth.api_keys = Some(keys);
+    }
+    if let Some(secret) = dto.auth.jwt_secret {
+        settings.auth.jwt_secret = Some(secret);
+    }
+    if let Some(algo) = dto.auth.jwt_algorithm {
+        settings.auth.jwt_algorithm = Some(algo);
+    }
+    if let Some(url) = dto.auth.jwks_url {
+        settings.auth.jwks_url = Some(url);
+    }
+
+    // Update rate limit settings
+    if let Some(rate_limit_dto) = dto.rate_limit {
+        if let Some(ref mut rate_limit) = settings.rate_limit {
+            rate_limit.enabled = rate_limit_dto.enabled;
+            rate_limit.requests_per_second = rate_limit_dto.requests_per_second;
+            rate_limit.burst_size = rate_limit_dto.burst_size;
+        } else {
+            settings.rate_limit = Some(RateLimitConfig {
+                enabled: rate_limit_dto.enabled,
+                requests_per_second: rate_limit_dto.requests_per_second,
+                burst_size: rate_limit_dto.burst_size,
+            });
+        }
+    }
+
+    let response_dto = ServerSettingsDto {
+        auth: AuthConfigDto::from(&settings.auth),
+        rate_limit: settings.rate_limit.as_ref().map(RateLimitConfigDto::from),
+    };
+
+    (StatusCode::OK, Json(ApiResponse::success(response_dto)))
 }
 
 /// GET /api/metrics/json - Get metrics as JSON (for dashboard)

@@ -126,8 +126,9 @@ pub async fn create_app(
 
     // API routes for Web UI
     let api_router = Router::new()
-        // Config overview
+        // Config overview and settings
         .route("/config", get(api_handler::get_config_overview))
+        .route("/config/settings", get(api_handler::get_server_settings).put(api_handler::update_server_settings))
         .route("/metrics/json", get(api_handler::get_metrics_json))
         // Resources CRUD
         .route("/resources", get(api_handler::list_resources).post(api_handler::create_resource))
