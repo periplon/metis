@@ -87,6 +87,8 @@ jobs:
 
       - name: Build UI
         run: cargo leptos build --release
+        env:
+          LEPTOS_WASM_BINDGEN_VERSION: "0.2.105"
       
       - name: Prepare UI dist
         run: |
