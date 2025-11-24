@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.7.0 - 2025-11-24
+#### Features
+- **(ui)** add mock strategy editors and improve config handling - (4eba766) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.6.0 - 2025-11-24
 #### Features
 - **(ui)** add enhanced web UI with REST API for configuration management - (9b87b8b) - Joan Marc Carbo Arnau
