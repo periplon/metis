@@ -224,6 +224,38 @@ metis
 
 **Configuration Precedence:** CLI > Environment Variables > Config File > Defaults
 
+### Authentication Configuration (Optional)
+
+Metis supports multiple authentication modes:
+
+```toml
+[auth]
+enabled = true
+mode = "api_key"  # Options: "none", "api_key", "bearer_token", "basic_auth", "oauth2"
+
+# For API Key authentication
+api_keys = ["key-1", "key-2", "key-3"]
+
+# For JWT Bearer Token authentication
+jwt_secret = "your-secret-key"
+jwt_algorithm = "HS256"  # HS256, HS384, HS512
+
+# For Basic Auth
+[auth.basic_users]
+admin = "password123"
+user = "userpass"
+
+# For OAuth2/JWKS authentication
+jwks_url = "https://your-idp.com/.well-known/jwks.json"
+```
+
+**Authentication Modes:**
+- `none`: No authentication required (default)
+- `api_key`: Requires `X-API-Key` header with valid key
+- `bearer_token`: Requires `Authorization: Bearer <jwt>` header
+- `basic_auth`: Requires `Authorization: Basic <base64>` header
+- `oauth2`: Validates JWT tokens against JWKS endpoint
+
 ### Resource Configuration
 
 Resources represent data sources that can be accessed via the MCP protocol.
@@ -383,11 +415,10 @@ Metis implements the following MCP protocol methods:
 - ✅ Health Checks & Prometheus Metrics
 - ✅ Rate Limiting
 - ✅ Basic Web UI (Embedded)
-- ⚠️ Authentication (Implemented but not integrated)
+- ✅ Authentication (API Key, JWT Bearer, Basic Auth, OAuth2/JWKS)
 
 ### Planned Features
 - [ ] Implement File and Pattern strategies
-- [ ] Integrate Authentication middleware
 - [ ] Advanced Workflow engine
 - [ ] Enhanced Web UI for configuration management
 - [ ] Performance optimizations (>10k req/s)

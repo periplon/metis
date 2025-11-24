@@ -1,5 +1,5 @@
 use axum::{
-    extract::Request,
+    extract::{Request, State},
     http::{HeaderMap, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
@@ -218,16 +218,18 @@ impl IntoResponse for AuthError {
     }
 }
 
+pub type SharedAuthMiddleware = Arc<AuthMiddleware>;
+
 pub async fn auth_middleware(
-    auth: Arc<AuthMiddleware>,
+    State(auth): State<SharedAuthMiddleware>,
     mut request: Request,
     next: Next,
 ) -> Result<Response, AuthError> {
     let auth_context = auth.authenticate(request.headers()).await?;
-    
+
     // Store auth context in request extensions
     request.extensions_mut().insert(auth_context);
-    
+
     Ok(next.run(request).await)
 }
 

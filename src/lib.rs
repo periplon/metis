@@ -42,6 +42,7 @@ pub mod cli;
 pub mod config;
 pub mod domain;
 
+use crate::adapters::auth_middleware::{auth_middleware, AuthMiddleware, SharedAuthMiddleware};
 use crate::adapters::health_handler::HealthHandler;
 use crate::adapters::metrics_handler::MetricsHandler;
 use crate::adapters::rmcp_server::MetisServer;
@@ -115,7 +116,7 @@ pub async fn create_app(
         // UI endpoint (catch-all for SPA)
         .fallback(crate::adapters::ui_handler::UIHandler::serve);
 
-    // Apply Rate Limiting if enabled (before state layer)
+    // Apply Rate Limiting if enabled
     let settings_read = settings.read().await;
     if let Some(rate_limit) = &settings_read.rate_limit {
         if rate_limit.enabled {
@@ -129,6 +130,12 @@ pub async fn create_app(
                 crate::adapters::rate_limit::rate_limit_middleware,
             ));
         }
+    }
+
+    // Apply Authentication middleware if enabled
+    if settings_read.auth.enabled {
+        let auth: SharedAuthMiddleware = Arc::new(AuthMiddleware::new(Arc::new(settings_read.auth.clone())));
+        router = router.layer(axum::middleware::from_fn_with_state(auth, auth_middleware));
     }
 
     router.layer(
