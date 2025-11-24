@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.4.0 - 2025-11-24
+#### Features
+- **(mock)** implement File and Pattern strategies - (225446d) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.3.0 - 2025-11-24
 #### Documentation
 - update script strategy status to reflect all languages working - (dbed445) - Joan Marc Carbo Arnau
