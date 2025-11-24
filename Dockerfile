@@ -1,24 +1,23 @@
 # UI build stage
-FROM rust:1.82 as frontend-builder
+FROM rust:1.91 AS frontend-builder
 
 WORKDIR /app
 
 # Install wasm target and cargo-leptos
 RUN rustup target add wasm32-unknown-unknown
-RUN cargo install cargo-leptos --locked --version 0.2.21
+RUN cargo install cargo-leptos --version 0.2.47
 
-# Copy UI source
-COPY ui ./ui
+# Copy workspace files and all source code
 COPY Cargo.toml Cargo.lock ./
+COPY ui ./ui
+COPY src ./src
+COPY benches ./benches
 
-# Build UI
-# We need to be in the root context or ui context depending on workspace setup.
-# Assuming workspace root build.
-WORKDIR /app/ui
+# Build UI from workspace root
 RUN cargo leptos build --release
 
 # Rust backend build stage
-FROM rust:1.82 as builder
+FROM rust:1.91 AS builder
 
 WORKDIR /app
 
@@ -27,6 +26,12 @@ COPY Cargo.toml Cargo.lock ./
 
 # Copy source code
 COPY src ./src
+
+# Copy UI source for workspace resolution
+COPY ui ./ui
+
+# Copy benches for Cargo.toml validation
+COPY benches ./benches
 
 # Copy built UI assets
 # cargo-leptos outputs to target/site in the workspace target directory usually

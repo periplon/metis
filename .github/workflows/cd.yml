@@ -83,7 +83,7 @@ jobs:
         uses: cargo-bins/cargo-binstall@v1.10.1
 
       - name: Install cargo-leptos
-        run: cargo binstall cargo-leptos -y
+        run: cargo binstall cargo-leptos@0.2.47 -y
 
       - name: Build UI
         run: cargo leptos build --release

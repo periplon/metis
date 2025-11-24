@@ -1,5 +1,6 @@
-use leptos::*;
-use leptos_router::*;
+use leptos::prelude::*;
+use leptos_router::components::{Router, Route, Routes, A};
+use leptos_router::path;
 
 mod components;
 use components::dashboard::Dashboard;
@@ -15,18 +16,18 @@ pub fn App() -> impl IntoView {
                 <div class="w-64 bg-gray-800 text-white p-4">
                     <h1 class="text-2xl font-bold mb-8">"Metis"</h1>
                     <nav class="space-y-2">
-                        <A href="/" class="block p-2 hover:bg-gray-700 rounded">"Dashboard"</A>
-                        <A href="/config" class="block p-2 hover:bg-gray-700 rounded">"Configuration"</A>
-                        <A href="/logs" class="block p-2 hover:bg-gray-700 rounded">"Logs"</A>
+                        <A href="/" attr:class="block p-2 hover:bg-gray-700 rounded">"Dashboard"</A>
+                        <A href="/config" attr:class="block p-2 hover:bg-gray-700 rounded">"Configuration"</A>
+                        <A href="/logs" attr:class="block p-2 hover:bg-gray-700 rounded">"Logs"</A>
                     </nav>
                 </div>
 
                 // Main Content
                 <div class="flex-1 overflow-y-auto">
-                    <Routes>
-                        <Route path="/" view=Dashboard/>
-                        <Route path="/config" view=Config/>
-                        <Route path="/logs" view=Logs/>
+                    <Routes fallback=|| "Not found.">
+                        <Route path=path!("/") view=Dashboard/>
+                        <Route path=path!("/config") view=Config/>
+                        <Route path=path!("/logs") view=Logs/>
                     </Routes>
                 </div>
             </div>
@@ -37,5 +38,5 @@ pub fn App() -> impl IntoView {
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn main() {
     console_error_panic_hook::set_once();
-    mount_to_body(|| view! { <App/> })
+    leptos::mount::mount_to_body(App);
 }

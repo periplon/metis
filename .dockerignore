@@ -29,7 +29,6 @@ docs/
 
 # Test artifacts
 tests/
-benches/
 
 # Local config (keep examples)
 config/
