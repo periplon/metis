@@ -2,6 +2,14 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.1.4 - 2025-11-24
+#### Bug Fixes
+- **(ci)** correct step id reference in CD workflow version output - (5e73385) - Joan Marc Carbo Arnau
+#### Documentation
+- add repository guidelines covering project structure, build, style, testing, and commit conventions. - (6187c08) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.1.3 - 2025-11-20
 #### Bug Fixes
 - Ensure version-and-tag outputs are set correctly when bump is skipped - (53cdbe1) - Joan Marc Carbo Arnau
