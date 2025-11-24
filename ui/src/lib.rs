@@ -12,7 +12,7 @@ use components::logs::Logs;
 use components::resources::{Resources, ResourceForm, ResourceEditForm};
 use components::tools::{Tools, ToolForm, ToolEditForm};
 use components::prompts::{Prompts, PromptForm, PromptEditForm};
-use components::workflows::{Workflows, WorkflowForm};
+use components::workflows::{Workflows, WorkflowForm, WorkflowEditForm};
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -51,6 +51,7 @@ pub fn App() -> impl IntoView {
                         <Route path=path!("/prompts/edit/:name") view=PromptEditForm/>
                         <Route path=path!("/prompts") view=Prompts/>
                         <Route path=path!("/workflows/new") view=WorkflowForm/>
+                        <Route path=path!("/workflows/edit/:name") view=WorkflowEditForm/>
                         <Route path=path!("/workflows") view=Workflows/>
                         <Route path=path!("/config") view=Config/>
                         <Route path=path!("/logs") view=Logs/>
