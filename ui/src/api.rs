@@ -3,6 +3,7 @@
 #![allow(dead_code)]
 
 use crate::types::*;
+use gloo_net::http::Request;
 
 const API_BASE: &str = "/api";
 
@@ -22,6 +23,18 @@ pub async fn get_server_settings() -> Result<ServerSettings, String> {
 pub async fn update_server_settings(settings: &ServerSettings) -> Result<ServerSettings, String> {
     let url = format!("{}/config/settings", API_BASE);
     put_json::<ServerSettings, ServerSettings>(&url, settings).await
+}
+
+/// Save config to disk (metis.toml)
+pub async fn save_config_to_disk() -> Result<(), String> {
+    let url = format!("{}/config/save-disk", API_BASE);
+    post_empty(&url, &()).await
+}
+
+/// Save config to S3
+pub async fn save_config_to_s3() -> Result<(), String> {
+    let url = format!("{}/config/save-s3", API_BASE);
+    post_empty(&url, &()).await
 }
 
 /// Fetch metrics as JSON
@@ -177,7 +190,8 @@ fn urlencoding_encode(s: &str) -> String {
 }
 
 async fn fetch_json<T: serde::de::DeserializeOwned>(url: &str) -> Result<T, String> {
-    let response = reqwest::get(url)
+    let response = Request::get(url)
+        .send()
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
 
@@ -197,10 +211,9 @@ async fn post_json<T: serde::Serialize, R: serde::de::DeserializeOwned>(
     url: &str,
     body: &T,
 ) -> Result<R, String> {
-    let client = reqwest::Client::new();
-    let response = client
-        .post(url)
+    let response = Request::post(url)
         .json(body)
+        .map_err(|e| format!("Failed to serialize body: {}", e))?
         .send()
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
@@ -221,10 +234,9 @@ async fn put_json<T: serde::Serialize, R: serde::de::DeserializeOwned>(
     url: &str,
     body: &T,
 ) -> Result<R, String> {
-    let client = reqwest::Client::new();
-    let response = client
-        .put(url)
+    let response = Request::put(url)
         .json(body)
+        .map_err(|e| format!("Failed to serialize body: {}", e))?
         .send()
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
@@ -242,9 +254,28 @@ async fn put_json<T: serde::Serialize, R: serde::de::DeserializeOwned>(
 }
 
 async fn delete_request(url: &str) -> Result<(), String> {
-    let client = reqwest::Client::new();
-    let response = client
-        .delete(url)
+    let response = Request::delete(url)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    let api_response: ApiResponse<()> = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {}", e))?;
+
+    if api_response.success {
+        Ok(())
+    } else {
+        Err(api_response.error.unwrap_or_else(|| "Unknown error".to_string()))
+    }
+}
+
+/// POST request that expects no data in response (just success/error)
+async fn post_empty<T: serde::Serialize>(url: &str, body: &T) -> Result<(), String> {
+    let response = Request::post(url)
+        .json(body)
+        .map_err(|e| format!("Failed to serialize body: {}", e))?
         .send()
         .await
         .map_err(|e| format!("Request failed: {}", e))?;
