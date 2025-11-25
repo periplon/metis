@@ -85,7 +85,8 @@ pub async fn create_app(
         config,
     );
 
-    let router = Router::new()
+    // Public routes (no authentication required)
+    let public_router = Router::new()
         // Health check endpoints
         .route("/health", get({
             let handler = health_handler.clone();
@@ -107,7 +108,10 @@ pub async fn create_app(
                 let h = handler.clone();
                 async move { h.live().await }
             }
-        }))
+        }));
+
+    // Protected routes (authentication applied when enabled)
+    let protected_router = Router::new()
         // Metrics endpoint
         .route("/metrics", get({
             let handler = metrics_handler.clone();
@@ -158,12 +162,13 @@ pub async fn create_app(
         .route("/state/:key", delete(api_handler::delete_state_key))
         .with_state(api_state);
 
-    let mut router = router
+    // Build protected router with API routes
+    let mut protected_router = protected_router
         .nest("/api", api_router)
         // UI endpoint (catch-all for SPA)
         .fallback(crate::adapters::ui_handler::UIHandler::serve);
 
-    // Apply Rate Limiting if enabled
+    // Apply Rate Limiting to protected routes if enabled
     let settings_read = settings.read().await;
     if let Some(rate_limit) = &settings_read.rate_limit {
         if rate_limit.enabled {
@@ -172,18 +177,22 @@ pub async fn create_app(
                 rate_limit.burst_size,
             );
 
-            router = router.layer(axum::middleware::from_fn_with_state(
+            protected_router = protected_router.layer(axum::middleware::from_fn_with_state(
                 limiter,
                 crate::adapters::rate_limit::rate_limit_middleware,
             ));
         }
     }
 
-    // Apply Authentication middleware if enabled
+    // Apply Authentication middleware to protected routes if enabled
     if settings_read.auth.enabled {
         let auth: SharedAuthMiddleware = Arc::new(AuthMiddleware::new(Arc::new(settings_read.auth.clone())));
-        router = router.layer(axum::middleware::from_fn_with_state(auth, auth_middleware));
+        protected_router = protected_router.layer(axum::middleware::from_fn_with_state(auth, auth_middleware));
     }
+
+    // Merge public and protected routers
+    // Public routes are checked first, then protected routes
+    let router = public_router.merge(protected_router);
 
     router.layer(
         tower_http::cors::CorsLayer::new()
