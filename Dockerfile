@@ -62,6 +62,9 @@ COPY examples /app/examples
 # Create config directory
 RUN mkdir -p /app/config
 
+# Set default host to 0.0.0.0 for Docker networking
+ENV METIS_HOST=0.0.0.0
+
 # Expose port
 EXPOSE 3000
 
