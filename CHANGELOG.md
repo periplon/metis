@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.14.0 - 2025-11-25
+#### Features
+- **(mcp)** add explicit ping support - (d7bbbf7) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.13.0 - 2025-11-25
 #### Features
 - **(resource-templates)** add full support for MCP resource templates - (ca8a195) - Joan Marc Carbo Arnau
