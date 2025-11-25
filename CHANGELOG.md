@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.13.0 - 2025-11-25
+#### Features
+- **(resource-templates)** add full support for MCP resource templates - (ca8a195) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.12.2 - 2025-11-25
 #### Bug Fixes
 - **(docker)** set default METIS_HOST=0.0.0.0 for container networking - (449e516) - Joan Marc Carbo Arnau
