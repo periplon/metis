@@ -32,11 +32,36 @@ impl ResourcePort for InMemoryResourceHandler {
         let resources = settings
             .resources
             .iter()
-            .map(|r| Resource {
-                uri: r.uri.clone(),
-                name: r.name.clone(),
-                description: r.description.clone(),
-                mime_type: r.mime_type.clone(),
+            .map(|r| {
+                // Build enhanced description with schemas embedded (MCP doesn't natively support schemas for resources)
+                let mut description_parts = Vec::new();
+                if let Some(desc) = &r.description {
+                    description_parts.push(desc.clone());
+                }
+                if let Some(input_schema) = &r.input_schema {
+                    description_parts.push(format!(
+                        "\n\n**Input Schema:**\n```json\n{}\n```",
+                        serde_json::to_string_pretty(input_schema).unwrap_or_default()
+                    ));
+                }
+                if let Some(output_schema) = &r.output_schema {
+                    description_parts.push(format!(
+                        "\n\n**Output Schema:**\n```json\n{}\n```",
+                        serde_json::to_string_pretty(output_schema).unwrap_or_default()
+                    ));
+                }
+                let description = if description_parts.is_empty() {
+                    None
+                } else {
+                    Some(description_parts.join(""))
+                };
+
+                Resource {
+                    uri: r.uri.clone(),
+                    name: r.name.clone(),
+                    description,
+                    mime_type: r.mime_type.clone(),
+                }
             })
             .collect();
         Ok(resources)

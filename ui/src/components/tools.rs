@@ -2,16 +2,89 @@ use leptos::prelude::*;
 use leptos::web_sys;
 use leptos_router::hooks::use_params_map;
 use wasm_bindgen::JsCast;
+use std::collections::HashMap;
 use crate::api;
 use crate::types::{
     Tool, MockConfig, MockStrategyType, StatefulConfig, StateOperation,
     FileConfig, ScriptLang, LLMConfig, LLMProvider, DatabaseConfig,
+};
+use crate::components::schema_editor::{
+    JsonSchemaEditor, SchemaPreview, SchemaProperty,
+    properties_to_schema, schema_to_properties,
 };
 
 #[derive(Clone, Copy, PartialEq)]
 enum ViewMode {
     Table,
     Card,
+}
+
+/// Extract properties from a JSON Schema and return (name, type, description, required)
+fn extract_schema_properties(schema: &serde_json::Value) -> Vec<(String, String, Option<String>, bool)> {
+    let mut props = Vec::new();
+
+    if let Some(properties) = schema.get("properties").and_then(|p| p.as_object()) {
+        let required_fields: Vec<String> = schema
+            .get("required")
+            .and_then(|r| r.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or_default();
+
+        for (name, prop) in properties {
+            let prop_type = prop.get("type")
+                .and_then(|t| t.as_str())
+                .unwrap_or("string")
+                .to_string();
+            let description = prop.get("description")
+                .and_then(|d| d.as_str())
+                .map(|s| s.to_string());
+            let is_required = required_fields.contains(name);
+            props.push((name.clone(), prop_type, description, is_required));
+        }
+    }
+
+    props
+}
+
+/// Build JSON value from form field values based on schema types
+fn build_json_from_fields(
+    fields: &HashMap<String, String>,
+    schema: &serde_json::Value,
+) -> serde_json::Value {
+    let mut obj = serde_json::Map::new();
+
+    if let Some(properties) = schema.get("properties").and_then(|p| p.as_object()) {
+        for (name, prop) in properties {
+            if let Some(value) = fields.get(name) {
+                if value.is_empty() {
+                    continue;
+                }
+
+                let prop_type = prop.get("type")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("string");
+
+                let json_value = match prop_type {
+                    "number" => value.parse::<f64>()
+                        .map(serde_json::Value::from)
+                        .unwrap_or(serde_json::Value::Null),
+                    "integer" => value.parse::<i64>()
+                        .map(serde_json::Value::from)
+                        .unwrap_or(serde_json::Value::Null),
+                    "boolean" => serde_json::Value::Bool(value == "true"),
+                    "array" | "object" => serde_json::from_str(value)
+                        .unwrap_or(serde_json::Value::Null),
+                    _ => serde_json::Value::String(value.clone()),
+                };
+
+                if !json_value.is_null() {
+                    obj.insert(name.clone(), json_value);
+                }
+            }
+        }
+    }
+
+    serde_json::Value::Object(obj)
 }
 
 #[component]
@@ -21,9 +94,9 @@ pub fn Tools() -> impl IntoView {
     let (delete_target, set_delete_target) = signal(Option::<String>::None);
     let (deleting, set_deleting) = signal(false);
 
-    // Test modal state
-    let (test_target, set_test_target) = signal(Option::<String>::None);
-    let (test_input, set_test_input) = signal(String::from("{}"));
+    // Test modal state - now stores the full Tool to access input_schema
+    let (test_target, set_test_target) = signal(Option::<Tool>::None);
+    let (test_form_fields, set_test_form_fields) = signal(HashMap::<String, String>::new());
     let (test_result, set_test_result) = signal(Option::<Result<crate::types::TestResult, String>>::None);
     let (testing, set_testing) = signal(false);
 
@@ -52,14 +125,15 @@ pub fn Tools() -> impl IntoView {
     };
 
     let on_test_run = move |_| {
-        if let Some(name) = test_target.get() {
+        if let Some(tool) = test_target.get() {
             set_testing.set(true);
             set_test_result.set(None);
-            let input_json = test_input.get();
+            let fields = test_form_fields.get();
+            let schema = tool.input_schema.clone();
+            let tool_name = tool.name.clone();
             wasm_bindgen_futures::spawn_local(async move {
-                let args: serde_json::Value = serde_json::from_str(&input_json)
-                    .unwrap_or(serde_json::json!({}));
-                let result = api::test_tool(&name, &args).await;
+                let args = build_json_from_fields(&fields, &schema);
+                let result = api::test_tool(&tool_name, &args).await;
                 set_test_result.set(Some(result));
                 set_testing.set(false);
             });
@@ -68,7 +142,7 @@ pub fn Tools() -> impl IntoView {
 
     let on_test_close = move |_| {
         set_test_target.set(None);
-        set_test_input.set("{}".to_string());
+        set_test_form_fields.set(HashMap::new());
         set_test_result.set(None);
     };
 
@@ -149,13 +223,17 @@ pub fn Tools() -> impl IntoView {
             })}
 
             // Test modal
-            {move || test_target.get().map(|name| view! {
+            {move || test_target.get().map(|tool| {
+                let schema_props = extract_schema_properties(&tool.input_schema);
+                let has_no_properties = schema_props.is_empty();
+
+                view! {
                 <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
                     <div class="bg-white rounded-lg shadow-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
                         <div class="flex justify-between items-center mb-4">
                             <h3 class="text-lg font-semibold text-gray-900">
                                 "Test Tool: "
-                                <span class="font-mono text-green-600">{name.clone()}</span>
+                                <span class="font-mono text-green-600">{tool.name.clone()}</span>
                             </h3>
                             <button
                                 class="text-gray-400 hover:text-gray-600"
@@ -167,19 +245,98 @@ pub fn Tools() -> impl IntoView {
                             </button>
                         </div>
 
-                        <div class="mb-4">
-                            <label class="block text-sm font-medium text-gray-700 mb-1">"Input Arguments (JSON)"</label>
-                            <textarea
-                                rows=6
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 font-mono text-sm"
-                                placeholder=r#"{"key": "value"}"#
-                                prop:value=move || test_input.get()
-                                on:input=move |ev| {
-                                    let target = ev.target().unwrap();
-                                    let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
-                                    set_test_input.set(textarea.value());
-                                }
-                            />
+                        // Dynamic form fields based on input_schema
+                        <div class="mb-4 space-y-4">
+                            {if has_no_properties {
+                                view! {
+                                    <div class="text-sm text-gray-500 italic p-3 bg-gray-50 rounded-md">
+                                        "This tool has no input parameters defined."
+                                    </div>
+                                }.into_any()
+                            } else {
+                                view! {
+                                    <div class="space-y-4">
+                                        {schema_props.into_iter().map(|(name, prop_type, description, required)| {
+                                            let field_name = name.clone();
+                                            let field_name_for_handler = name.clone();
+                                            let label = format!("{}{}", name, if required { " *" } else { "" });
+
+                                            view! {
+                                                <div>
+                                                    <label class="block text-sm font-medium text-gray-700 mb-1">
+                                                        {label}
+                                                        <span class="ml-2 text-xs text-gray-400 font-normal">{format!("({})", prop_type)}</span>
+                                                    </label>
+                                                    {match prop_type.as_str() {
+                                                        "boolean" => view! {
+                                                            <select
+                                                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                                                                on:change=move |ev| {
+                                                                    let target = ev.target().unwrap();
+                                                                    let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
+                                                                    set_test_form_fields.update(|fields| {
+                                                                        fields.insert(field_name_for_handler.clone(), select.value());
+                                                                    });
+                                                                }
+                                                            >
+                                                                <option value="">"-- Select --"</option>
+                                                                <option value="true">"true"</option>
+                                                                <option value="false">"false"</option>
+                                                            </select>
+                                                        }.into_any(),
+                                                        "number" | "integer" => view! {
+                                                            <input
+                                                                type="number"
+                                                                step=if prop_type == "integer" { "1" } else { "any" }
+                                                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                                                                placeholder=format!("Enter {}", prop_type)
+                                                                on:input=move |ev| {
+                                                                    let target = ev.target().unwrap();
+                                                                    let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                                                    set_test_form_fields.update(|fields| {
+                                                                        fields.insert(field_name_for_handler.clone(), input.value());
+                                                                    });
+                                                                }
+                                                            />
+                                                        }.into_any(),
+                                                        "array" | "object" => view! {
+                                                            <textarea
+                                                                rows=3
+                                                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 font-mono text-sm"
+                                                                placeholder=if prop_type == "array" { "[...]" } else { "{...}" }
+                                                                on:input=move |ev| {
+                                                                    let target = ev.target().unwrap();
+                                                                    let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
+                                                                    set_test_form_fields.update(|fields| {
+                                                                        fields.insert(field_name_for_handler.clone(), textarea.value());
+                                                                    });
+                                                                }
+                                                            />
+                                                        }.into_any(),
+                                                        _ => view! {
+                                                            <input
+                                                                type="text"
+                                                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                                                                placeholder=format!("Enter {}", field_name)
+                                                                on:input=move |ev| {
+                                                                    let target = ev.target().unwrap();
+                                                                    let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                                                    set_test_form_fields.update(|fields| {
+                                                                        fields.insert(field_name_for_handler.clone(), input.value());
+                                                                    });
+                                                                }
+                                                            />
+                                                        }.into_any(),
+                                                    }}
+                                                    {description.map(|desc| view! {
+                                                        <p class="mt-1 text-xs text-gray-500">{desc}</p>
+                                                    })}
+                                                </div>
+                                            }
+                                        }).collect::<Vec<_>>()}
+                                    </div>
+                                }.into_any()
+                            }}
                         </div>
 
                         <div class="flex gap-3 mb-4">
@@ -251,6 +408,7 @@ pub fn Tools() -> impl IntoView {
                         })}
                     </div>
                 </div>
+            }
             })}
 
             <Suspense fallback=move || view! { <LoadingState /> }>
@@ -323,7 +481,7 @@ fn ErrorState() -> impl IntoView {
 fn ToolTable(
     tools: Vec<Tool>,
     set_delete_target: WriteSignal<Option<String>>,
-    set_test_target: WriteSignal<Option<String>>,
+    set_test_target: WriteSignal<Option<Tool>>,
 ) -> impl IntoView {
     view! {
         <div class="bg-white rounded-lg shadow overflow-hidden">
@@ -340,7 +498,7 @@ fn ToolTable(
                     {tools.into_iter().map(|tool| {
                         let name_for_edit = tool.name.clone();
                         let name_for_delete = tool.name.clone();
-                        let name_for_test = tool.name.clone();
+                        let tool_for_test = tool.clone();
                         let strategy = tool.mock.as_ref()
                             .map(|m| format!("{:?}", m.strategy))
                             .unwrap_or_else(|| if tool.static_response.is_some() { "Static".to_string() } else { "-".to_string() });
@@ -361,7 +519,7 @@ fn ToolTable(
                                 <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                     <button
                                         class="text-green-600 hover:text-green-900 mr-3"
-                                        on:click=move |_| set_test_target.set(Some(name_for_test.clone()))
+                                        on:click=move |_| set_test_target.set(Some(tool_for_test.clone()))
                                     >
                                         "Test"
                                     </button>
@@ -391,14 +549,14 @@ fn ToolTable(
 fn ToolCards(
     tools: Vec<Tool>,
     set_delete_target: WriteSignal<Option<String>>,
-    set_test_target: WriteSignal<Option<String>>,
+    set_test_target: WriteSignal<Option<Tool>>,
 ) -> impl IntoView {
     view! {
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {tools.into_iter().map(|tool| {
                 let name_for_edit = tool.name.clone();
                 let name_for_delete = tool.name.clone();
-                let name_for_test = tool.name.clone();
+                let tool_for_test = tool.clone();
                 let strategy = tool.mock.as_ref()
                     .map(|m| format!("{:?}", m.strategy))
                     .unwrap_or_else(|| if tool.static_response.is_some() { "Static".to_string() } else { "-".to_string() });
@@ -417,7 +575,7 @@ fn ToolCards(
                         <div class="flex justify-end gap-2 pt-3 border-t border-gray-100">
                             <button
                                 class="px-3 py-1 text-sm text-green-600 hover:bg-green-50 rounded"
-                                on:click=move |_| set_test_target.set(Some(name_for_test.clone()))
+                                on:click=move |_| set_test_target.set(Some(tool_for_test.clone()))
                             >
                                 "Test"
                             </button>
@@ -445,7 +603,8 @@ fn ToolCards(
 pub fn ToolForm() -> impl IntoView {
     let (name, set_name) = signal(String::new());
     let (description, set_description) = signal(String::new());
-    let (input_schema, set_input_schema) = signal(String::from("{}"));
+    let (schema_properties, set_schema_properties) = signal(Vec::<SchemaProperty>::new());
+    let (output_schema_properties, set_output_schema_properties) = signal(Vec::<SchemaProperty>::new());
     let (static_response, set_static_response) = signal(String::new());
     let (error, set_error) = signal(Option::<String>::None);
     let (saving, set_saving) = signal(false);
@@ -562,8 +721,13 @@ pub fn ToolForm() -> impl IntoView {
         set_saving.set(true);
         set_error.set(None);
 
-        let schema: serde_json::Value = serde_json::from_str(&input_schema.get())
-            .unwrap_or(serde_json::json!({}));
+        let schema = properties_to_schema(&schema_properties.get());
+        let output_props = output_schema_properties.get();
+        let output_schema = if output_props.is_empty() {
+            None
+        } else {
+            Some(properties_to_schema(&output_props))
+        };
 
         let static_resp: Option<serde_json::Value> = if static_response.get().is_empty() {
             None
@@ -575,6 +739,7 @@ pub fn ToolForm() -> impl IntoView {
             name: name.get(),
             description: description.get(),
             input_schema: schema,
+            output_schema,
             static_response: static_resp,
             mock: build_mock_config(),
         };
@@ -646,19 +811,23 @@ pub fn ToolForm() -> impl IntoView {
                             </div>
                         </div>
                         <div class="mt-4">
-                            <label class="block text-sm font-medium text-gray-700 mb-1">"Input Schema (JSON)"</label>
-                            <textarea
-                                rows=6
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 font-mono text-sm"
-                                placeholder=r#"{"type": "object", "properties": {"query": {"type": "string"}}}"#
-                                prop:value=move || input_schema.get()
-                                on:input=move |ev| {
-                                    let target = ev.target().unwrap();
-                                    let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
-                                    set_input_schema.set(textarea.value());
-                                }
+                            <JsonSchemaEditor
+                                properties=schema_properties
+                                set_properties=set_schema_properties
+                                label="Input Schema"
+                                color="green"
                             />
-                            <p class="mt-1 text-xs text-gray-500">"JSON Schema for tool input parameters"</p>
+                            <SchemaPreview properties=schema_properties />
+                        </div>
+                        <div class="mt-4">
+                            <JsonSchemaEditor
+                                properties=output_schema_properties
+                                set_properties=set_output_schema_properties
+                                label="Output Schema (optional)"
+                                color="blue"
+                            />
+                            <p class="mt-1 text-xs text-gray-500">"Define the expected structure of tool outputs for validation and documentation"</p>
+                            <SchemaPreview properties=output_schema_properties />
                         </div>
                     </div>
 
@@ -1019,7 +1188,8 @@ pub fn ToolEditForm() -> impl IntoView {
 
     let (name, set_name) = signal(String::new());
     let (description, set_description) = signal(String::new());
-    let (input_schema, set_input_schema) = signal(String::from("{}"));
+    let (schema_properties, set_schema_properties) = signal(Vec::<SchemaProperty>::new());
+    let (output_schema_properties, set_output_schema_properties) = signal(Vec::<SchemaProperty>::new());
     let (static_response, set_static_response) = signal(String::new());
     let (error, set_error) = signal(Option::<String>::None);
     let (saving, set_saving) = signal(false);
@@ -1058,7 +1228,10 @@ pub fn ToolEditForm() -> impl IntoView {
                     set_original_name.set(tool.name.clone());
                     set_name.set(tool.name.clone());
                     set_description.set(tool.description.clone());
-                    set_input_schema.set(serde_json::to_string_pretty(&tool.input_schema).unwrap_or_default());
+                    set_schema_properties.set(schema_to_properties(&tool.input_schema));
+                    if let Some(output_schema) = &tool.output_schema {
+                        set_output_schema_properties.set(schema_to_properties(output_schema));
+                    }
                     if let Some(resp) = &tool.static_response {
                         set_static_response.set(serde_json::to_string_pretty(resp).unwrap_or_default());
                     }
@@ -1238,8 +1411,13 @@ pub fn ToolEditForm() -> impl IntoView {
         set_error.set(None);
 
         let orig_name = original_name.get();
-        let schema: serde_json::Value = serde_json::from_str(&input_schema.get())
-            .unwrap_or(serde_json::json!({}));
+        let schema = properties_to_schema(&schema_properties.get());
+        let output_props = output_schema_properties.get();
+        let output_schema = if output_props.is_empty() {
+            None
+        } else {
+            Some(properties_to_schema(&output_props))
+        };
 
         let static_resp: Option<serde_json::Value> = if static_response.get().is_empty() {
             None
@@ -1251,6 +1429,7 @@ pub fn ToolEditForm() -> impl IntoView {
             name: name.get(),
             description: description.get(),
             input_schema: schema,
+            output_schema,
             static_response: static_resp,
             mock: build_mock_config(),
         };
@@ -1336,19 +1515,23 @@ pub fn ToolEditForm() -> impl IntoView {
                                     </div>
                                 </div>
                                 <div class="mt-4">
-                                    <label class="block text-sm font-medium text-gray-700 mb-1">"Input Schema (JSON)"</label>
-                                    <textarea
-                                        rows=6
-                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 font-mono text-sm"
-                                        placeholder=r#"{"type": "object", "properties": {"query": {"type": "string"}}}"#
-                                        prop:value=move || input_schema.get()
-                                        on:input=move |ev| {
-                                            let target = ev.target().unwrap();
-                                            let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
-                                            set_input_schema.set(textarea.value());
-                                        }
+                                    <JsonSchemaEditor
+                                        properties=schema_properties
+                                        set_properties=set_schema_properties
+                                        label="Input Schema"
+                                        color="green"
                                     />
-                                    <p class="mt-1 text-xs text-gray-500">"JSON Schema for tool input parameters"</p>
+                                    <SchemaPreview properties=schema_properties />
+                                </div>
+                                <div class="mt-4">
+                                    <JsonSchemaEditor
+                                        properties=output_schema_properties
+                                        set_properties=set_output_schema_properties
+                                        label="Output Schema (optional)"
+                                        color="blue"
+                                    />
+                                    <p class="mt-1 text-xs text-gray-500">"Define the expected structure of tool outputs for validation and documentation"</p>
+                                    <SchemaPreview properties=output_schema_properties />
                                 </div>
                             </div>
 
@@ -1380,11 +1563,11 @@ pub fn ToolEditForm() -> impl IntoView {
                                     </select>
                                 </div>
 
-                                // Static response for none/static strategy
+                                // Strategy-specific fields
                                 {move || {
                                     let strategy = mock_strategy.get();
-                                    if strategy == "none" || strategy == "static" {
-                                        view! {
+                                    match strategy.as_str() {
+                                        "none" | "static" => view! {
                                             <div>
                                                 <label class="block text-sm font-medium text-gray-700 mb-1">"Static Response (JSON)"</label>
                                                 <textarea
@@ -1399,9 +1582,283 @@ pub fn ToolEditForm() -> impl IntoView {
                                                     }
                                                 />
                                             </div>
-                                        }.into_any()
-                                    } else {
-                                        view! { <div></div> }.into_any()
+                                        }.into_any(),
+                                        "template" => view! {
+                                            <div>
+                                                <label class="block text-sm font-medium text-gray-700 mb-1">"Handlebars Template *"</label>
+                                                <textarea
+                                                    rows=6
+                                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 font-mono text-sm"
+                                                    placeholder=r#"{"id": "{{uuid}}", "query": "{{input.query}}", "timestamp": "{{now '%Y-%m-%d'}}"}"#
+                                                    prop:value=move || mock_template.get()
+                                                    on:input=move |ev| {
+                                                        let target = ev.target().unwrap();
+                                                        let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
+                                                        set_mock_template.set(textarea.value());
+                                                    }
+                                                />
+                                                <p class="mt-1 text-xs text-gray-500">"Use {{input.field}} to access tool arguments. Helpers: now, uuid, random_int, random_float, random_bool, random_string, json_encode"</p>
+                                            </div>
+                                        }.into_any(),
+                                        "random" => view! {
+                                            <div>
+                                                <label class="block text-sm font-medium text-gray-700 mb-1">"Faker Type"</label>
+                                                <select
+                                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                                                    prop:value=move || mock_faker_type.get()
+                                                    on:change=move |ev| {
+                                                        let target = ev.target().unwrap();
+                                                        let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
+                                                        set_mock_faker_type.set(select.value());
+                                                    }
+                                                >
+                                                    <option value="">"Default (lorem ipsum)"</option>
+                                                    <option value="name">"Name"</option>
+                                                    <option value="email">"Email"</option>
+                                                    <option value="phone">"Phone"</option>
+                                                    <option value="address">"Address"</option>
+                                                    <option value="company">"Company"</option>
+                                                    <option value="uuid">"UUID"</option>
+                                                    <option value="sentence">"Sentence"</option>
+                                                    <option value="paragraph">"Paragraph"</option>
+                                                </select>
+                                                <p class="mt-1 text-xs text-gray-500">"Generate random fake data"</p>
+                                            </div>
+                                        }.into_any(),
+                                        "stateful" => view! {
+                                            <div class="space-y-4">
+                                                <div>
+                                                    <label class="block text-sm font-medium text-gray-700 mb-1">"State Key *"</label>
+                                                    <input
+                                                        type="text"
+                                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                                                        placeholder="tool-call-counter"
+                                                        prop:value=move || mock_state_key.get()
+                                                        on:input=move |ev| {
+                                                            let target = ev.target().unwrap();
+                                                            let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                                            set_mock_state_key.set(input.value());
+                                                        }
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label class="block text-sm font-medium text-gray-700 mb-1">"Operation"</label>
+                                                    <select
+                                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                                                        prop:value=move || mock_state_operation.get()
+                                                        on:change=move |ev| {
+                                                            let target = ev.target().unwrap();
+                                                            let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
+                                                            set_mock_state_operation.set(select.value());
+                                                        }
+                                                    >
+                                                        <option value="get">"Get"</option>
+                                                        <option value="set">"Set"</option>
+                                                        <option value="increment">"Increment"</option>
+                                                    </select>
+                                                </div>
+                                                <div>
+                                                    <label class="block text-sm font-medium text-gray-700 mb-1">"Response Template (optional)"</label>
+                                                    <textarea
+                                                        rows=3
+                                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 font-mono text-sm"
+                                                        placeholder=r#"{"call_count": {{state}}, "input": {{json_encode input}}}"#
+                                                        prop:value=move || mock_template.get()
+                                                        on:input=move |ev| {
+                                                            let target = ev.target().unwrap();
+                                                            let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
+                                                            set_mock_template.set(textarea.value());
+                                                        }
+                                                    />
+                                                </div>
+                                            </div>
+                                        }.into_any(),
+                                        "script" => view! {
+                                            <div class="space-y-4">
+                                                <div>
+                                                    <label class="block text-sm font-medium text-gray-700 mb-1">"Script Language"</label>
+                                                    <select
+                                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                                                        prop:value=move || mock_script_lang.get()
+                                                        on:change=move |ev| {
+                                                            let target = ev.target().unwrap();
+                                                            let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
+                                                            set_mock_script_lang.set(select.value());
+                                                        }
+                                                    >
+                                                        <option value="rhai">"Rhai"</option>
+                                                        <option value="lua">"Lua"</option>
+                                                        <option value="js">"JavaScript"</option>
+                                                        <option value="python">"Python"</option>
+                                                    </select>
+                                                </div>
+                                                <div>
+                                                    <label class="block text-sm font-medium text-gray-700 mb-1">"Script *"</label>
+                                                    <textarea
+                                                        rows=8
+                                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 font-mono text-sm"
+                                                        placeholder="// Process tool input\nlet result = #{\"processed\": true, \"input\": input};\nto_json(result)"
+                                                        prop:value=move || mock_script.get()
+                                                        on:input=move |ev| {
+                                                            let target = ev.target().unwrap();
+                                                            let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
+                                                            set_mock_script.set(textarea.value());
+                                                        }
+                                                    />
+                                                    <p class="mt-1 text-xs text-gray-500">"Access tool arguments via 'input' object, return JSON string"</p>
+                                                </div>
+                                            </div>
+                                        }.into_any(),
+                                        "file" => view! {
+                                            <div class="space-y-4">
+                                                <div>
+                                                    <label class="block text-sm font-medium text-gray-700 mb-1">"File Path *"</label>
+                                                    <input
+                                                        type="text"
+                                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                                                        placeholder="/path/to/tool-responses.json"
+                                                        prop:value=move || mock_file_path.get()
+                                                        on:input=move |ev| {
+                                                            let target = ev.target().unwrap();
+                                                            let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                                            set_mock_file_path.set(input.value());
+                                                        }
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label class="block text-sm font-medium text-gray-700 mb-1">"Selection Mode"</label>
+                                                    <select
+                                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                                                        prop:value=move || mock_file_selection.get()
+                                                        on:change=move |ev| {
+                                                            let target = ev.target().unwrap();
+                                                            let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
+                                                            set_mock_file_selection.set(select.value());
+                                                        }
+                                                    >
+                                                        <option value="random">"Random"</option>
+                                                        <option value="sequential">"Sequential"</option>
+                                                        <option value="first">"First"</option>
+                                                        <option value="last">"Last"</option>
+                                                    </select>
+                                                    <p class="mt-1 text-xs text-gray-500">"How to select from multiple responses in the file"</p>
+                                                </div>
+                                            </div>
+                                        }.into_any(),
+                                        "pattern" => view! {
+                                            <div>
+                                                <label class="block text-sm font-medium text-gray-700 mb-1">"Pattern *"</label>
+                                                <input
+                                                    type="text"
+                                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 font-mono"
+                                                    placeholder="RES-[A-Z]{4}-[0-9]{6}"
+                                                    prop:value=move || mock_pattern.get()
+                                                    on:input=move |ev| {
+                                                        let target = ev.target().unwrap();
+                                                        let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                                        set_mock_pattern.set(input.value());
+                                                    }
+                                                />
+                                                <p class="mt-1 text-xs text-gray-500">"Regex-like pattern to generate random strings"</p>
+                                            </div>
+                                        }.into_any(),
+                                        "llm" => view! {
+                                            <div class="space-y-4">
+                                                <div class="grid grid-cols-2 gap-4">
+                                                    <div>
+                                                        <label class="block text-sm font-medium text-gray-700 mb-1">"Provider"</label>
+                                                        <select
+                                                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                                                            prop:value=move || mock_llm_provider.get()
+                                                            on:change=move |ev| {
+                                                                let target = ev.target().unwrap();
+                                                                let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
+                                                                set_mock_llm_provider.set(select.value());
+                                                            }
+                                                        >
+                                                            <option value="openai">"OpenAI"</option>
+                                                            <option value="anthropic">"Anthropic"</option>
+                                                        </select>
+                                                    </div>
+                                                    <div>
+                                                        <label class="block text-sm font-medium text-gray-700 mb-1">"Model *"</label>
+                                                        <input
+                                                            type="text"
+                                                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                                                            placeholder="gpt-4"
+                                                            prop:value=move || mock_llm_model.get()
+                                                            on:input=move |ev| {
+                                                                let target = ev.target().unwrap();
+                                                                let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                                                set_mock_llm_model.set(input.value());
+                                                            }
+                                                        />
+                                                    </div>
+                                                </div>
+                                                <div>
+                                                    <label class="block text-sm font-medium text-gray-700 mb-1">"API Key Environment Variable"</label>
+                                                    <input
+                                                        type="text"
+                                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                                                        placeholder="OPENAI_API_KEY"
+                                                        prop:value=move || mock_llm_api_key_env.get()
+                                                        on:input=move |ev| {
+                                                            let target = ev.target().unwrap();
+                                                            let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                                            set_mock_llm_api_key_env.set(input.value());
+                                                        }
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label class="block text-sm font-medium text-gray-700 mb-1">"System Prompt"</label>
+                                                    <textarea
+                                                        rows=4
+                                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                                                        placeholder="You are a tool simulator. Generate realistic responses based on the input..."
+                                                        prop:value=move || mock_llm_system_prompt.get()
+                                                        on:input=move |ev| {
+                                                            let target = ev.target().unwrap();
+                                                            let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
+                                                            set_mock_llm_system_prompt.set(textarea.value());
+                                                        }
+                                                    />
+                                                </div>
+                                            </div>
+                                        }.into_any(),
+                                        "database" => view! {
+                                            <div class="space-y-4">
+                                                <div>
+                                                    <label class="block text-sm font-medium text-gray-700 mb-1">"Database URL *"</label>
+                                                    <input
+                                                        type="text"
+                                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 font-mono"
+                                                        placeholder="postgres://user:pass@host/db"
+                                                        prop:value=move || mock_db_url.get()
+                                                        on:input=move |ev| {
+                                                            let target = ev.target().unwrap();
+                                                            let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                                            set_mock_db_url.set(input.value());
+                                                        }
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label class="block text-sm font-medium text-gray-700 mb-1">"SQL Query *"</label>
+                                                    <textarea
+                                                        rows=4
+                                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 font-mono text-sm"
+                                                        placeholder="SELECT * FROM results WHERE query = $1"
+                                                        prop:value=move || mock_db_query.get()
+                                                        on:input=move |ev| {
+                                                            let target = ev.target().unwrap();
+                                                            let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
+                                                            set_mock_db_query.set(textarea.value());
+                                                        }
+                                                    />
+                                                    <p class="mt-1 text-xs text-gray-500">"Use $1, $2, etc. for parameters from tool input"</p>
+                                                </div>
+                                            </div>
+                                        }.into_any(),
+                                        _ => view! { <div></div> }.into_any(),
                                     }
                                 }}
                             </div>

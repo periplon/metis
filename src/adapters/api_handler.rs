@@ -15,10 +15,12 @@ use tokio::sync::RwLock;
 
 use crate::adapters::mock_strategy::MockStrategyHandler;
 use crate::adapters::state_manager::StateManager;
+use crate::adapters::workflow_engine::WorkflowEngine;
 use crate::config::{
     MockConfig, PromptArgument, PromptConfig, PromptMessage, RateLimitConfig, ResourceConfig,
     Settings, ToolConfig, WorkflowConfig, WorkflowStep,
 };
+use crate::domain::ToolPort;
 
 /// Shared application state for API handlers
 #[derive(Clone)]
@@ -26,6 +28,57 @@ pub struct ApiState {
     pub settings: Arc<RwLock<Settings>>,
     pub state_manager: Arc<StateManager>,
     pub mock_strategy: Arc<MockStrategyHandler>,
+}
+
+/// Tool handler for workflow testing that uses mock strategies
+struct TestToolHandler {
+    settings: Arc<RwLock<Settings>>,
+    mock_strategy: Arc<MockStrategyHandler>,
+}
+
+impl TestToolHandler {
+    fn new(settings: Arc<RwLock<Settings>>, mock_strategy: Arc<MockStrategyHandler>) -> Self {
+        Self {
+            settings,
+            mock_strategy,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl ToolPort for TestToolHandler {
+    async fn list_tools(&self) -> anyhow::Result<Vec<crate::domain::Tool>> {
+        let settings = self.settings.read().await;
+        let tools = settings
+            .tools
+            .iter()
+            .map(|t| crate::domain::Tool {
+                name: t.name.clone(),
+                description: t.description.clone(),
+                input_schema: t.input_schema.clone(),
+                output_schema: t.output_schema.clone(),
+            })
+            .collect();
+        Ok(tools)
+    }
+
+    async fn execute_tool(&self, name: &str, args: Value) -> anyhow::Result<Value> {
+        let settings = self.settings.read().await;
+        if let Some(config) = settings.tools.iter().find(|t| t.name == name) {
+            let config = config.clone();
+            drop(settings);
+
+            if let Some(mock_config) = &config.mock {
+                self.mock_strategy.generate(mock_config, Some(&args)).await
+            } else if let Some(static_response) = &config.static_response {
+                Ok(static_response.clone())
+            } else {
+                Ok(Value::Null)
+            }
+        } else {
+            Err(anyhow::anyhow!("Tool not found: {}", name))
+        }
+    }
 }
 
 // ============================================================================
@@ -110,6 +163,12 @@ pub struct ResourceDto {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
+    /// JSON Schema for resource input parameters
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_schema: Option<Value>,
+    /// JSON Schema for the expected output structure
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -123,6 +182,8 @@ impl From<&ResourceConfig> for ResourceDto {
             name: r.name.clone(),
             description: r.description.clone(),
             mime_type: r.mime_type.clone(),
+            input_schema: r.input_schema.clone(),
+            output_schema: r.output_schema.clone(),
             content: r.content.clone(),
             mock: r.mock.clone(),
         }
@@ -136,6 +197,8 @@ impl From<ResourceDto> for ResourceConfig {
             name: dto.name,
             description: dto.description,
             mime_type: dto.mime_type,
+            input_schema: dto.input_schema,
+            output_schema: dto.output_schema,
             content: dto.content,
             mock: dto.mock,
         }
@@ -147,6 +210,9 @@ pub struct ToolDto {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
+    /// Optional JSON Schema defining the expected output structure
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub static_response: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -159,6 +225,7 @@ impl From<&ToolConfig> for ToolDto {
             name: t.name.clone(),
             description: t.description.clone(),
             input_schema: t.input_schema.clone(),
+            output_schema: t.output_schema.clone(),
             static_response: t.static_response.clone(),
             mock: t.mock.clone(),
         }
@@ -171,6 +238,7 @@ impl From<ToolDto> for ToolConfig {
             name: dto.name,
             description: dto.description,
             input_schema: dto.input_schema,
+            output_schema: dto.output_schema,
             static_response: dto.static_response,
             mock: dto.mock,
         }
@@ -183,6 +251,9 @@ pub struct PromptDto {
     pub description: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub arguments: Option<Vec<PromptArgumentDto>>,
+    /// JSON Schema for prompt input parameters (more detailed than arguments)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_schema: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub messages: Option<Vec<PromptMessageDto>>,
 }
@@ -215,6 +286,7 @@ impl From<&PromptConfig> for PromptDto {
                     })
                     .collect()
             }),
+            input_schema: p.input_schema.clone(),
             messages: p.messages.as_ref().map(|msgs| {
                 msgs.iter()
                     .map(|m| PromptMessageDto {
@@ -241,6 +313,7 @@ impl From<PromptDto> for PromptConfig {
                     })
                     .collect()
             }),
+            input_schema: dto.input_schema,
             messages: dto.messages.map(|msgs| {
                 msgs.into_iter()
                     .map(|m| PromptMessage {
@@ -258,6 +331,9 @@ pub struct WorkflowDto {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
+    /// JSON Schema for the expected workflow output structure
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Value>,
     pub steps: Vec<WorkflowStepDto>,
     #[serde(default)]
     pub on_error: crate::config::ErrorStrategy,
@@ -269,6 +345,9 @@ pub struct WorkflowStepDto {
     pub tool: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub args: Option<Value>,
+    /// Step IDs that must complete before this step can execute (DAG dependencies)
+    #[serde(default)]
+    pub depends_on: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub condition: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -295,6 +374,7 @@ impl From<&WorkflowConfig> for WorkflowDto {
             name: w.name.clone(),
             description: w.description.clone(),
             input_schema: w.input_schema.clone(),
+            output_schema: w.output_schema.clone(),
             steps: w.steps.iter().map(WorkflowStepDto::from).collect(),
             on_error: w.on_error.clone(),
         }
@@ -307,6 +387,7 @@ impl From<&WorkflowStep> for WorkflowStepDto {
             id: s.id.clone(),
             tool: s.tool.clone(),
             args: s.args.clone(),
+            depends_on: s.depends_on.clone(),
             condition: s.condition.clone(),
             loop_over: s.loop_over.clone(),
             loop_var: s.loop_var.clone(),
@@ -322,6 +403,7 @@ impl From<WorkflowDto> for WorkflowConfig {
             name: dto.name,
             description: dto.description,
             input_schema: dto.input_schema,
+            output_schema: dto.output_schema,
             steps: dto.steps.into_iter().map(WorkflowStep::from).collect(),
             on_error: dto.on_error,
         }
@@ -334,6 +416,7 @@ impl From<WorkflowStepDto> for WorkflowStep {
             id: dto.id,
             tool: dto.tool,
             args: dto.args,
+            depends_on: dto.depends_on,
             condition: dto.condition,
             loop_over: dto.loop_over,
             loop_var: dto.loop_var,
@@ -1283,29 +1366,38 @@ pub async fn test_workflow(
     };
     drop(settings);
 
-    // For workflows, we'll just show the workflow definition with inputs
-    // Full workflow execution would require the WorkflowEngine
-    let output = json!({
-        "name": workflow.name,
-        "description": workflow.description,
-        "input": req.args,
-        "steps": workflow.steps.iter().map(|s| json!({
-            "id": s.id,
-            "tool": s.tool,
-            "args": s.args,
-            "condition": s.condition,
-            "loop_over": s.loop_over
-        })).collect::<Vec<_>>(),
-        "note": "Full workflow execution not yet implemented in test mode. This shows the workflow definition with your inputs."
-    });
+    // Create a tool handler for testing (uses mock strategies)
+    let tool_handler = Arc::new(TestToolHandler::new(
+        state.settings.clone(),
+        state.mock_strategy.clone(),
+    ));
 
-    let elapsed = start.elapsed().as_millis() as u64;
-    (
-        StatusCode::OK,
-        Json(ApiResponse::success(TestResult {
-            output,
-            error: None,
-            execution_time_ms: elapsed,
-        })),
-    )
+    // Create workflow engine
+    let workflow_engine = WorkflowEngine::new(tool_handler);
+
+    // Execute the workflow
+    match workflow_engine.execute(&workflow, req.args).await {
+        Ok(output) => {
+            let elapsed = start.elapsed().as_millis() as u64;
+            (
+                StatusCode::OK,
+                Json(ApiResponse::success(TestResult {
+                    output,
+                    error: None,
+                    execution_time_ms: elapsed,
+                })),
+            )
+        }
+        Err(e) => {
+            let elapsed = start.elapsed().as_millis() as u64;
+            (
+                StatusCode::OK,
+                Json(ApiResponse::success(TestResult {
+                    output: Value::Null,
+                    error: Some(format!("Workflow execution error: {}", e)),
+                    execution_time_ms: elapsed,
+                })),
+            )
+        }
+    }
 }

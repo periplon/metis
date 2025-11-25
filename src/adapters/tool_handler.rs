@@ -40,6 +40,7 @@ impl ToolPort for InnerToolHandler {
                 name: t.name.clone(),
                 description: t.description.clone(),
                 input_schema: t.input_schema.clone(),
+                output_schema: t.output_schema.clone(),
             })
             .collect();
         Ok(tools)
@@ -115,6 +116,7 @@ impl ToolPort for BasicToolHandler {
                 name: t.name.clone(),
                 description: t.description.clone(),
                 input_schema: t.input_schema.clone(),
+                output_schema: t.output_schema.clone(),
             })
             .collect();
 
@@ -124,6 +126,7 @@ impl ToolPort for BasicToolHandler {
                 name: workflow.name.clone(),
                 description: format!("[Workflow] {}", workflow.description),
                 input_schema: workflow.input_schema.clone(),
+                output_schema: workflow.output_schema.clone(),
             });
         }
 

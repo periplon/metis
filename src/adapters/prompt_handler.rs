@@ -28,18 +28,32 @@ impl PromptPort for InMemoryPromptHandler {
         let prompts = settings
             .prompts
             .iter()
-            .map(|p| Prompt {
-                name: p.name.clone(),
-                description: p.description.clone(),
-                arguments: p.arguments.as_ref().map(|args| {
-                    args.iter()
-                        .map(|a| PromptArgument {
-                            name: a.name.clone(),
-                            description: a.description.clone(),
-                            required: a.required,
-                        })
-                        .collect()
-                }),
+            .map(|p| {
+                // Build enhanced description with input_schema embedded if present
+                // MCP prompts have arguments but not full JSON schema support
+                let description = if let Some(input_schema) = &p.input_schema {
+                    format!(
+                        "{}\n\n**Input Schema:**\n```json\n{}\n```",
+                        p.description,
+                        serde_json::to_string_pretty(input_schema).unwrap_or_default()
+                    )
+                } else {
+                    p.description.clone()
+                };
+
+                Prompt {
+                    name: p.name.clone(),
+                    description,
+                    arguments: p.arguments.as_ref().map(|args| {
+                        args.iter()
+                            .map(|a| PromptArgument {
+                                name: a.name.clone(),
+                                description: a.description.clone(),
+                                required: a.required,
+                            })
+                            .collect()
+                    }),
+                }
             })
             .collect();
         Ok(prompts)

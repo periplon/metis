@@ -1,7 +1,7 @@
 //! Workflow Engine - Executes multi-step workflows as MCP tools
 //!
 //! The workflow engine enables complex orchestration patterns including:
-//! - Sequential step execution with data passing
+//! - DAG-based step execution with parallel execution of independent steps
 //! - Conditional branching using Rhai expressions
 //! - Loop iteration over arrays (sequential or parallel)
 //! - Error handling strategies (fail, continue, retry, fallback)
@@ -12,7 +12,7 @@ use anyhow::{anyhow, Result};
 use futures::stream::{self, StreamExt};
 use rhai::{Dynamic, Engine as RhaiEngine, Scope};
 use serde_json::{json, Map, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tera::{Context, Tera};
 use tokio::sync::RwLock;
@@ -78,73 +78,253 @@ impl WorkflowEngine {
         }
     }
 
-    /// Execute a workflow with the given input
+    /// Execute a workflow with the given input using DAG-based execution
+    ///
+    /// Steps are executed based on their dependencies. Steps with no dependencies
+    /// or whose dependencies have all completed are executed in parallel.
     pub async fn execute(&self, workflow: &WorkflowConfig, input: Value) -> Result<Value> {
         let context = Arc::new(RwLock::new(WorkflowContext::new(input)));
-        let mut results: Vec<StepResult> = Vec::new();
+        let results = Arc::new(RwLock::new(Vec::<StepResult>::new()));
 
-        for step in &workflow.steps {
-            let step_result = self
-                .execute_step(step, context.clone(), &workflow.on_error)
-                .await;
+        // Build step lookup map
+        let step_map: HashMap<String, &WorkflowStep> = workflow
+            .steps
+            .iter()
+            .map(|s| (s.id.clone(), s))
+            .collect();
 
-            match step_result {
-                Ok(result) => {
-                    // Store result in context for subsequent steps
-                    let mut ctx = context.write().await;
-                    ctx.steps.insert(step.id.clone(), result.result.clone());
-                    results.push(result);
-                }
-                Err(e) => {
-                    // Handle error based on workflow-level strategy
-                    match &workflow.on_error {
-                        ErrorStrategy::Fail => return Err(e),
-                        ErrorStrategy::Continue => {
-                            let mut ctx = context.write().await;
-                            ctx.steps.insert(
-                                step.id.clone(),
-                                json!({
-                                    "error": e.to_string(),
-                                    "success": false
-                                }),
-                            );
-                            results.push(StepResult {
-                                step_id: step.id.clone(),
-                                success: false,
-                                result: Value::Null,
-                                error: Some(e.to_string()),
-                            });
-                        }
-                        ErrorStrategy::Fallback { value } => {
-                            let mut ctx = context.write().await;
-                            ctx.steps.insert(step.id.clone(), value.clone());
-                            results.push(StepResult {
-                                step_id: step.id.clone(),
-                                success: false,
-                                result: value.clone(),
-                                error: Some(e.to_string()),
-                            });
-                        }
-                        ErrorStrategy::Retry { .. } => {
-                            // Retry is handled at step level
-                            return Err(e);
+        // Validate DAG: check for missing dependencies and cycles
+        self.validate_dag(&workflow.steps, &step_map)?;
+
+        // Track completed steps
+        let completed: Arc<RwLock<HashSet<String>>> = Arc::new(RwLock::new(HashSet::new()));
+        let failed: Arc<RwLock<HashSet<String>>> = Arc::new(RwLock::new(HashSet::new()));
+
+        // Execute in waves until all steps complete
+        let total_steps = workflow.steps.len();
+        while completed.read().await.len() + failed.read().await.len() < total_steps {
+            // Find steps ready to execute (all dependencies satisfied, not yet started)
+            let completed_snapshot = completed.read().await.clone();
+            let failed_snapshot = failed.read().await.clone();
+
+            let ready_steps: Vec<&WorkflowStep> = workflow
+                .steps
+                .iter()
+                .filter(|s| {
+                    !completed_snapshot.contains(&s.id)
+                        && !failed_snapshot.contains(&s.id)
+                        && s.depends_on.iter().all(|dep| completed_snapshot.contains(dep))
+                        && !s.depends_on.iter().any(|dep| failed_snapshot.contains(dep))
+                })
+                .collect();
+
+            // Check for steps blocked by failed dependencies
+            let blocked_steps: Vec<&WorkflowStep> = workflow
+                .steps
+                .iter()
+                .filter(|s| {
+                    !completed_snapshot.contains(&s.id)
+                        && !failed_snapshot.contains(&s.id)
+                        && s.depends_on.iter().any(|dep| failed_snapshot.contains(dep))
+                })
+                .collect();
+
+            // Mark blocked steps as failed
+            for step in blocked_steps {
+                let mut failed_guard = failed.write().await;
+                failed_guard.insert(step.id.clone());
+                let mut results_guard = results.write().await;
+                results_guard.push(StepResult {
+                    step_id: step.id.clone(),
+                    success: false,
+                    result: Value::Null,
+                    error: Some("Blocked by failed dependency".to_string()),
+                });
+            }
+
+            if ready_steps.is_empty() {
+                // No more steps to execute
+                break;
+            }
+
+            // Execute ready steps in parallel
+            let step_futures: Vec<_> = ready_steps
+                .iter()
+                .map(|step| {
+                    let step = (*step).clone();
+                    let context = context.clone();
+                    let results = results.clone();
+                    let completed = completed.clone();
+                    let failed = failed.clone();
+                    let on_error = workflow.on_error.clone();
+
+                    async move {
+                        let step_result = self
+                            .execute_step(&step, context.clone(), &on_error)
+                            .await;
+
+                        match step_result {
+                            Ok(result) => {
+                                let mut ctx = context.write().await;
+                                ctx.steps.insert(step.id.clone(), result.result.clone());
+                                drop(ctx);
+
+                                let mut completed_guard = completed.write().await;
+                                completed_guard.insert(step.id.clone());
+                                drop(completed_guard);
+
+                                let mut results_guard = results.write().await;
+                                results_guard.push(result);
+                            }
+                            Err(e) => {
+                                match &on_error {
+                                    ErrorStrategy::Fail => {
+                                        let mut failed_guard = failed.write().await;
+                                        failed_guard.insert(step.id.clone());
+                                    }
+                                    ErrorStrategy::Continue => {
+                                        let mut ctx = context.write().await;
+                                        ctx.steps.insert(
+                                            step.id.clone(),
+                                            json!({
+                                                "error": e.to_string(),
+                                                "success": false
+                                            }),
+                                        );
+                                        drop(ctx);
+
+                                        let mut completed_guard = completed.write().await;
+                                        completed_guard.insert(step.id.clone());
+                                        drop(completed_guard);
+
+                                        let mut results_guard = results.write().await;
+                                        results_guard.push(StepResult {
+                                            step_id: step.id.clone(),
+                                            success: false,
+                                            result: Value::Null,
+                                            error: Some(e.to_string()),
+                                        });
+                                    }
+                                    ErrorStrategy::Fallback { value } => {
+                                        let mut ctx = context.write().await;
+                                        ctx.steps.insert(step.id.clone(), value.clone());
+                                        drop(ctx);
+
+                                        let mut completed_guard = completed.write().await;
+                                        completed_guard.insert(step.id.clone());
+                                        drop(completed_guard);
+
+                                        let mut results_guard = results.write().await;
+                                        results_guard.push(StepResult {
+                                            step_id: step.id.clone(),
+                                            success: false,
+                                            result: value.clone(),
+                                            error: Some(e.to_string()),
+                                        });
+                                    }
+                                    ErrorStrategy::Retry { .. } => {
+                                        // Retry is handled at step level, if it still fails mark as failed
+                                        let mut failed_guard = failed.write().await;
+                                        failed_guard.insert(step.id.clone());
+                                    }
+                                }
+                            }
                         }
                     }
-                }
-            }
+                })
+                .collect();
+
+            // Wait for all parallel steps to complete
+            futures::future::join_all(step_futures).await;
         }
 
         // Return final context with all step results
         let ctx = context.read().await;
+        let results_guard = results.read().await;
+        let failed_guard = failed.read().await;
+
+        // If workflow error strategy is Fail and any step failed, return error
+        if matches!(workflow.on_error, ErrorStrategy::Fail) && !failed_guard.is_empty() {
+            let failed_steps: Vec<_> = failed_guard.iter().collect();
+            return Err(anyhow!(
+                "Workflow failed: steps {:?} failed",
+                failed_steps
+            ));
+        }
+
         Ok(json!({
-            "success": results.iter().all(|r| r.success),
+            "success": results_guard.iter().all(|r| r.success),
             "steps": ctx.steps,
-            "results": results.iter().map(|r| json!({
+            "results": results_guard.iter().map(|r| json!({
                 "step_id": r.step_id,
                 "success": r.success,
                 "error": r.error
             })).collect::<Vec<_>>()
         }))
+    }
+
+    /// Validate that the workflow steps form a valid DAG
+    fn validate_dag(
+        &self,
+        steps: &[WorkflowStep],
+        step_map: &HashMap<String, &WorkflowStep>,
+    ) -> Result<()> {
+        // Check for missing dependencies
+        for step in steps {
+            for dep in &step.depends_on {
+                if !step_map.contains_key(dep) {
+                    return Err(anyhow!(
+                        "Step '{}' depends on non-existent step '{}'",
+                        step.id,
+                        dep
+                    ));
+                }
+            }
+        }
+
+        // Check for cycles using DFS
+        let mut visited = HashSet::new();
+        let mut rec_stack = HashSet::new();
+
+        for step in steps {
+            if !visited.contains(&step.id) {
+                if self.has_cycle(&step.id, step_map, &mut visited, &mut rec_stack) {
+                    return Err(anyhow!(
+                        "Workflow contains a cycle involving step '{}'",
+                        step.id
+                    ));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Check for cycles in the DAG using DFS
+    fn has_cycle(
+        &self,
+        step_id: &str,
+        step_map: &HashMap<String, &WorkflowStep>,
+        visited: &mut HashSet<String>,
+        rec_stack: &mut HashSet<String>,
+    ) -> bool {
+        visited.insert(step_id.to_string());
+        rec_stack.insert(step_id.to_string());
+
+        if let Some(step) = step_map.get(step_id) {
+            for dep in &step.depends_on {
+                if !visited.contains(dep) {
+                    if self.has_cycle(dep, step_map, visited, rec_stack) {
+                        return true;
+                    }
+                } else if rec_stack.contains(dep) {
+                    return true;
+                }
+            }
+        }
+
+        rec_stack.remove(step_id);
+        false
     }
 
     /// Execute a single workflow step

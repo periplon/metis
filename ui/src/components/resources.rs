@@ -168,11 +168,14 @@ pub fn Resources() -> impl IntoView {
                         </div>
 
                         <div class="mb-4">
-                            <label class="block text-sm font-medium text-gray-700 mb-1">"Input Arguments (JSON)"</label>
+                            <div class="text-sm text-gray-500 italic p-3 bg-gray-50 rounded-md mb-3">
+                                "Resources typically don't require input parameters. Use the JSON field below if your resource mock requires custom arguments."
+                            </div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">"Optional Arguments (JSON)"</label>
                             <textarea
-                                rows=6
+                                rows=3
                                 class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
-                                placeholder=r#"{"key": "value"}"#
+                                placeholder=r#"{}"#
                                 prop:value=move || test_input.get()
                                 on:input=move |ev| {
                                     let target = ev.target().unwrap();
@@ -615,6 +618,8 @@ pub fn ResourceForm() -> impl IntoView {
             uri: uri.get(),
             description: if description.get().is_empty() { None } else { Some(description.get()) },
             mime_type: if mime_type.get().is_empty() { None } else { Some(mime_type.get()) },
+            input_schema: None,  // TODO: Add schema editor
+            output_schema: None, // TODO: Add schema editor
             content: if content.get().is_empty() { None } else { Some(content.get()) },
             mock: build_mock_config(),
         };
@@ -1432,6 +1437,8 @@ pub fn ResourceEditForm() -> impl IntoView {
             uri: resource_uri.get(),
             description: if description.get().is_empty() { None } else { Some(description.get()) },
             mime_type: if mime_type.get().is_empty() { None } else { Some(mime_type.get()) },
+            input_schema: None,  // TODO: Add schema editor
+            output_schema: None, // TODO: Add schema editor
             content: if content.get().is_empty() { None } else { Some(content.get()) },
             mock: build_mock_config(),
         };

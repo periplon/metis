@@ -2,13 +2,90 @@ use leptos::prelude::*;
 use leptos::web_sys;
 use leptos_router::hooks::use_params_map;
 use wasm_bindgen::JsCast;
+use std::collections::HashMap;
 use crate::api;
-use crate::types::{Workflow, WorkflowStep, ErrorStrategy};
+use crate::types::{Workflow, ErrorStrategy};
+use crate::components::schema_editor::{
+    JsonSchemaEditor, SchemaPreview, SchemaProperty,
+    properties_to_schema, schema_to_properties,
+};
+use crate::components::step_editor::{
+    WorkflowStepsEditor, StepData,
+    steps_data_to_workflow_steps, workflow_steps_to_steps_data,
+};
 
 #[derive(Clone, Copy, PartialEq)]
 enum ViewMode {
     Table,
     Card,
+}
+
+/// Extract properties from a JSON Schema and return (name, type, description, required)
+fn extract_schema_properties(schema: &serde_json::Value) -> Vec<(String, String, Option<String>, bool)> {
+    let mut props = Vec::new();
+
+    if let Some(properties) = schema.get("properties").and_then(|p| p.as_object()) {
+        let required_fields: Vec<String> = schema
+            .get("required")
+            .and_then(|r| r.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or_default();
+
+        for (name, prop) in properties {
+            let prop_type = prop.get("type")
+                .and_then(|t| t.as_str())
+                .unwrap_or("string")
+                .to_string();
+            let description = prop.get("description")
+                .and_then(|d| d.as_str())
+                .map(|s| s.to_string());
+            let is_required = required_fields.contains(name);
+            props.push((name.clone(), prop_type, description, is_required));
+        }
+    }
+
+    props
+}
+
+/// Build JSON value from form field values based on schema types
+fn build_json_from_fields(
+    fields: &HashMap<String, String>,
+    schema: &serde_json::Value,
+) -> serde_json::Value {
+    let mut obj = serde_json::Map::new();
+
+    if let Some(properties) = schema.get("properties").and_then(|p| p.as_object()) {
+        for (name, prop) in properties {
+            if let Some(value) = fields.get(name) {
+                if value.is_empty() {
+                    continue;
+                }
+
+                let prop_type = prop.get("type")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("string");
+
+                let json_value = match prop_type {
+                    "number" => value.parse::<f64>()
+                        .map(serde_json::Value::from)
+                        .unwrap_or(serde_json::Value::Null),
+                    "integer" => value.parse::<i64>()
+                        .map(serde_json::Value::from)
+                        .unwrap_or(serde_json::Value::Null),
+                    "boolean" => serde_json::Value::Bool(value == "true"),
+                    "array" | "object" => serde_json::from_str(value)
+                        .unwrap_or(serde_json::Value::Null),
+                    _ => serde_json::Value::String(value.clone()),
+                };
+
+                if !json_value.is_null() {
+                    obj.insert(name.clone(), json_value);
+                }
+            }
+        }
+    }
+
+    serde_json::Value::Object(obj)
 }
 
 #[component]
@@ -18,9 +95,9 @@ pub fn Workflows() -> impl IntoView {
     let (delete_target, set_delete_target) = signal(Option::<String>::None);
     let (deleting, set_deleting) = signal(false);
 
-    // Test modal state
-    let (test_target, set_test_target) = signal(Option::<String>::None);
-    let (test_input, set_test_input) = signal(String::from("{}"));
+    // Test modal state - stores full Workflow to access input_schema
+    let (test_target, set_test_target) = signal(Option::<Workflow>::None);
+    let (test_form_fields, set_test_form_fields) = signal(HashMap::<String, String>::new());
     let (test_result, set_test_result) = signal(Option::<Result<crate::types::TestResult, String>>::None);
     let (testing, set_testing) = signal(false);
 
@@ -49,14 +126,15 @@ pub fn Workflows() -> impl IntoView {
     };
 
     let on_test_run = move |_| {
-        if let Some(name) = test_target.get() {
+        if let Some(workflow) = test_target.get() {
             set_testing.set(true);
             set_test_result.set(None);
-            let input_json = test_input.get();
+            let fields = test_form_fields.get();
+            let schema = workflow.input_schema.clone();
+            let workflow_name = workflow.name.clone();
             wasm_bindgen_futures::spawn_local(async move {
-                let args: serde_json::Value = serde_json::from_str(&input_json)
-                    .unwrap_or(serde_json::json!({}));
-                let result = api::test_workflow(&name, &args).await;
+                let args = build_json_from_fields(&fields, &schema);
+                let result = api::test_workflow(&workflow_name, &args).await;
                 set_test_result.set(Some(result));
                 set_testing.set(false);
             });
@@ -65,7 +143,7 @@ pub fn Workflows() -> impl IntoView {
 
     let on_test_close = move |_| {
         set_test_target.set(None);
-        set_test_input.set("{}".to_string());
+        set_test_form_fields.set(HashMap::new());
         set_test_result.set(None);
     };
 
@@ -146,13 +224,17 @@ pub fn Workflows() -> impl IntoView {
             })}
 
             // Test modal
-            {move || test_target.get().map(|name| view! {
+            {move || test_target.get().map(|workflow| {
+                let schema_props = extract_schema_properties(&workflow.input_schema);
+                let has_no_properties = schema_props.is_empty();
+
+                view! {
                 <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
                     <div class="bg-white rounded-lg shadow-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
                         <div class="flex justify-between items-center mb-4">
                             <h3 class="text-lg font-semibold text-gray-900">
                                 "Test Workflow: "
-                                <span class="font-mono text-orange-600">{name.clone()}</span>
+                                <span class="font-mono text-orange-600">{workflow.name.clone()}</span>
                             </h3>
                             <button
                                 class="text-gray-400 hover:text-gray-600"
@@ -164,19 +246,98 @@ pub fn Workflows() -> impl IntoView {
                             </button>
                         </div>
 
-                        <div class="mb-4">
-                            <label class="block text-sm font-medium text-gray-700 mb-1">"Input Arguments (JSON)"</label>
-                            <textarea
-                                rows=6
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono text-sm"
-                                placeholder=r#"{"key": "value"}"#
-                                prop:value=move || test_input.get()
-                                on:input=move |ev| {
-                                    let target = ev.target().unwrap();
-                                    let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
-                                    set_test_input.set(textarea.value());
-                                }
-                            />
+                        // Dynamic form fields based on input_schema
+                        <div class="mb-4 space-y-4">
+                            {if has_no_properties {
+                                view! {
+                                    <div class="text-sm text-gray-500 italic p-3 bg-gray-50 rounded-md">
+                                        "This workflow has no input parameters defined."
+                                    </div>
+                                }.into_any()
+                            } else {
+                                view! {
+                                    <div class="space-y-4">
+                                        {schema_props.into_iter().map(|(name, prop_type, description, required)| {
+                                            let field_name = name.clone();
+                                            let field_name_for_handler = name.clone();
+                                            let label = format!("{}{}", name, if required { " *" } else { "" });
+
+                                            view! {
+                                                <div>
+                                                    <label class="block text-sm font-medium text-gray-700 mb-1">
+                                                        {label}
+                                                        <span class="ml-2 text-xs text-gray-400 font-normal">{format!("({})", prop_type)}</span>
+                                                    </label>
+                                                    {match prop_type.as_str() {
+                                                        "boolean" => view! {
+                                                            <select
+                                                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
+                                                                on:change=move |ev| {
+                                                                    let target = ev.target().unwrap();
+                                                                    let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
+                                                                    set_test_form_fields.update(|fields| {
+                                                                        fields.insert(field_name_for_handler.clone(), select.value());
+                                                                    });
+                                                                }
+                                                            >
+                                                                <option value="">"-- Select --"</option>
+                                                                <option value="true">"true"</option>
+                                                                <option value="false">"false"</option>
+                                                            </select>
+                                                        }.into_any(),
+                                                        "number" | "integer" => view! {
+                                                            <input
+                                                                type="number"
+                                                                step=if prop_type == "integer" { "1" } else { "any" }
+                                                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
+                                                                placeholder=format!("Enter {}", prop_type)
+                                                                on:input=move |ev| {
+                                                                    let target = ev.target().unwrap();
+                                                                    let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                                                    set_test_form_fields.update(|fields| {
+                                                                        fields.insert(field_name_for_handler.clone(), input.value());
+                                                                    });
+                                                                }
+                                                            />
+                                                        }.into_any(),
+                                                        "array" | "object" => view! {
+                                                            <textarea
+                                                                rows=3
+                                                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono text-sm"
+                                                                placeholder=if prop_type == "array" { "[...]" } else { "{...}" }
+                                                                on:input=move |ev| {
+                                                                    let target = ev.target().unwrap();
+                                                                    let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
+                                                                    set_test_form_fields.update(|fields| {
+                                                                        fields.insert(field_name_for_handler.clone(), textarea.value());
+                                                                    });
+                                                                }
+                                                            />
+                                                        }.into_any(),
+                                                        _ => view! {
+                                                            <input
+                                                                type="text"
+                                                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
+                                                                placeholder=format!("Enter {}", field_name)
+                                                                on:input=move |ev| {
+                                                                    let target = ev.target().unwrap();
+                                                                    let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                                                    set_test_form_fields.update(|fields| {
+                                                                        fields.insert(field_name_for_handler.clone(), input.value());
+                                                                    });
+                                                                }
+                                                            />
+                                                        }.into_any(),
+                                                    }}
+                                                    {description.map(|desc| view! {
+                                                        <p class="mt-1 text-xs text-gray-500">{desc}</p>
+                                                    })}
+                                                </div>
+                                            }
+                                        }).collect::<Vec<_>>()}
+                                    </div>
+                                }.into_any()
+                            }}
                         </div>
 
                         <div class="flex gap-3 mb-4">
@@ -248,6 +409,7 @@ pub fn Workflows() -> impl IntoView {
                         })}
                     </div>
                 </div>
+            }
             })}
 
             <Suspense fallback=move || view! { <LoadingState /> }>
@@ -319,7 +481,7 @@ fn ErrorState() -> impl IntoView {
 fn WorkflowTable(
     workflows: Vec<Workflow>,
     set_delete_target: WriteSignal<Option<String>>,
-    set_test_target: WriteSignal<Option<String>>,
+    set_test_target: WriteSignal<Option<Workflow>>,
 ) -> impl IntoView {
     view! {
         <div class="bg-white rounded-lg shadow overflow-hidden">
@@ -336,7 +498,7 @@ fn WorkflowTable(
                     {workflows.into_iter().map(|workflow| {
                         let name_for_edit = workflow.name.clone();
                         let name_for_delete = workflow.name.clone();
-                        let name_for_test = workflow.name.clone();
+                        let workflow_for_test = workflow.clone();
                         let steps_count = workflow.steps.len();
 
                         view! {
@@ -355,7 +517,7 @@ fn WorkflowTable(
                                 <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                     <button
                                         class="text-orange-600 hover:text-orange-900 mr-3"
-                                        on:click=move |_| set_test_target.set(Some(name_for_test.clone()))
+                                        on:click=move |_| set_test_target.set(Some(workflow_for_test.clone()))
                                     >
                                         "Test"
                                     </button>
@@ -385,14 +547,14 @@ fn WorkflowTable(
 fn WorkflowCards(
     workflows: Vec<Workflow>,
     set_delete_target: WriteSignal<Option<String>>,
-    set_test_target: WriteSignal<Option<String>>,
+    set_test_target: WriteSignal<Option<Workflow>>,
 ) -> impl IntoView {
     view! {
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {workflows.into_iter().map(|workflow| {
                 let name_for_edit = workflow.name.clone();
                 let name_for_delete = workflow.name.clone();
-                let name_for_test = workflow.name.clone();
+                let workflow_for_test = workflow.clone();
                 let steps_count = workflow.steps.len();
 
                 view! {
@@ -427,7 +589,7 @@ fn WorkflowCards(
                         <div class="flex justify-end gap-2 pt-3 border-t border-gray-100">
                             <button
                                 class="px-3 py-1 text-sm text-orange-600 hover:bg-orange-50 rounded"
-                                on:click=move |_| set_test_target.set(Some(name_for_test.clone()))
+                                on:click=move |_| set_test_target.set(Some(workflow_for_test.clone()))
                             >
                                 "Test"
                             </button>
@@ -455,29 +617,38 @@ fn WorkflowCards(
 pub fn WorkflowForm() -> impl IntoView {
     let (name, set_name) = signal(String::new());
     let (description, set_description) = signal(String::new());
-    let (input_schema, set_input_schema) = signal(String::from("{}"));
-    let (steps_json, set_steps_json) = signal(String::new());
+    let (schema_properties, set_schema_properties) = signal(Vec::<SchemaProperty>::new());
+    let (output_schema_properties, set_output_schema_properties) = signal(Vec::<SchemaProperty>::new());
+    let (steps_data, set_steps_data) = signal(Vec::<StepData>::new());
     let (error, set_error) = signal(Option::<String>::None);
     let (saving, set_saving) = signal(false);
+
+    // Load available tools for dropdown
+    let available_tools = LocalResource::new(move || async move {
+        api::list_tools().await.ok().map(|tools| {
+            tools.into_iter().map(|t| t.name).collect::<Vec<_>>()
+        }).unwrap_or_default()
+    });
 
     let on_submit = move |ev: web_sys::SubmitEvent| {
         ev.prevent_default();
         set_saving.set(true);
         set_error.set(None);
 
-        let schema: serde_json::Value = serde_json::from_str(&input_schema.get())
-            .unwrap_or(serde_json::json!({}));
-
-        let steps: Vec<WorkflowStep> = if steps_json.get().is_empty() {
-            Vec::new()
+        let input_schema = properties_to_schema(&schema_properties.get());
+        let output_props = output_schema_properties.get();
+        let output_schema = if output_props.is_empty() {
+            None
         } else {
-            match serde_json::from_str(&steps_json.get()) {
-                Ok(s) => s,
-                Err(e) => {
-                    set_error.set(Some(format!("Invalid steps JSON: {}", e)));
-                    set_saving.set(false);
-                    return;
-                }
+            Some(properties_to_schema(&output_props))
+        };
+
+        let steps = match steps_data_to_workflow_steps(&steps_data.get()) {
+            Ok(s) => s,
+            Err(e) => {
+                set_error.set(Some(e));
+                set_saving.set(false);
+                return;
             }
         };
 
@@ -490,7 +661,8 @@ pub fn WorkflowForm() -> impl IntoView {
         let workflow = Workflow {
             name: name.get(),
             description: description.get(),
-            input_schema: schema,
+            input_schema,
+            output_schema,
             steps,
             on_error: ErrorStrategy::Fail,
         };
@@ -564,35 +736,36 @@ pub fn WorkflowForm() -> impl IntoView {
                     </div>
 
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">"Input Schema (JSON)"</label>
-                        <textarea
-                            rows=4
-                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono text-sm"
-                            placeholder="{}"
-                            prop:value=move || input_schema.get()
-                            on:input=move |ev| {
-                                let target = ev.target().unwrap();
-                                let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
-                                set_input_schema.set(textarea.value());
-                            }
+                        <JsonSchemaEditor
+                            properties=schema_properties
+                            set_properties=set_schema_properties
+                            label="Input Schema"
+                            color="orange"
                         />
-                        <p class="mt-1 text-xs text-gray-500">"JSON Schema for workflow input parameters"</p>
+                        <SchemaPreview properties=schema_properties />
                     </div>
 
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">"Steps (JSON Array) *"</label>
-                        <textarea
-                            rows=8
-                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono text-sm"
-                            placeholder=r#"[{"id": "step1", "tool": "my-tool"}]"#
-                            prop:value=move || steps_json.get()
-                            on:input=move |ev| {
-                                let target = ev.target().unwrap();
-                                let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
-                                set_steps_json.set(textarea.value());
-                            }
+                        <JsonSchemaEditor
+                            properties=output_schema_properties
+                            set_properties=set_output_schema_properties
+                            label="Output Schema"
+                            color="blue"
                         />
-                        <p class="mt-1 text-xs text-gray-500">"Array of workflow steps. Each step needs: id, tool, and optionally args"</p>
+                        <SchemaPreview properties=output_schema_properties />
+                    </div>
+
+                    <div>
+                        {move || {
+                            let tools = available_tools.get().unwrap_or_default();
+                            view! {
+                                <WorkflowStepsEditor
+                                    steps=steps_data
+                                    set_steps=set_steps_data
+                                    available_tools=tools
+                                />
+                            }
+                        }}
                     </div>
                 </div>
 
@@ -623,12 +796,20 @@ pub fn WorkflowEditForm() -> impl IntoView {
 
     let (name, set_name) = signal(String::new());
     let (description, set_description) = signal(String::new());
-    let (input_schema, set_input_schema) = signal(String::from("{}"));
-    let (steps_json, set_steps_json) = signal(String::new());
+    let (schema_properties, set_schema_properties) = signal(Vec::<SchemaProperty>::new());
+    let (output_schema_properties, set_output_schema_properties) = signal(Vec::<SchemaProperty>::new());
+    let (steps_data, set_steps_data) = signal(Vec::<StepData>::new());
     let (error, set_error) = signal(Option::<String>::None);
     let (saving, set_saving) = signal(false);
     let (loading, set_loading) = signal(true);
     let (original_name, set_original_name) = signal(String::new());
+
+    // Load available tools for dropdown
+    let available_tools = LocalResource::new(move || async move {
+        api::list_tools().await.ok().map(|tools| {
+            tools.into_iter().map(|t| t.name).collect::<Vec<_>>()
+        }).unwrap_or_default()
+    });
 
     // Load existing workflow
     Effect::new(move |_| {
@@ -644,8 +825,12 @@ pub fn WorkflowEditForm() -> impl IntoView {
                     set_original_name.set(workflow.name.clone());
                     set_name.set(workflow.name.clone());
                     set_description.set(workflow.description.clone());
-                    set_input_schema.set(serde_json::to_string_pretty(&workflow.input_schema).unwrap_or_default());
-                    set_steps_json.set(serde_json::to_string_pretty(&workflow.steps).unwrap_or_default());
+                    set_schema_properties.set(schema_to_properties(&workflow.input_schema));
+                    // Load output schema if present
+                    if let Some(output_schema) = &workflow.output_schema {
+                        set_output_schema_properties.set(schema_to_properties(output_schema));
+                    }
+                    set_steps_data.set(workflow_steps_to_steps_data(&workflow.steps));
                 }
                 Err(e) => {
                     set_error.set(Some(format!("Failed to load workflow: {}", e)));
@@ -662,19 +847,20 @@ pub fn WorkflowEditForm() -> impl IntoView {
 
         let orig_name = original_name.get();
 
-        let schema: serde_json::Value = serde_json::from_str(&input_schema.get())
-            .unwrap_or(serde_json::json!({}));
-
-        let steps: Vec<WorkflowStep> = if steps_json.get().is_empty() {
-            Vec::new()
+        let input_schema = properties_to_schema(&schema_properties.get());
+        let output_props = output_schema_properties.get();
+        let output_schema = if output_props.is_empty() {
+            None
         } else {
-            match serde_json::from_str(&steps_json.get()) {
-                Ok(s) => s,
-                Err(e) => {
-                    set_error.set(Some(format!("Invalid steps JSON: {}", e)));
-                    set_saving.set(false);
-                    return;
-                }
+            Some(properties_to_schema(&output_props))
+        };
+
+        let steps = match steps_data_to_workflow_steps(&steps_data.get()) {
+            Ok(s) => s,
+            Err(e) => {
+                set_error.set(Some(e));
+                set_saving.set(false);
+                return;
             }
         };
 
@@ -687,7 +873,8 @@ pub fn WorkflowEditForm() -> impl IntoView {
         let workflow = Workflow {
             name: name.get(),
             description: description.get(),
-            input_schema: schema,
+            input_schema,
+            output_schema,
             steps,
             on_error: ErrorStrategy::Fail,
         };
@@ -770,35 +957,36 @@ pub fn WorkflowEditForm() -> impl IntoView {
                             </div>
 
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">"Input Schema (JSON)"</label>
-                                <textarea
-                                    rows=4
-                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono text-sm"
-                                    placeholder="{}"
-                                    prop:value=move || input_schema.get()
-                                    on:input=move |ev| {
-                                        let target = ev.target().unwrap();
-                                        let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
-                                        set_input_schema.set(textarea.value());
-                                    }
+                                <JsonSchemaEditor
+                                    properties=schema_properties
+                                    set_properties=set_schema_properties
+                                    label="Input Schema"
+                                    color="orange"
                                 />
-                                <p class="mt-1 text-xs text-gray-500">"JSON Schema for workflow input parameters"</p>
+                                <SchemaPreview properties=schema_properties />
                             </div>
 
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">"Steps (JSON Array) *"</label>
-                                <textarea
-                                    rows=8
-                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500 font-mono text-sm"
-                                    placeholder=r#"[{"id": "step1", "tool": "my-tool"}]"#
-                                    prop:value=move || steps_json.get()
-                                    on:input=move |ev| {
-                                        let target = ev.target().unwrap();
-                                        let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
-                                        set_steps_json.set(textarea.value());
-                                    }
+                                <JsonSchemaEditor
+                                    properties=output_schema_properties
+                                    set_properties=set_output_schema_properties
+                                    label="Output Schema"
+                                    color="blue"
                                 />
-                                <p class="mt-1 text-xs text-gray-500">"Array of workflow steps. Each step needs: id, tool, and optionally args"</p>
+                                <SchemaPreview properties=output_schema_properties />
+                            </div>
+
+                            <div>
+                                {move || {
+                                    let tools = available_tools.get().unwrap_or_default();
+                                    view! {
+                                        <WorkflowStepsEditor
+                                            steps=steps_data
+                                            set_steps=set_steps_data
+                                            available_tools=tools
+                                        />
+                                    }
+                                }}
                             </div>
                         </div>
 

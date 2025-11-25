@@ -2,13 +2,45 @@ use leptos::prelude::*;
 use leptos::web_sys;
 use leptos_router::hooks::use_params_map;
 use wasm_bindgen::JsCast;
+use std::collections::HashMap;
 use crate::api;
 use crate::types::{Prompt, PromptArgument, PromptMessage};
+use crate::components::schema_editor::{JsonSchemaEditor, SchemaPreview, SchemaProperty, properties_to_schema};
+
+/// Convert SchemaProperty to PromptArgument
+fn schema_property_to_argument(prop: &SchemaProperty) -> PromptArgument {
+    PromptArgument {
+        name: prop.name.clone(),
+        description: if prop.description.is_empty() { None } else { Some(prop.description.clone()) },
+        required: prop.required,
+    }
+}
+
+/// Convert PromptArgument to SchemaProperty
+fn argument_to_schema_property(arg: &PromptArgument) -> SchemaProperty {
+    let mut prop = SchemaProperty::new();
+    prop.name = arg.name.clone();
+    prop.description = arg.description.clone().unwrap_or_default();
+    prop.required = arg.required;
+    prop.prop_type = "string".to_string(); // MCP prompt arguments are strings
+    prop
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum ViewMode {
     Table,
     Card,
+}
+
+/// Build JSON object from prompt form fields (all string values)
+fn build_json_from_prompt_fields(fields: &HashMap<String, String>) -> serde_json::Value {
+    let mut obj = serde_json::Map::new();
+    for (name, value) in fields {
+        if !value.is_empty() {
+            obj.insert(name.clone(), serde_json::Value::String(value.clone()));
+        }
+    }
+    serde_json::Value::Object(obj)
 }
 
 #[component]
@@ -18,9 +50,9 @@ pub fn Prompts() -> impl IntoView {
     let (delete_target, set_delete_target) = signal(Option::<String>::None);
     let (deleting, set_deleting) = signal(false);
 
-    // Test modal state
-    let (test_target, set_test_target) = signal(Option::<String>::None);
-    let (test_input, set_test_input) = signal(String::from("{}"));
+    // Test modal state - stores full Prompt to access arguments
+    let (test_target, set_test_target) = signal(Option::<Prompt>::None);
+    let (test_form_fields, set_test_form_fields) = signal(HashMap::<String, String>::new());
     let (test_result, set_test_result) = signal(Option::<Result<crate::types::TestResult, String>>::None);
     let (testing, set_testing) = signal(false);
 
@@ -49,14 +81,14 @@ pub fn Prompts() -> impl IntoView {
     };
 
     let on_test_run = move |_| {
-        if let Some(name) = test_target.get() {
+        if let Some(prompt) = test_target.get() {
             set_testing.set(true);
             set_test_result.set(None);
-            let input_json = test_input.get();
+            let fields = test_form_fields.get();
+            let prompt_name = prompt.name.clone();
             wasm_bindgen_futures::spawn_local(async move {
-                let args: serde_json::Value = serde_json::from_str(&input_json)
-                    .unwrap_or(serde_json::json!({}));
-                let result = api::test_prompt(&name, &args).await;
+                let args = build_json_from_prompt_fields(&fields);
+                let result = api::test_prompt(&prompt_name, &args).await;
                 set_test_result.set(Some(result));
                 set_testing.set(false);
             });
@@ -65,7 +97,7 @@ pub fn Prompts() -> impl IntoView {
 
     let on_test_close = move |_| {
         set_test_target.set(None);
-        set_test_input.set("{}".to_string());
+        set_test_form_fields.set(HashMap::new());
         set_test_result.set(None);
     };
 
@@ -146,13 +178,17 @@ pub fn Prompts() -> impl IntoView {
             })}
 
             // Test modal
-            {move || test_target.get().map(|name| view! {
+            {move || test_target.get().map(|prompt| {
+                let args = prompt.arguments.clone().unwrap_or_default();
+                let has_no_args = args.is_empty();
+
+                view! {
                 <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
                     <div class="bg-white rounded-lg shadow-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
                         <div class="flex justify-between items-center mb-4">
                             <h3 class="text-lg font-semibold text-gray-900">
                                 "Test Prompt: "
-                                <span class="font-mono text-purple-600">{name.clone()}</span>
+                                <span class="font-mono text-purple-600">{prompt.name.clone()}</span>
                             </h3>
                             <button
                                 class="text-gray-400 hover:text-gray-600"
@@ -164,19 +200,48 @@ pub fn Prompts() -> impl IntoView {
                             </button>
                         </div>
 
-                        <div class="mb-4">
-                            <label class="block text-sm font-medium text-gray-700 mb-1">"Input Arguments (JSON)"</label>
-                            <textarea
-                                rows=6
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono text-sm"
-                                placeholder=r#"{"topic": "example"}"#
-                                prop:value=move || test_input.get()
-                                on:input=move |ev| {
-                                    let target = ev.target().unwrap();
-                                    let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
-                                    set_test_input.set(textarea.value());
-                                }
-                            />
+                        // Dynamic form fields based on prompt arguments
+                        <div class="mb-4 space-y-4">
+                            {if has_no_args {
+                                view! {
+                                    <div class="text-sm text-gray-500 italic p-3 bg-gray-50 rounded-md">
+                                        "This prompt has no arguments defined."
+                                    </div>
+                                }.into_any()
+                            } else {
+                                view! {
+                                    <div class="space-y-4">
+                                        {args.into_iter().map(|arg| {
+                                            let field_name = arg.name.clone();
+                                            let field_name_for_handler = arg.name.clone();
+                                            let label = format!("{}{}", arg.name, if arg.required { " *" } else { "" });
+
+                                            view! {
+                                                <div>
+                                                    <label class="block text-sm font-medium text-gray-700 mb-1">
+                                                        {label}
+                                                    </label>
+                                                    <input
+                                                        type="text"
+                                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                                        placeholder=format!("Enter {}", field_name)
+                                                        on:input=move |ev| {
+                                                            let target = ev.target().unwrap();
+                                                            let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                                            set_test_form_fields.update(|fields| {
+                                                                fields.insert(field_name_for_handler.clone(), input.value());
+                                                            });
+                                                        }
+                                                    />
+                                                    {arg.description.clone().map(|desc| view! {
+                                                        <p class="mt-1 text-xs text-gray-500">{desc}</p>
+                                                    })}
+                                                </div>
+                                            }
+                                        }).collect::<Vec<_>>()}
+                                    </div>
+                                }.into_any()
+                            }}
                         </div>
 
                         <div class="flex gap-3 mb-4">
@@ -248,6 +313,7 @@ pub fn Prompts() -> impl IntoView {
                         })}
                     </div>
                 </div>
+            }
             })}
 
             <Suspense fallback=move || view! { <LoadingState /> }>
@@ -319,7 +385,7 @@ fn ErrorState() -> impl IntoView {
 fn PromptTable(
     prompts: Vec<Prompt>,
     set_delete_target: WriteSignal<Option<String>>,
-    set_test_target: WriteSignal<Option<String>>,
+    set_test_target: WriteSignal<Option<Prompt>>,
 ) -> impl IntoView {
     view! {
         <div class="bg-white rounded-lg shadow overflow-hidden">
@@ -337,7 +403,7 @@ fn PromptTable(
                     {prompts.into_iter().map(|prompt| {
                         let name_for_edit = prompt.name.clone();
                         let name_for_delete = prompt.name.clone();
-                        let name_for_test = prompt.name.clone();
+                        let prompt_for_test = prompt.clone();
                         let args_count = prompt.arguments.as_ref().map(|a| a.len()).unwrap_or(0);
                         let msgs_count = prompt.messages.as_ref().map(|m| m.len()).unwrap_or(0);
 
@@ -362,7 +428,7 @@ fn PromptTable(
                                 <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                     <button
                                         class="text-purple-600 hover:text-purple-900 mr-3"
-                                        on:click=move |_| set_test_target.set(Some(name_for_test.clone()))
+                                        on:click=move |_| set_test_target.set(Some(prompt_for_test.clone()))
                                     >
                                         "Test"
                                     </button>
@@ -392,14 +458,14 @@ fn PromptTable(
 fn PromptCards(
     prompts: Vec<Prompt>,
     set_delete_target: WriteSignal<Option<String>>,
-    set_test_target: WriteSignal<Option<String>>,
+    set_test_target: WriteSignal<Option<Prompt>>,
 ) -> impl IntoView {
     view! {
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {prompts.into_iter().map(|prompt| {
                 let name_for_edit = prompt.name.clone();
                 let name_for_delete = prompt.name.clone();
-                let name_for_test = prompt.name.clone();
+                let prompt_for_test = prompt.clone();
                 let args_count = prompt.arguments.as_ref().map(|a| a.len()).unwrap_or(0);
                 let msgs_count = prompt.messages.as_ref().map(|m| m.len()).unwrap_or(0);
 
@@ -422,7 +488,7 @@ fn PromptCards(
                         <div class="flex justify-end gap-2 pt-3 border-t border-gray-100">
                             <button
                                 class="px-3 py-1 text-sm text-purple-600 hover:bg-purple-50 rounded"
-                                on:click=move |_| set_test_target.set(Some(name_for_test.clone()))
+                                on:click=move |_| set_test_target.set(Some(prompt_for_test.clone()))
                             >
                                 "Test"
                             </button>
@@ -450,7 +516,7 @@ fn PromptCards(
 pub fn PromptForm() -> impl IntoView {
     let (name, set_name) = signal(String::new());
     let (description, set_description) = signal(String::new());
-    let (args_json, set_args_json) = signal(String::new());
+    let (args_properties, set_args_properties) = signal(Vec::<SchemaProperty>::new());
     let (messages_json, set_messages_json) = signal(String::new());
     let (error, set_error) = signal(Option::<String>::None);
     let (saving, set_saving) = signal(false);
@@ -460,17 +526,23 @@ pub fn PromptForm() -> impl IntoView {
         set_saving.set(true);
         set_error.set(None);
 
-        let arguments: Option<Vec<PromptArgument>> = if args_json.get().is_empty() {
+        // Convert schema properties to prompt arguments
+        let props = args_properties.get();
+        let arguments: Option<Vec<PromptArgument>> = if props.is_empty() {
             None
         } else {
-            match serde_json::from_str(&args_json.get()) {
-                Ok(args) => Some(args),
-                Err(e) => {
-                    set_error.set(Some(format!("Invalid arguments JSON: {}", e)));
-                    set_saving.set(false);
-                    return;
-                }
-            }
+            Some(props.iter()
+                .filter(|p| !p.name.is_empty())
+                .map(schema_property_to_argument)
+                .collect())
+        };
+
+        // Also generate input_schema from the properties
+        let input_schema = if props.is_empty() {
+            None
+        } else {
+            let schema = properties_to_schema(&props);
+            Some(schema)
         };
 
         let messages: Option<Vec<PromptMessage>> = if messages_json.get().is_empty() {
@@ -490,6 +562,7 @@ pub fn PromptForm() -> impl IntoView {
             name: name.get(),
             description: description.get(),
             arguments,
+            input_schema,
             messages,
         };
 
@@ -557,19 +630,13 @@ pub fn PromptForm() -> impl IntoView {
                     </div>
 
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">"Arguments (JSON Array)"</label>
-                        <textarea
-                            rows=4
-                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono text-sm"
-                            placeholder=r#"[{"name": "topic", "required": true}]"#
-                            prop:value=move || args_json.get()
-                            on:input=move |ev| {
-                                let target = ev.target().unwrap();
-                                let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
-                                set_args_json.set(textarea.value());
-                            }
+                        <JsonSchemaEditor
+                            properties=args_properties
+                            set_properties=set_args_properties
+                            label="Arguments"
+                            color="purple"
                         />
-                        <p class="mt-1 text-xs text-gray-500">"Optional array of argument definitions"</p>
+                        <SchemaPreview properties=args_properties />
                     </div>
 
                     <div>
@@ -616,7 +683,7 @@ pub fn PromptEditForm() -> impl IntoView {
 
     let (name, set_name) = signal(String::new());
     let (description, set_description) = signal(String::new());
-    let (args_json, set_args_json) = signal(String::new());
+    let (args_properties, set_args_properties) = signal(Vec::<SchemaProperty>::new());
     let (messages_json, set_messages_json) = signal(String::new());
     let (error, set_error) = signal(Option::<String>::None);
     let (saving, set_saving) = signal(false);
@@ -637,8 +704,12 @@ pub fn PromptEditForm() -> impl IntoView {
                     set_original_name.set(prompt.name.clone());
                     set_name.set(prompt.name.clone());
                     set_description.set(prompt.description.clone());
+                    // Convert arguments to schema properties
                     if let Some(args) = &prompt.arguments {
-                        set_args_json.set(serde_json::to_string_pretty(args).unwrap_or_default());
+                        let properties: Vec<SchemaProperty> = args.iter()
+                            .map(argument_to_schema_property)
+                            .collect();
+                        set_args_properties.set(properties);
                     }
                     if let Some(msgs) = &prompt.messages {
                         set_messages_json.set(serde_json::to_string_pretty(msgs).unwrap_or_default());
@@ -659,17 +730,23 @@ pub fn PromptEditForm() -> impl IntoView {
 
         let orig_name = original_name.get();
 
-        let arguments: Option<Vec<PromptArgument>> = if args_json.get().is_empty() {
+        // Convert schema properties to prompt arguments
+        let props = args_properties.get();
+        let arguments: Option<Vec<PromptArgument>> = if props.is_empty() {
             None
         } else {
-            match serde_json::from_str(&args_json.get()) {
-                Ok(args) => Some(args),
-                Err(e) => {
-                    set_error.set(Some(format!("Invalid arguments JSON: {}", e)));
-                    set_saving.set(false);
-                    return;
-                }
-            }
+            Some(props.iter()
+                .filter(|p| !p.name.is_empty())
+                .map(schema_property_to_argument)
+                .collect())
+        };
+
+        // Also generate input_schema from the properties
+        let input_schema = if props.is_empty() {
+            None
+        } else {
+            let schema = properties_to_schema(&props);
+            Some(schema)
         };
 
         let messages: Option<Vec<PromptMessage>> = if messages_json.get().is_empty() {
@@ -689,6 +766,7 @@ pub fn PromptEditForm() -> impl IntoView {
             name: name.get(),
             description: description.get(),
             arguments,
+            input_schema,
             messages,
         };
 
@@ -770,19 +848,13 @@ pub fn PromptEditForm() -> impl IntoView {
                             </div>
 
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">"Arguments (JSON Array)"</label>
-                                <textarea
-                                    rows=4
-                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono text-sm"
-                                    placeholder=r#"[{"name": "topic", "required": true}]"#
-                                    prop:value=move || args_json.get()
-                                    on:input=move |ev| {
-                                        let target = ev.target().unwrap();
-                                        let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
-                                        set_args_json.set(textarea.value());
-                                    }
+                                <JsonSchemaEditor
+                                    properties=args_properties
+                                    set_properties=set_args_properties
+                                    label="Arguments"
+                                    color="purple"
                                 />
-                                <p class="mt-1 text-xs text-gray-500">"Optional array of argument definitions"</p>
+                                <SchemaPreview properties=args_properties />
                             </div>
 
                             <div>

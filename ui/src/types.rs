@@ -93,6 +93,12 @@ pub struct Resource {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
+    /// JSON Schema for resource input parameters
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_schema: Option<Value>,
+    /// JSON Schema for the expected output structure
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -106,6 +112,9 @@ pub struct Tool {
     pub description: String,
     #[serde(default)]
     pub input_schema: Value,
+    /// Optional JSON Schema defining the expected output structure
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub static_response: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -119,6 +128,9 @@ pub struct Prompt {
     pub description: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub arguments: Option<Vec<PromptArgument>>,
+    /// JSON Schema for prompt input parameters (more detailed than arguments)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_schema: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub messages: Option<Vec<PromptMessage>>,
 }
@@ -144,6 +156,9 @@ pub struct Workflow {
     pub description: String,
     #[serde(default)]
     pub input_schema: Value,
+    /// JSON Schema for the expected workflow output structure
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Value>,
     pub steps: Vec<WorkflowStep>,
     #[serde(default)]
     pub on_error: ErrorStrategy,
@@ -155,6 +170,9 @@ pub struct WorkflowStep {
     pub tool: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub args: Option<Value>,
+    /// Step IDs that must complete before this step can execute (DAG dependencies)
+    #[serde(default)]
+    pub depends_on: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub condition: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

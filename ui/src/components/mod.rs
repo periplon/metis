@@ -5,3 +5,5 @@ pub mod resources;
 pub mod tools;
 pub mod prompts;
 pub mod workflows;
+pub mod schema_editor;
+pub mod step_editor;

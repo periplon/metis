@@ -12,7 +12,7 @@ pub use s3_watcher::S3Watcher;
 
 use crate::cli::Cli;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Settings {
     pub server: ServerSettings,
     #[serde(default)]
@@ -31,34 +31,43 @@ pub struct Settings {
     pub s3: Option<S3Config>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct RateLimitConfig {
     pub enabled: bool,
     pub requests_per_second: u32,
     pub burst_size: u32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ServerSettings {
     pub host: String,
     pub port: u16,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ResourceConfig {
     pub uri: String,
     pub name: String,
     pub description: Option<String>,
     pub mime_type: Option<String>,
+    /// JSON Schema for resource input parameters (e.g., query params, URI templates)
+    #[serde(default)]
+    pub input_schema: Option<Value>,
+    /// JSON Schema for the expected output structure
+    #[serde(default)]
+    pub output_schema: Option<Value>,
     pub content: Option<String>, // Simple static content for now
     pub mock: Option<MockConfig>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ToolConfig {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
+    /// Optional JSON Schema defining the expected output structure
+    #[serde(default)]
+    pub output_schema: Option<Value>,
     pub static_response: Option<Value>, // Simple static response for now
     pub mock: Option<MockConfig>,
 }
@@ -156,22 +165,25 @@ pub enum StateOperation {
     Increment,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct PromptConfig {
     pub name: String,
     pub description: String,
     pub arguments: Option<Vec<PromptArgument>>,
+    /// JSON Schema for prompt input parameters (more detailed than arguments)
+    #[serde(default)]
+    pub input_schema: Option<Value>,
     pub messages: Option<Vec<PromptMessage>>, // Static messages for now
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct PromptArgument {
     pub name: String,
     pub description: Option<String>,
     pub required: bool,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct PromptMessage {
     pub role: String,
     pub content: String,
@@ -182,7 +194,7 @@ pub struct PromptMessage {
 // ============================================================================
 
 /// Configuration for a workflow that can be executed as a tool
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct WorkflowConfig {
     /// Unique name for the workflow (becomes the tool name)
     pub name: String,
@@ -191,6 +203,9 @@ pub struct WorkflowConfig {
     /// JSON schema for workflow inputs
     #[serde(default = "default_workflow_schema")]
     pub input_schema: Value,
+    /// JSON Schema for the expected workflow output structure
+    #[serde(default)]
+    pub output_schema: Option<Value>,
     /// Ordered list of steps to execute
     pub steps: Vec<WorkflowStep>,
     /// Default error handling strategy for the workflow
@@ -206,7 +221,7 @@ fn default_workflow_schema() -> Value {
 }
 
 /// A single step in a workflow
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct WorkflowStep {
     /// Unique identifier for this step (used for referencing results)
     pub id: String,
@@ -215,6 +230,9 @@ pub struct WorkflowStep {
     /// Arguments to pass to the tool (supports Tera templates)
     #[serde(default)]
     pub args: Option<Value>,
+    /// Step IDs that must complete before this step can execute (DAG dependencies)
+    #[serde(default)]
+    pub depends_on: Vec<String>,
     /// Rhai expression that must evaluate to true for step to execute
     #[serde(default)]
     pub condition: Option<String>,

@@ -18,6 +18,9 @@ pub struct Tool {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
+    /// Optional JSON Schema defining the expected output structure
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
