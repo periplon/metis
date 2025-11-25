@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.12.2 - 2025-11-25
+#### Bug Fixes
+- **(docker)** set default METIS_HOST=0.0.0.0 for container networking - (449e516) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.12.1 - 2025-11-25
 #### Bug Fixes
 - **(docker)** use rust:1.91-bookworm to match runtime glibc - (f788839) - Joan Marc Carbo Arnau
