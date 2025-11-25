@@ -1,5 +1,5 @@
-# UI build stage
-FROM rust:1.91 AS frontend-builder
+# UI build stage - use bookworm variant to match runtime glibc
+FROM rust:1.91-bookworm AS frontend-builder
 
 WORKDIR /app
 
@@ -16,8 +16,8 @@ COPY benches ./benches
 # Build UI from workspace root
 RUN cargo leptos build --release
 
-# Rust backend build stage
-FROM rust:1.91 AS builder
+# Rust backend build stage - use bookworm variant to match runtime glibc
+FROM rust:1.91-bookworm AS builder
 
 WORKDIR /app
 
