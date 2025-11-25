@@ -18,6 +18,7 @@ use rmcp::{
     service::RequestContext,
     ErrorData as McpError, RoleServer,
 };
+use tracing::debug;
 use std::sync::Arc;
 
 /// Metis MCP Server
@@ -66,6 +67,16 @@ impl ServerHandler for MetisServer {
                 "Metis MCP Mock Server - A configurable mock server for MCP protocol testing"
                     .to_string(),
             ),
+        }
+    }
+
+    fn ping(
+        &self,
+        _context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<(), McpError>> + Send + '_ {
+        async move {
+            debug!("Received ping request");
+            Ok(())
         }
     }
 
