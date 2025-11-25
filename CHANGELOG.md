@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.12.0 - 2025-11-25
+#### Features
+- **(api)** make /health endpoints non-authenticated - (049468e) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.11.1 - 2025-11-25
 #### Bug Fixes
 - **(ui)** improve schema editors with enum support and proper URL encoding - (fbbc766) - Joan Marc Carbo Arnau
