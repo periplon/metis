@@ -13,6 +13,16 @@ pub struct Resource {
     pub mime_type: Option<String>,
 }
 
+/// Resource template with URI pattern containing {placeholder} variables
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ResourceTemplate {
+    /// URI template pattern (e.g., "postgres://db/users/{id}")
+    pub uri_template: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub mime_type: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Tool {
     pub name: String,
@@ -67,6 +77,13 @@ pub struct ResourceReadResult {
 pub trait ResourcePort: Send + Sync {
     async fn get_resource(&self, uri: &str) -> anyhow::Result<ResourceReadResult>;
     async fn list_resources(&self) -> anyhow::Result<Vec<Resource>>;
+    async fn list_resource_templates(&self) -> anyhow::Result<Vec<ResourceTemplate>>;
+    /// Read a resource template by resolving the URI template with provided arguments
+    async fn read_resource_template(
+        &self,
+        uri_template: &str,
+        args: Option<&serde_json::Value>,
+    ) -> anyhow::Result<ResourceReadResult>;
 }
 
 #[async_trait]

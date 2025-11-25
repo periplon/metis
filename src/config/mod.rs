@@ -20,6 +20,8 @@ pub struct Settings {
     #[serde(default)]
     pub resources: Vec<ResourceConfig>,
     #[serde(default)]
+    pub resource_templates: Vec<ResourceTemplateConfig>,
+    #[serde(default)]
     pub tools: Vec<ToolConfig>,
     #[serde(default)]
     pub prompts: Vec<PromptConfig>,
@@ -50,13 +52,30 @@ pub struct ResourceConfig {
     pub name: String,
     pub description: Option<String>,
     pub mime_type: Option<String>,
-    /// JSON Schema for resource input parameters (e.g., query params, URI templates)
+    /// JSON Schema for the expected output structure
+    #[serde(default)]
+    pub output_schema: Option<Value>,
+    pub content: Option<String>, // Simple static content for now
+    pub mock: Option<MockConfig>,
+}
+
+/// Configuration for a resource template with URI pattern variables
+/// Resource templates use URI patterns with {placeholder} syntax
+/// e.g., "postgres://db/users/{id}" or "file:///home/{username}/{filename}"
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct ResourceTemplateConfig {
+    /// URI template pattern with {variable} placeholders
+    pub uri_template: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub mime_type: Option<String>,
+    /// JSON Schema for template input parameters (the {variables} in uri_template)
     #[serde(default)]
     pub input_schema: Option<Value>,
     /// JSON Schema for the expected output structure
     #[serde(default)]
     pub output_schema: Option<Value>,
-    pub content: Option<String>, // Simple static content for now
+    pub content: Option<String>,
     pub mock: Option<MockConfig>,
 }
 
@@ -369,6 +388,7 @@ impl Settings {
     fn load_external_configs(&mut self, root: &str) -> Result<(), anyhow::Error> {
         self.load_tools_from_dir(&format!("{}/config/tools", root))?;
         self.load_resources_from_dir(&format!("{}/config/resources", root))?;
+        self.load_resource_templates_from_dir(&format!("{}/config/resource_templates", root))?;
         self.load_prompts_from_dir(&format!("{}/config/prompts", root))?;
         self.load_workflows_from_dir(&format!("{}/config/workflows", root))?;
         Ok(())
@@ -411,6 +431,29 @@ impl Settings {
                                 serde_yaml::from_str(&content)?
                             };
                             self.resources.push(resource);
+                        }
+                    }
+                }
+                Err(e) => tracing::warn!("Failed to read glob entry: {}", e),
+            }
+        }
+        Ok(())
+    }
+
+    fn load_resource_templates_from_dir(&mut self, path: &str) -> Result<(), anyhow::Error> {
+        let pattern = format!("{}/*", path);
+        for entry in glob::glob(&pattern)? {
+            match entry {
+                Ok(path) => {
+                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                        if matches!(ext, "json" | "yaml" | "yml") {
+                            let content = std::fs::read_to_string(&path)?;
+                            let resource_template: ResourceTemplateConfig = if ext == "json" {
+                                serde_json::from_str(&content)?
+                            } else {
+                                serde_yaml::from_str(&content)?
+                            };
+                            self.resource_templates.push(resource_template);
                         }
                     }
                 }

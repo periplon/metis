@@ -1,10 +1,16 @@
+//! Resource Templates UI Component
+//!
+//! Resource templates are URI patterns with {placeholder} variables that define
+//! a family of dynamic resources. Unlike plain resources, templates have both
+//! input_schema (for URI variables) and output_schema.
+
 use leptos::prelude::*;
 use leptos::web_sys;
 use leptos_router::hooks::use_params_map;
 use wasm_bindgen::JsCast;
 use crate::api;
 use crate::types::{
-    Resource, MockConfig, MockStrategyType, StatefulConfig, StateOperation,
+    ResourceTemplate, MockConfig, MockStrategyType, StatefulConfig, StateOperation,
     FileConfig, ScriptLang, LLMConfig, LLMProvider, DatabaseConfig,
 };
 use crate::components::schema_editor::{
@@ -19,7 +25,7 @@ enum ViewMode {
 }
 
 #[component]
-pub fn Resources() -> impl IntoView {
+pub fn ResourceTemplates() -> impl IntoView {
     let (view_mode, set_view_mode) = signal(ViewMode::Table);
     let (refresh_trigger, set_refresh_trigger) = signal(0u32);
     let (delete_target, set_delete_target) = signal(Option::<String>::None);
@@ -31,16 +37,16 @@ pub fn Resources() -> impl IntoView {
     let (test_result, set_test_result) = signal(Option::<Result<crate::types::TestResult, String>>::None);
     let (testing, set_testing) = signal(false);
 
-    let resources = LocalResource::new(move || {
+    let templates = LocalResource::new(move || {
         let _ = refresh_trigger.get();
-        async move { api::list_resources().await.ok() }
+        async move { api::list_resource_templates().await.ok() }
     });
 
     let on_delete_confirm = move |_| {
-        if let Some(uri) = delete_target.get() {
+        if let Some(uri_template) = delete_target.get() {
             set_deleting.set(true);
             wasm_bindgen_futures::spawn_local(async move {
-                match api::delete_resource(&uri).await {
+                match api::delete_resource_template(&uri_template).await {
                     Ok(_) => {
                         set_delete_target.set(None);
                         set_refresh_trigger.update(|n| *n += 1);
@@ -56,14 +62,14 @@ pub fn Resources() -> impl IntoView {
     };
 
     let on_test_run = move |_| {
-        if let Some(uri) = test_target.get() {
+        if let Some(uri_template) = test_target.get() {
             set_testing.set(true);
             set_test_result.set(None);
             let input_json = test_input.get();
             wasm_bindgen_futures::spawn_local(async move {
                 let args: serde_json::Value = serde_json::from_str(&input_json)
                     .unwrap_or(serde_json::json!({}));
-                let result = api::test_resource(&uri, &args).await;
+                let result = api::test_resource_template(&uri_template, &args).await;
                 set_test_result.set(Some(result));
                 set_testing.set(false);
             });
@@ -80,7 +86,10 @@ pub fn Resources() -> impl IntoView {
         <div class="p-6">
             // Header with title, view toggle, and new button
             <div class="flex justify-between items-center mb-6">
-                <h2 class="text-2xl font-bold">"Resources"</h2>
+                <div>
+                    <h2 class="text-2xl font-bold">"Resource Templates"</h2>
+                    <p class="text-sm text-gray-500 mt-1">"URI patterns with {placeholder} variables for dynamic resources"</p>
+                </div>
                 <div class="flex items-center gap-4">
                     // View mode toggle
                     <div class="flex bg-gray-100 rounded-lg p-1">
@@ -113,23 +122,23 @@ pub fn Resources() -> impl IntoView {
                             </span>
                         </button>
                     </div>
-                    <a href="/resources/new" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded flex items-center gap-2">
+                    <a href="/resource-templates/new" class="bg-purple-500 hover:bg-purple-600 text-white px-4 py-2 rounded flex items-center gap-2">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
                         </svg>
-                        "New Resource"
+                        "New Template"
                     </a>
                 </div>
             </div>
 
             // Delete confirmation modal
-            {move || delete_target.get().map(|uri| view! {
+            {move || delete_target.get().map(|uri_template| view! {
                 <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
                     <div class="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
-                        <h3 class="text-lg font-semibold text-gray-900 mb-2">"Delete Resource?"</h3>
+                        <h3 class="text-lg font-semibold text-gray-900 mb-2">"Delete Resource Template?"</h3>
                         <p class="text-gray-600 mb-4">
                             "Are you sure you want to delete "
-                            <span class="font-mono text-sm bg-gray-100 px-1 rounded">{uri.clone()}</span>
+                            <span class="font-mono text-sm bg-gray-100 px-1 rounded">{uri_template.clone()}</span>
                             "? This action cannot be undone."
                         </p>
                         <div class="flex justify-end gap-3">
@@ -153,13 +162,13 @@ pub fn Resources() -> impl IntoView {
             })}
 
             // Test modal
-            {move || test_target.get().map(|uri| view! {
+            {move || test_target.get().map(|uri_template| view! {
                 <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
                     <div class="bg-white rounded-lg shadow-xl p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
                         <div class="flex justify-between items-center mb-4">
                             <h3 class="text-lg font-semibold text-gray-900">
-                                "Test Resource: "
-                                <span class="font-mono text-blue-600">{uri.clone()}</span>
+                                "Test Resource Template: "
+                                <span class="font-mono text-purple-600">{uri_template.clone()}</span>
                             </h3>
                             <button
                                 class="text-gray-400 hover:text-gray-600"
@@ -172,14 +181,14 @@ pub fn Resources() -> impl IntoView {
                         </div>
 
                         <div class="mb-4">
-                            <div class="text-sm text-gray-500 italic p-3 bg-gray-50 rounded-md mb-3">
-                                "Resources typically don't require input parameters. Use the JSON field below if your resource mock requires custom arguments."
+                            <div class="text-sm text-gray-600 p-3 bg-purple-50 border border-purple-200 rounded-md mb-3">
+                                "Provide values for the URI template variables (e.g., " <code class="bg-purple-100 px-1 rounded">"{\"id\": 123}"</code> " for a template like " <code class="bg-purple-100 px-1 rounded">"postgres://db/users/{id}"</code> ")."
                             </div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">"Optional Arguments (JSON)"</label>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">"Template Variables (JSON)"</label>
                             <textarea
-                                rows=3
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
-                                placeholder=r#"{}"#
+                                rows=4
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono text-sm"
+                                placeholder=r#"{"id": 123}"#
                                 prop:value=move || test_input.get()
                                 on:input=move |ev| {
                                     let target = ev.target().unwrap();
@@ -191,7 +200,7 @@ pub fn Resources() -> impl IntoView {
 
                         <div class="flex gap-3 mb-4">
                             <button
-                                class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50 flex items-center gap-2"
+                                class="px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600 disabled:opacity-50 flex items-center gap-2"
                                 on:click=on_test_run
                                 disabled=move || testing.get()
                             >
@@ -241,7 +250,7 @@ pub fn Resources() -> impl IntoView {
                                                 {err}
                                             </div>
                                         })}
-                                        <pre class="bg-gray-900 text-blue-400 p-4 rounded-lg overflow-x-auto text-sm font-mono">
+                                        <pre class="bg-gray-900 text-purple-400 p-4 rounded-lg overflow-x-auto text-sm font-mono">
                                             {serde_json::to_string_pretty(&res.output).unwrap_or_else(|_| res.output.to_string())}
                                         </pre>
                                     </div>
@@ -262,13 +271,13 @@ pub fn Resources() -> impl IntoView {
 
             <Suspense fallback=move || view! { <LoadingState /> }>
                 {move || {
-                    resources.get().map(|data| {
+                    templates.get().map(|data| {
                         match data {
                             Some(list) if !list.is_empty() => {
                                 if view_mode.get() == ViewMode::Table {
-                                    view! { <ResourceTable resources=list set_delete_target=set_delete_target set_test_target=set_test_target /> }.into_any()
+                                    view! { <ResourceTemplateTable templates=list set_delete_target=set_delete_target set_test_target=set_test_target /> }.into_any()
                                 } else {
-                                    view! { <ResourceCards resources=list set_delete_target=set_delete_target set_test_target=set_test_target /> }.into_any()
+                                    view! { <ResourceTemplateCards templates=list set_delete_target=set_delete_target set_test_target=set_test_target /> }.into_any()
                                 }
                             },
                             Some(_) => view! { <EmptyState /> }.into_any(),
@@ -285,8 +294,8 @@ pub fn Resources() -> impl IntoView {
 fn LoadingState() -> impl IntoView {
     view! {
         <div class="flex items-center justify-center py-12">
-            <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-            <span class="ml-3 text-gray-500">"Loading resources..."</span>
+            <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500"></div>
+            <span class="ml-3 text-gray-500">"Loading resource templates..."</span>
         </div>
     }
 }
@@ -296,16 +305,16 @@ fn EmptyState() -> impl IntoView {
     view! {
         <div class="text-center py-12 bg-white rounded-lg shadow">
             <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4"/>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"/>
             </svg>
-            <h3 class="mt-2 text-sm font-medium text-gray-900">"No resources"</h3>
-            <p class="mt-1 text-sm text-gray-500">"Get started by creating a new resource."</p>
+            <h3 class="mt-2 text-sm font-medium text-gray-900">"No resource templates"</h3>
+            <p class="mt-1 text-sm text-gray-500">"Create a resource template with URI pattern variables."</p>
             <div class="mt-6">
-                <a href="/resources/new" class="inline-flex items-center px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">
+                <a href="/resource-templates/new" class="inline-flex items-center px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600">
                     <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
                     </svg>
-                    "New Resource"
+                    "New Template"
                 </a>
             </div>
         </div>
@@ -319,15 +328,15 @@ fn ErrorState() -> impl IntoView {
             <svg class="mx-auto h-12 w-12 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
             </svg>
-            <h3 class="mt-2 text-sm font-medium text-red-800">"Failed to load resources"</h3>
+            <h3 class="mt-2 text-sm font-medium text-red-800">"Failed to load resource templates"</h3>
             <p class="mt-1 text-sm text-red-600">"Please check your connection and try again."</p>
         </div>
     }
 }
 
 #[component]
-fn ResourceTable(
-    resources: Vec<Resource>,
+fn ResourceTemplateTable(
+    templates: Vec<ResourceTemplate>,
     set_delete_target: WriteSignal<Option<String>>,
     set_test_target: WriteSignal<Option<String>>,
 ) -> impl IntoView {
@@ -337,49 +346,49 @@ fn ResourceTable(
                 <thead class="bg-gray-50">
                     <tr>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Name"</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"URI"</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"URI Template"</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Type"</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Strategy"</th>
                         <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">"Actions"</th>
                     </tr>
                 </thead>
                 <tbody class="bg-white divide-y divide-gray-200">
-                    {resources.into_iter().map(|resource| {
-                        let uri_for_edit = resource.uri.clone();
-                        let uri_for_delete = resource.uri.clone();
-                        let uri_for_test = resource.uri.clone();
-                        let strategy = resource.mock.as_ref()
+                    {templates.into_iter().map(|template| {
+                        let uri_for_edit = template.uri_template.clone();
+                        let uri_for_delete = template.uri_template.clone();
+                        let uri_for_test = template.uri_template.clone();
+                        let strategy = template.mock.as_ref()
                             .map(|m| format!("{:?}", m.strategy))
-                            .unwrap_or_else(|| if resource.content.is_some() { "Static".to_string() } else { "-".to_string() });
-                        let mime = resource.mime_type.clone().unwrap_or_else(|| "-".to_string());
+                            .unwrap_or_else(|| if template.content.is_some() { "Static".to_string() } else { "-".to_string() });
+                        let mime = template.mime_type.clone().unwrap_or_else(|| "-".to_string());
 
                         view! {
                             <tr class="hover:bg-gray-50">
                                 <td class="px-6 py-4 whitespace-nowrap">
-                                    <div class="font-medium text-gray-900">{resource.name.clone()}</div>
-                                    <div class="text-sm text-gray-500">{resource.description.clone().unwrap_or_default()}</div>
+                                    <div class="font-medium text-gray-900">{template.name.clone()}</div>
+                                    <div class="text-sm text-gray-500">{template.description.clone().unwrap_or_default()}</div>
                                 </td>
-                                <td class="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-600">
-                                    {resource.uri.clone()}
+                                <td class="px-6 py-4 whitespace-nowrap text-sm font-mono text-purple-600">
+                                    {template.uri_template.clone()}
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                     {mime}
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap">
-                                    <span class="px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
+                                    <span class="px-2 py-1 text-xs font-semibold rounded-full bg-purple-100 text-purple-800">
                                         {strategy}
                                     </span>
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                     <button
-                                        class="text-blue-600 hover:text-blue-900 mr-3"
+                                        class="text-purple-600 hover:text-purple-900 mr-3"
                                         on:click=move |_| set_test_target.set(Some(uri_for_test.clone()))
                                     >
                                         "Test"
                                     </button>
                                     <a
-                                        href=format!("/resources/edit/{}", urlencoding::encode(&uri_for_edit))
-                                        class="text-blue-600 hover:text-blue-900 mr-3"
+                                        href=format!("/resource-templates/edit/{}", urlencoding::encode(&uri_for_edit))
+                                        class="text-purple-600 hover:text-purple-900 mr-3"
                                     >
                                         "Edit"
                                     </a>
@@ -400,53 +409,53 @@ fn ResourceTable(
 }
 
 #[component]
-fn ResourceCards(
-    resources: Vec<Resource>,
+fn ResourceTemplateCards(
+    templates: Vec<ResourceTemplate>,
     set_delete_target: WriteSignal<Option<String>>,
     set_test_target: WriteSignal<Option<String>>,
 ) -> impl IntoView {
     view! {
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {resources.into_iter().map(|resource| {
-                let uri_for_edit = resource.uri.clone();
-                let uri_for_delete = resource.uri.clone();
-                let uri_for_test = resource.uri.clone();
-                let strategy = resource.mock.as_ref()
+            {templates.into_iter().map(|template| {
+                let uri_for_edit = template.uri_template.clone();
+                let uri_for_delete = template.uri_template.clone();
+                let uri_for_test = template.uri_template.clone();
+                let strategy = template.mock.as_ref()
                     .map(|m| format!("{:?}", m.strategy))
-                    .unwrap_or_else(|| if resource.content.is_some() { "Static".to_string() } else { "-".to_string() });
-                let mime = resource.mime_type.clone().unwrap_or_else(|| "-".to_string());
+                    .unwrap_or_else(|| if template.content.is_some() { "Static".to_string() } else { "-".to_string() });
+                let mime = template.mime_type.clone().unwrap_or_else(|| "-".to_string());
 
                 view! {
-                    <div class="bg-white rounded-lg shadow hover:shadow-md transition-shadow p-4">
+                    <div class="bg-white rounded-lg shadow hover:shadow-md transition-shadow p-4 border-l-4 border-purple-500">
                         <div class="flex justify-between items-start mb-3">
                             <div class="flex-1 min-w-0">
-                                <h3 class="font-semibold text-gray-900 truncate">{resource.name.clone()}</h3>
-                                <p class="text-sm text-gray-500 truncate">{resource.description.clone().unwrap_or_default()}</p>
+                                <h3 class="font-semibold text-gray-900 truncate">{template.name.clone()}</h3>
+                                <p class="text-sm text-gray-500 truncate">{template.description.clone().unwrap_or_default()}</p>
                             </div>
-                            <span class="ml-2 px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800 flex-shrink-0">
+                            <span class="ml-2 px-2 py-1 text-xs font-semibold rounded-full bg-purple-100 text-purple-800 flex-shrink-0">
                                 {strategy}
                             </span>
                         </div>
                         <div class="space-y-2 mb-4">
                             <div class="flex items-center text-sm">
-                                <span class="text-gray-500 w-16">"URI:"</span>
-                                <span class="font-mono text-gray-700 truncate">{resource.uri.clone()}</span>
+                                <span class="text-gray-500 w-20">"Template:"</span>
+                                <span class="font-mono text-purple-600 truncate">{template.uri_template.clone()}</span>
                             </div>
                             <div class="flex items-center text-sm">
-                                <span class="text-gray-500 w-16">"Type:"</span>
+                                <span class="text-gray-500 w-20">"Type:"</span>
                                 <span class="text-gray-700">{mime}</span>
                             </div>
                         </div>
                         <div class="flex justify-end gap-2 pt-3 border-t border-gray-100">
                             <button
-                                class="px-3 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded"
+                                class="px-3 py-1 text-sm text-purple-600 hover:bg-purple-50 rounded"
                                 on:click=move |_| set_test_target.set(Some(uri_for_test.clone()))
                             >
                                 "Test"
                             </button>
                             <a
-                                href=format!("/resources/edit/{}", urlencoding::encode(&uri_for_edit))
-                                class="px-3 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded"
+                                href=format!("/resource-templates/edit/{}", urlencoding::encode(&uri_for_edit))
+                                class="px-3 py-1 text-sm text-purple-600 hover:bg-purple-50 rounded"
                             >
                                 "Edit"
                             </a>
@@ -496,16 +505,17 @@ mod urlencoding {
 }
 
 #[component]
-pub fn ResourceForm() -> impl IntoView {
+pub fn ResourceTemplateForm() -> impl IntoView {
     let (name, set_name) = signal(String::new());
-    let (uri, set_uri) = signal(String::new());
+    let (uri_template, set_uri_template) = signal(String::new());
     let (description, set_description) = signal(String::new());
     let (mime_type, set_mime_type) = signal(String::new());
     let (content, set_content) = signal(String::new());
     let (error, set_error) = signal(Option::<String>::None);
     let (saving, set_saving) = signal(false);
 
-    // Schema signals (resources only have output schema, not input)
+    // Schema signals (templates have both input and output schemas)
+    let (input_schema_properties, set_input_schema_properties) = signal(Vec::<SchemaProperty>::new());
     let (output_schema_properties, set_output_schema_properties) = signal(Vec::<SchemaProperty>::new());
 
     // Mock strategy signals
@@ -620,7 +630,14 @@ pub fn ResourceForm() -> impl IntoView {
         set_saving.set(true);
         set_error.set(None);
 
-        // Build output schema from properties (resources don't have input schema)
+        // Build schemas from properties
+        let input_props = input_schema_properties.get();
+        let input_schema = if input_props.is_empty() {
+            None
+        } else {
+            Some(properties_to_schema(&input_props))
+        };
+
         let output_props = output_schema_properties.get();
         let output_schema = if output_props.is_empty() {
             None
@@ -628,21 +645,22 @@ pub fn ResourceForm() -> impl IntoView {
             Some(properties_to_schema(&output_props))
         };
 
-        let resource = Resource {
+        let template = ResourceTemplate {
             name: name.get(),
-            uri: uri.get(),
+            uri_template: uri_template.get(),
             description: if description.get().is_empty() { None } else { Some(description.get()) },
             mime_type: if mime_type.get().is_empty() { None } else { Some(mime_type.get()) },
+            input_schema,
             output_schema,
             content: if content.get().is_empty() { None } else { Some(content.get()) },
             mock: build_mock_config(),
         };
 
         wasm_bindgen_futures::spawn_local(async move {
-            match api::create_resource(&resource).await {
+            match api::create_resource_template(&template).await {
                 Ok(_) => {
                     if let Some(window) = web_sys::window() {
-                        let _ = window.location().set_href("/resources");
+                        let _ = window.location().set_href("/resource-templates");
                     }
                 }
                 Err(e) => {
@@ -656,15 +674,15 @@ pub fn ResourceForm() -> impl IntoView {
     view! {
         <div class="p-6">
             <div class="mb-6">
-                <a href="/resources" class="text-blue-500 hover:underline flex items-center gap-1">
+                <a href="/resource-templates" class="text-purple-500 hover:underline flex items-center gap-1">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
                     </svg>
-                    "Back to Resources"
+                    "Back to Resource Templates"
                 </a>
             </div>
 
-            <h2 class="text-2xl font-bold mb-6">"New Resource"</h2>
+            <h2 class="text-2xl font-bold mb-6">"New Resource Template"</h2>
 
             <form on:submit=on_submit class="bg-white rounded-lg shadow p-6 max-w-3xl">
                 {move || error.get().map(|e| view! {
@@ -673,12 +691,14 @@ pub fn ResourceForm() -> impl IntoView {
                     </div>
                 })}
 
-                <ResourceFormFields
+                <ResourceTemplateFormFields
                     name=name set_name=set_name
-                    uri=uri set_uri=set_uri
+                    uri_template=uri_template set_uri_template=set_uri_template
                     description=description set_description=set_description
                     mime_type=mime_type set_mime_type=set_mime_type
                     content=content set_content=set_content
+                    input_schema_properties=input_schema_properties
+                    set_input_schema_properties=set_input_schema_properties
                     output_schema_properties=output_schema_properties
                     set_output_schema_properties=set_output_schema_properties
                     mock_strategy=mock_strategy set_mock_strategy=set_mock_strategy
@@ -703,12 +723,12 @@ pub fn ResourceForm() -> impl IntoView {
                     <button
                         type="submit"
                         disabled=move || saving.get()
-                        class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                        class="px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                        {move || if saving.get() { "Creating..." } else { "Create Resource" }}
+                        {move || if saving.get() { "Creating..." } else { "Create Template" }}
                     </button>
                     <a
-                        href="/resources"
+                        href="/resource-templates"
                         class="px-4 py-2 border border-gray-300 text-gray-700 rounded hover:bg-gray-50"
                     >
                         "Cancel"
@@ -721,17 +741,19 @@ pub fn ResourceForm() -> impl IntoView {
 
 #[allow(clippy::too_many_arguments)]
 #[component]
-fn ResourceFormFields(
+fn ResourceTemplateFormFields(
     name: ReadSignal<String>,
     set_name: WriteSignal<String>,
-    uri: ReadSignal<String>,
-    set_uri: WriteSignal<String>,
+    uri_template: ReadSignal<String>,
+    set_uri_template: WriteSignal<String>,
     description: ReadSignal<String>,
     set_description: WriteSignal<String>,
     mime_type: ReadSignal<String>,
     set_mime_type: WriteSignal<String>,
     content: ReadSignal<String>,
     set_content: WriteSignal<String>,
+    input_schema_properties: ReadSignal<Vec<SchemaProperty>>,
+    set_input_schema_properties: WriteSignal<Vec<SchemaProperty>>,
     output_schema_properties: ReadSignal<Vec<SchemaProperty>>,
     set_output_schema_properties: WriteSignal<Vec<SchemaProperty>>,
     mock_strategy: ReadSignal<String>,
@@ -778,8 +800,8 @@ fn ResourceFormFields(
                         <input
                             type="text"
                             required=true
-                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            placeholder="my-resource"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
+                            placeholder="user-lookup"
                             prop:value=move || name.get()
                             on:input=move |ev| {
                                 let target = ev.target().unwrap();
@@ -789,26 +811,27 @@ fn ResourceFormFields(
                         />
                     </div>
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">"URI *"</label>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">"URI Template *"</label>
                         <input
                             type="text"
                             required=true
-                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            placeholder="file:///path/to/resource"
-                            prop:value=move || uri.get()
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono"
+                            placeholder="postgres://db/users/{id}"
+                            prop:value=move || uri_template.get()
                             on:input=move |ev| {
                                 let target = ev.target().unwrap();
                                 let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
-                                set_uri.set(input.value());
+                                set_uri_template.set(input.value());
                             }
                         />
+                        <p class="mt-1 text-xs text-gray-500">"Use {placeholder} for variables, e.g., postgres://db/users/{id}"</p>
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">"Description"</label>
                         <input
                             type="text"
-                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            placeholder="Optional description"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
+                            placeholder="Fetch user by ID"
                             prop:value=move || description.get()
                             on:input=move |ev| {
                                 let target = ev.target().unwrap();
@@ -821,8 +844,8 @@ fn ResourceFormFields(
                         <label class="block text-sm font-medium text-gray-700 mb-1">"MIME Type"</label>
                         <input
                             type="text"
-                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            placeholder="text/plain"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
+                            placeholder="application/json"
                             prop:value=move || mime_type.get()
                             on:input=move |ev| {
                                 let target = ev.target().unwrap();
@@ -834,18 +857,30 @@ fn ResourceFormFields(
                 </div>
             </div>
 
-            // Schema Section (resources only have output schema)
+            // Schema Section (templates have both input and output schemas)
             <div class="border-b pb-4">
-                <h3 class="text-lg font-semibold text-gray-800 mb-4">"Output Schema"</h3>
-                <p class="text-sm text-gray-500 mb-4">"Define the expected structure of the resource output. For parameterized resources with input variables, use Resource Templates instead."</p>
-                <div>
-                    <JsonSchemaEditor
-                        properties=output_schema_properties
-                        set_properties=set_output_schema_properties
-                        label="Output Schema"
-                        color="green"
-                    />
-                    <SchemaPreview properties=output_schema_properties />
+                <h3 class="text-lg font-semibold text-gray-800 mb-4">"Input Variables & Output Schema"</h3>
+                <div class="space-y-4">
+                    <div class="bg-purple-50 border border-purple-200 rounded-lg p-4">
+                        <h4 class="font-medium text-purple-800 mb-2">"Input Variables (URI Template Parameters)"</h4>
+                        <p class="text-sm text-purple-600 mb-4">"Define the schema for the {placeholder} variables in your URI template."</p>
+                        <JsonSchemaEditor
+                            properties=input_schema_properties
+                            set_properties=set_input_schema_properties
+                            label="Input Parameters"
+                            color="purple"
+                        />
+                        <SchemaPreview properties=input_schema_properties />
+                    </div>
+                    <div>
+                        <JsonSchemaEditor
+                            properties=output_schema_properties
+                            set_properties=set_output_schema_properties
+                            label="Output Schema"
+                            color="green"
+                        />
+                        <SchemaPreview properties=output_schema_properties />
+                    </div>
                 </div>
             </div>
 
@@ -856,7 +891,7 @@ fn ResourceFormFields(
                 <div class="mb-4">
                     <label class="block text-sm font-medium text-gray-700 mb-1">"Strategy Type"</label>
                     <select
-                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
                         prop:value=move || mock_strategy.get()
                         on:change=move |ev| {
                             let target = ev.target().unwrap();
@@ -875,7 +910,7 @@ fn ResourceFormFields(
                         <option value="llm">"LLM (AI Generated)"</option>
                         <option value="database">"Database Query"</option>
                     </select>
-                    <p class="mt-1 text-xs text-gray-500">"Choose how the resource content should be generated"</p>
+                    <p class="mt-1 text-xs text-gray-500">"Choose how the template content should be generated. Use Template strategy to access input variables via {{variable_name}}."</p>
                 </div>
 
                 // Strategy-specific fields
@@ -903,6 +938,8 @@ fn ResourceFormFields(
     }
 }
 
+// Reuse the MockStrategyFields component from resources.rs
+// For brevity, we'll use a simplified version here
 #[allow(clippy::too_many_arguments)]
 #[component]
 fn MockStrategyFields(
@@ -949,8 +986,8 @@ fn MockStrategyFields(
                         <label class="block text-sm font-medium text-gray-700 mb-1">"Static Content"</label>
                         <textarea
                             rows=6
-                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
-                            placeholder="Static content for this resource"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono text-sm"
+                            placeholder="Static content (use {variable} syntax for URI template variable substitution)"
                             prop:value=move || content.get()
                             on:input=move |ev| {
                                 let target = ev.target().unwrap();
@@ -965,8 +1002,8 @@ fn MockStrategyFields(
                         <label class="block text-sm font-medium text-gray-700 mb-1">"Handlebars Template *"</label>
                         <textarea
                             rows=6
-                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
-                            placeholder="Hello {{name}}! Today is {{now '%Y-%m-%d'}}"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono text-sm"
+                            placeholder=r#"{"id": {{id}}, "name": "User {{id}}", "email": "user{{id}}@example.com"}"#
                             prop:value=move || template.get()
                             on:input=move |ev| {
                                 let target = ev.target().unwrap();
@@ -974,14 +1011,14 @@ fn MockStrategyFields(
                                 set_template.set(textarea.value());
                             }
                         />
-                        <p class="mt-1 text-xs text-gray-500">"Use Handlebars syntax with helpers: now, uuid, random_int, random_float, random_bool, random_string, json_encode"</p>
+                        <p class="mt-1 text-xs text-gray-500">"Access input variables via {{variable_name}}. Helpers: now, uuid, random_int, random_float, random_bool, random_string, json_encode"</p>
                     </div>
                 }.into_any(),
                 "random" => view! {
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">"Faker Type"</label>
                         <select
-                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
                             prop:value=move || faker_type.get()
                             on:change=move |ev| {
                                 let target = ev.target().unwrap();
@@ -1007,8 +1044,8 @@ fn MockStrategyFields(
                             <label class="block text-sm font-medium text-gray-700 mb-1">"State Key *"</label>
                             <input
                                 type="text"
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                placeholder="my-counter"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                placeholder="user-{id}-counter"
                                 prop:value=move || state_key.get()
                                 on:input=move |ev| {
                                     let target = ev.target().unwrap();
@@ -1020,7 +1057,7 @@ fn MockStrategyFields(
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">"Operation"</label>
                             <select
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
                                 prop:value=move || state_operation.get()
                                 on:change=move |ev| {
                                     let target = ev.target().unwrap();
@@ -1037,8 +1074,8 @@ fn MockStrategyFields(
                             <label class="block text-sm font-medium text-gray-700 mb-1">"Response Template (optional)"</label>
                             <textarea
                                 rows=3
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
-                                placeholder=r#"{"counter": {{state}}}"#
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono text-sm"
+                                placeholder=r#"{"counter": {{state}}, "user_id": {{id}}}"#
                                 prop:value=move || template.get()
                                 on:input=move |ev| {
                                     let target = ev.target().unwrap();
@@ -1054,7 +1091,7 @@ fn MockStrategyFields(
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">"Script Language"</label>
                             <select
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
                                 prop:value=move || script_lang.get()
                                 on:change=move |ev| {
                                     let target = ev.target().unwrap();
@@ -1072,8 +1109,8 @@ fn MockStrategyFields(
                             <label class="block text-sm font-medium text-gray-700 mb-1">"Script *"</label>
                             <textarea
                                 rows=8
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
-                                placeholder="// Your script here"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono text-sm"
+                                placeholder="// Access input variables via args.variable_name"
                                 prop:value=move || script.get()
                                 on:input=move |ev| {
                                     let target = ev.target().unwrap();
@@ -1090,7 +1127,7 @@ fn MockStrategyFields(
                             <label class="block text-sm font-medium text-gray-700 mb-1">"File Path *"</label>
                             <input
                                 type="text"
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
                                 placeholder="/path/to/responses.json"
                                 prop:value=move || file_path.get()
                                 on:input=move |ev| {
@@ -1103,7 +1140,7 @@ fn MockStrategyFields(
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">"Selection Mode"</label>
                             <select
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
                                 prop:value=move || file_selection.get()
                                 on:change=move |ev| {
                                     let target = ev.target().unwrap();
@@ -1124,7 +1161,7 @@ fn MockStrategyFields(
                         <label class="block text-sm font-medium text-gray-700 mb-1">"Pattern *"</label>
                         <input
                             type="text"
-                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono"
                             placeholder="[A-Z]{3}-[0-9]{4}"
                             prop:value=move || pattern.get()
                             on:input=move |ev| {
@@ -1141,7 +1178,7 @@ fn MockStrategyFields(
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-1">"Provider"</label>
                                 <select
-                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
                                     prop:value=move || llm_provider.get()
                                     on:change=move |ev| {
                                         let target = ev.target().unwrap();
@@ -1157,7 +1194,7 @@ fn MockStrategyFields(
                                 <label class="block text-sm font-medium text-gray-700 mb-1">"Model *"</label>
                                 <input
                                     type="text"
-                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
                                     placeholder="gpt-4"
                                     prop:value=move || llm_model.get()
                                     on:input=move |ev| {
@@ -1172,7 +1209,7 @@ fn MockStrategyFields(
                             <label class="block text-sm font-medium text-gray-700 mb-1">"API Key Env Var"</label>
                             <input
                                 type="text"
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
                                 placeholder="OPENAI_API_KEY"
                                 prop:value=move || llm_api_key_env.get()
                                 on:input=move |ev| {
@@ -1186,7 +1223,7 @@ fn MockStrategyFields(
                             <label class="block text-sm font-medium text-gray-700 mb-1">"System Prompt"</label>
                             <textarea
                                 rows=4
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
                                 placeholder="You are a helpful assistant..."
                                 prop:value=move || llm_system_prompt.get()
                                 on:input=move |ev| {
@@ -1204,7 +1241,7 @@ fn MockStrategyFields(
                             <label class="block text-sm font-medium text-gray-700 mb-1">"Database URL *"</label>
                             <input
                                 type="text"
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono"
                                 placeholder="postgres://user:pass@host/db"
                                 prop:value=move || db_url.get()
                                 on:input=move |ev| {
@@ -1218,7 +1255,7 @@ fn MockStrategyFields(
                             <label class="block text-sm font-medium text-gray-700 mb-1">"SQL Query *"</label>
                             <textarea
                                 rows=4
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono text-sm"
                                 placeholder="SELECT * FROM users WHERE id = $1"
                                 prop:value=move || db_query.get()
                                 on:input=move |ev| {
@@ -1237,23 +1274,24 @@ fn MockStrategyFields(
 }
 
 #[component]
-pub fn ResourceEditForm() -> impl IntoView {
+pub fn ResourceTemplateEditForm() -> impl IntoView {
     let params = use_params_map();
-    let uri = move || {
-        params.read().get("uri").unwrap_or_default()
+    let uri_template_param = move || {
+        params.read().get("uri_template").unwrap_or_default()
     };
 
     let (name, set_name) = signal(String::new());
-    let (resource_uri, set_resource_uri) = signal(String::new());
+    let (uri_template, set_uri_template) = signal(String::new());
     let (description, set_description) = signal(String::new());
     let (mime_type, set_mime_type) = signal(String::new());
     let (content, set_content) = signal(String::new());
     let (error, set_error) = signal(Option::<String>::None);
     let (saving, set_saving) = signal(false);
     let (loading, set_loading) = signal(true);
-    let (original_uri, set_original_uri) = signal(String::new());
+    let (original_uri_template, set_original_uri_template) = signal(String::new());
 
-    // Schema signals (resources only have output schema)
+    // Schema signals
+    let (input_schema_properties, set_input_schema_properties) = signal(Vec::<SchemaProperty>::new());
     let (output_schema_properties, set_output_schema_properties) = signal(Vec::<SchemaProperty>::new());
 
     // Mock strategy signals
@@ -1274,33 +1312,34 @@ pub fn ResourceEditForm() -> impl IntoView {
     let (mock_db_url, set_mock_db_url) = signal(String::new());
     let (mock_db_query, set_mock_db_query) = signal(String::new());
 
-    // Load existing resource
+    // Load existing template
     Effect::new(move |_| {
-        let uri_param = uri();
-        // Skip if uri is empty (params not ready yet)
-        if uri_param.is_empty() {
+        let param = uri_template_param();
+        if param.is_empty() {
             return;
         }
-        // Decode the URL-encoded URI from the route parameter
-        let decoded_uri = urlencoding::decode(&uri_param);
+        let decoded = urlencoding::decode(&param);
         set_loading.set(true);
         wasm_bindgen_futures::spawn_local(async move {
-            match api::get_resource(&decoded_uri).await {
-                Ok(resource) => {
-                    set_original_uri.set(resource.uri.clone());
-                    set_name.set(resource.name.clone());
-                    set_resource_uri.set(resource.uri.clone());
-                    set_description.set(resource.description.clone().unwrap_or_default());
-                    set_mime_type.set(resource.mime_type.clone().unwrap_or_default());
-                    set_content.set(resource.content.clone().unwrap_or_default());
+            match api::get_resource_template(&decoded).await {
+                Ok(template) => {
+                    set_original_uri_template.set(template.uri_template.clone());
+                    set_name.set(template.name.clone());
+                    set_uri_template.set(template.uri_template.clone());
+                    set_description.set(template.description.clone().unwrap_or_default());
+                    set_mime_type.set(template.mime_type.clone().unwrap_or_default());
+                    set_content.set(template.content.clone().unwrap_or_default());
 
-                    // Load output schema if present (resources don't have input schema)
-                    if let Some(output_schema) = &resource.output_schema {
+                    // Load schemas
+                    if let Some(input_schema) = &template.input_schema {
+                        set_input_schema_properties.set(schema_to_properties(input_schema));
+                    }
+                    if let Some(output_schema) = &template.output_schema {
                         set_output_schema_properties.set(schema_to_properties(output_schema));
                     }
 
                     // Load mock config
-                    if let Some(mock) = &resource.mock {
+                    if let Some(mock) = &template.mock {
                         let strategy = match mock.strategy {
                             MockStrategyType::Static => "static",
                             MockStrategyType::Template => "template",
@@ -1314,42 +1353,42 @@ pub fn ResourceEditForm() -> impl IntoView {
                         };
                         set_mock_strategy.set(strategy.to_string());
 
-                        if let Some(template) = &mock.template {
-                            set_mock_template.set(template.clone());
+                        if let Some(t) = &mock.template {
+                            set_mock_template.set(t.clone());
                         }
-                        if let Some(faker_type) = &mock.faker_type {
-                            set_mock_faker_type.set(faker_type.clone());
+                        if let Some(ft) = &mock.faker_type {
+                            set_mock_faker_type.set(ft.clone());
                         }
-                        if let Some(stateful) = &mock.stateful {
-                            set_mock_state_key.set(stateful.state_key.clone());
-                            let op = match stateful.operation {
+                        if let Some(s) = &mock.stateful {
+                            set_mock_state_key.set(s.state_key.clone());
+                            let op = match s.operation {
                                 StateOperation::Get => "get",
                                 StateOperation::Set => "set",
                                 StateOperation::Increment => "increment",
                             };
                             set_mock_state_operation.set(op.to_string());
-                            if let Some(template) = &stateful.template {
-                                set_mock_template.set(template.clone());
+                            if let Some(t) = &s.template {
+                                set_mock_template.set(t.clone());
                             }
                         }
-                        if let Some(script) = &mock.script {
-                            set_mock_script.set(script.clone());
+                        if let Some(s) = &mock.script {
+                            set_mock_script.set(s.clone());
                         }
-                        if let Some(lang) = &mock.script_lang {
-                            let l = match lang {
+                        if let Some(l) = &mock.script_lang {
+                            let lang = match l {
                                 ScriptLang::Rhai => "rhai",
                                 ScriptLang::Lua => "lua",
                                 ScriptLang::Js => "js",
                                 ScriptLang::Python => "python",
                             };
-                            set_mock_script_lang.set(l.to_string());
+                            set_mock_script_lang.set(lang.to_string());
                         }
-                        if let Some(file) = &mock.file {
-                            set_mock_file_path.set(file.path.clone());
-                            set_mock_file_selection.set(file.selection.clone());
+                        if let Some(f) = &mock.file {
+                            set_mock_file_path.set(f.path.clone());
+                            set_mock_file_selection.set(f.selection.clone());
                         }
-                        if let Some(pattern) = &mock.pattern {
-                            set_mock_pattern.set(pattern.clone());
+                        if let Some(p) = &mock.pattern {
+                            set_mock_pattern.set(p.clone());
                         }
                         if let Some(llm) = &mock.llm {
                             let provider = match llm.provider {
@@ -1361,8 +1400,8 @@ pub fn ResourceEditForm() -> impl IntoView {
                             if let Some(env) = &llm.api_key_env {
                                 set_mock_llm_api_key_env.set(env.clone());
                             }
-                            if let Some(prompt) = &llm.system_prompt {
-                                set_mock_llm_system_prompt.set(prompt.clone());
+                            if let Some(p) = &llm.system_prompt {
+                                set_mock_llm_system_prompt.set(p.clone());
                             }
                         }
                         if let Some(db) = &mock.database {
@@ -1372,7 +1411,7 @@ pub fn ResourceEditForm() -> impl IntoView {
                     }
                 }
                 Err(e) => {
-                    set_error.set(Some(format!("Failed to load resource: {}", e)));
+                    set_error.set(Some(format!("Failed to load template: {}", e)));
                 }
             }
             set_loading.set(false);
@@ -1473,9 +1512,16 @@ pub fn ResourceEditForm() -> impl IntoView {
         set_saving.set(true);
         set_error.set(None);
 
-        let orig_uri = original_uri.get();
+        let orig = original_uri_template.get();
 
-        // Build output schema from properties (resources don't have input schema)
+        // Build schemas
+        let input_props = input_schema_properties.get();
+        let input_schema = if input_props.is_empty() {
+            None
+        } else {
+            Some(properties_to_schema(&input_props))
+        };
+
         let output_props = output_schema_properties.get();
         let output_schema = if output_props.is_empty() {
             None
@@ -1483,21 +1529,22 @@ pub fn ResourceEditForm() -> impl IntoView {
             Some(properties_to_schema(&output_props))
         };
 
-        let resource = Resource {
+        let template = ResourceTemplate {
             name: name.get(),
-            uri: resource_uri.get(),
+            uri_template: uri_template.get(),
             description: if description.get().is_empty() { None } else { Some(description.get()) },
             mime_type: if mime_type.get().is_empty() { None } else { Some(mime_type.get()) },
+            input_schema,
             output_schema,
             content: if content.get().is_empty() { None } else { Some(content.get()) },
             mock: build_mock_config(),
         };
 
         wasm_bindgen_futures::spawn_local(async move {
-            match api::update_resource(&orig_uri, &resource).await {
+            match api::update_resource_template(&orig, &template).await {
                 Ok(_) => {
                     if let Some(window) = web_sys::window() {
-                        let _ = window.location().set_href("/resources");
+                        let _ = window.location().set_href("/resource-templates");
                     }
                 }
                 Err(e) => {
@@ -1511,21 +1558,21 @@ pub fn ResourceEditForm() -> impl IntoView {
     view! {
         <div class="p-6">
             <div class="mb-6">
-                <a href="/resources" class="text-blue-500 hover:underline flex items-center gap-1">
+                <a href="/resource-templates" class="text-purple-500 hover:underline flex items-center gap-1">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
                     </svg>
-                    "Back to Resources"
+                    "Back to Resource Templates"
                 </a>
             </div>
 
-            <h2 class="text-2xl font-bold mb-6">"Edit Resource"</h2>
+            <h2 class="text-2xl font-bold mb-6">"Edit Resource Template"</h2>
 
             {move || if loading.get() {
                 view! {
                     <div class="flex items-center justify-center py-12">
-                        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-                        <span class="ml-3 text-gray-500">"Loading resource..."</span>
+                        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500"></div>
+                        <span class="ml-3 text-gray-500">"Loading template..."</span>
                     </div>
                 }.into_any()
             } else {
@@ -1537,12 +1584,14 @@ pub fn ResourceEditForm() -> impl IntoView {
                             </div>
                         })}
 
-                        <ResourceFormFields
+                        <ResourceTemplateFormFields
                             name=name set_name=set_name
-                            uri=resource_uri set_uri=set_resource_uri
+                            uri_template=uri_template set_uri_template=set_uri_template
                             description=description set_description=set_description
                             mime_type=mime_type set_mime_type=set_mime_type
                             content=content set_content=set_content
+                            input_schema_properties=input_schema_properties
+                            set_input_schema_properties=set_input_schema_properties
                             output_schema_properties=output_schema_properties
                             set_output_schema_properties=set_output_schema_properties
                             mock_strategy=mock_strategy set_mock_strategy=set_mock_strategy
@@ -1567,12 +1616,12 @@ pub fn ResourceEditForm() -> impl IntoView {
                             <button
                                 type="submit"
                                 disabled=move || saving.get()
-                                class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                                class="px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 {move || if saving.get() { "Saving..." } else { "Save Changes" }}
                             </button>
                             <a
-                                href="/resources"
+                                href="/resource-templates"
                                 class="px-4 py-2 border border-gray-300 text-gray-700 rounded hover:bg-gray-50"
                             >
                                 "Cancel"

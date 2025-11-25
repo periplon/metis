@@ -84,7 +84,7 @@ pub struct ServerSettings {
     pub s3: Option<S3Config>,
 }
 
-/// Resource configuration
+/// Static resource with fixed URI (no input variables, only output schema)
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct Resource {
     pub uri: String,
@@ -93,7 +93,26 @@ pub struct Resource {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
-    /// JSON Schema for resource input parameters
+    /// JSON Schema for the expected output structure
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mock: Option<MockConfig>,
+}
+
+/// Resource template with URI pattern containing {placeholder} variables
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct ResourceTemplate {
+    /// URI template pattern (e.g., "postgres://db/users/{id}")
+    pub uri_template: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    /// JSON Schema for template input parameters (the {variables} in uri_template)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_schema: Option<Value>,
     /// JSON Schema for the expected output structure

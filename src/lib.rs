@@ -157,6 +157,10 @@ pub async fn create_app(
         .route("/workflows", get(api_handler::list_workflows).post(api_handler::create_workflow))
         .route("/workflows/:name", get(api_handler::get_workflow).put(api_handler::update_workflow).delete(api_handler::delete_workflow))
         .route("/workflows/:name/test", post(api_handler::test_workflow))
+        // Resource Templates CRUD + Test
+        .route("/resource-templates", get(api_handler::list_resource_templates).post(api_handler::create_resource_template))
+        .route("/resource-templates/:uri_template", get(api_handler::get_resource_template).put(api_handler::update_resource_template).delete(api_handler::delete_resource_template))
+        .route("/resource-templates/:uri_template/test", post(api_handler::test_resource_template))
         // State management
         .route("/state", get(api_handler::get_state).delete(api_handler::reset_state))
         .route("/state/:key", delete(api_handler::delete_state_key))

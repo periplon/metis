@@ -18,7 +18,7 @@ use crate::adapters::state_manager::StateManager;
 use crate::adapters::workflow_engine::WorkflowEngine;
 use crate::config::{
     MockConfig, PromptArgument, PromptConfig, PromptMessage, RateLimitConfig, ResourceConfig,
-    Settings, ToolConfig, WorkflowConfig, WorkflowStep,
+    ResourceTemplateConfig, Settings, ToolConfig, WorkflowConfig, WorkflowStep,
 };
 use crate::domain::ToolPort;
 
@@ -155,6 +155,7 @@ pub struct HealthInfo {
 // Serializable Config Types (for API responses)
 // ============================================================================
 
+/// DTO for static resources (no input variables, only output schema)
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ResourceDto {
     pub uri: String,
@@ -163,9 +164,6 @@ pub struct ResourceDto {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
-    /// JSON Schema for resource input parameters
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub input_schema: Option<Value>,
     /// JSON Schema for the expected output structure
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_schema: Option<Value>,
@@ -182,7 +180,6 @@ impl From<&ResourceConfig> for ResourceDto {
             name: r.name.clone(),
             description: r.description.clone(),
             mime_type: r.mime_type.clone(),
-            input_schema: r.input_schema.clone(),
             output_schema: r.output_schema.clone(),
             content: r.content.clone(),
             mock: r.mock.clone(),
@@ -194,6 +191,57 @@ impl From<ResourceDto> for ResourceConfig {
     fn from(dto: ResourceDto) -> Self {
         Self {
             uri: dto.uri,
+            name: dto.name,
+            description: dto.description,
+            mime_type: dto.mime_type,
+            output_schema: dto.output_schema,
+            content: dto.content,
+            mock: dto.mock,
+        }
+    }
+}
+
+/// DTO for resource templates (with URI pattern variables and input schema)
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ResourceTemplateDto {
+    /// URI template pattern (e.g., "postgres://db/users/{id}")
+    pub uri_template: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    /// JSON Schema for template input parameters (the {variables} in uri_template)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_schema: Option<Value>,
+    /// JSON Schema for the expected output structure
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mock: Option<MockConfig>,
+}
+
+impl From<&ResourceTemplateConfig> for ResourceTemplateDto {
+    fn from(r: &ResourceTemplateConfig) -> Self {
+        Self {
+            uri_template: r.uri_template.clone(),
+            name: r.name.clone(),
+            description: r.description.clone(),
+            mime_type: r.mime_type.clone(),
+            input_schema: r.input_schema.clone(),
+            output_schema: r.output_schema.clone(),
+            content: r.content.clone(),
+            mock: r.mock.clone(),
+        }
+    }
+}
+
+impl From<ResourceTemplateDto> for ResourceTemplateConfig {
+    fn from(dto: ResourceTemplateDto) -> Self {
+        Self {
+            uri_template: dto.uri_template,
             name: dto.name,
             description: dto.description,
             mime_type: dto.mime_type,
@@ -703,7 +751,6 @@ pub async fn update_resource(
         resource.name = dto.name.clone();
         resource.description = dto.description.clone();
         resource.mime_type = dto.mime_type.clone();
-        resource.input_schema = dto.input_schema.clone();
         resource.output_schema = dto.output_schema.clone();
         resource.content = dto.content.clone();
         resource.mock = dto.mock.clone();
@@ -995,6 +1042,242 @@ pub async fn delete_workflow(
     } else {
         (StatusCode::NOT_FOUND, Json(ApiResponse::<()>::error("Workflow not found")))
     }
+}
+
+// ============================================================================
+// Resource Template CRUD Endpoints
+// ============================================================================
+
+/// GET /api/resource-templates - List all resource templates
+pub async fn list_resource_templates(
+    State(state): State<ApiState>,
+) -> impl IntoResponse {
+    let settings = state.settings.read().await;
+    let templates: Vec<ResourceTemplateDto> = settings
+        .resource_templates
+        .iter()
+        .map(ResourceTemplateDto::from)
+        .collect();
+    (StatusCode::OK, Json(ApiResponse::success(templates)))
+}
+
+/// GET /api/resource-templates/:uri_template - Get a single resource template
+pub async fn get_resource_template(
+    State(state): State<ApiState>,
+    Path(uri_template): Path<String>,
+) -> impl IntoResponse {
+    let settings = state.settings.read().await;
+    let decoded_uri = urlencoding::decode(&uri_template)
+        .map(|s| s.into_owned())
+        .unwrap_or(uri_template);
+
+    if let Some(template) = settings
+        .resource_templates
+        .iter()
+        .find(|r| r.uri_template == decoded_uri)
+    {
+        (
+            StatusCode::OK,
+            Json(ApiResponse::success(ResourceTemplateDto::from(template))),
+        )
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiResponse::<ResourceTemplateDto>::error("Resource template not found")),
+        )
+    }
+}
+
+/// POST /api/resource-templates - Create a new resource template
+pub async fn create_resource_template(
+    State(state): State<ApiState>,
+    Json(dto): Json<ResourceTemplateDto>,
+) -> impl IntoResponse {
+    let mut settings = state.settings.write().await;
+
+    // Check for duplicate URI template
+    if settings
+        .resource_templates
+        .iter()
+        .any(|r| r.uri_template == dto.uri_template)
+    {
+        return (
+            StatusCode::CONFLICT,
+            Json(ApiResponse::<ResourceTemplateDto>::error(
+                "Resource template with this URI template already exists",
+            )),
+        );
+    }
+
+    let template = ResourceTemplateConfig::from(dto.clone());
+    settings.resource_templates.push(template);
+
+    (StatusCode::CREATED, Json(ApiResponse::success(dto)))
+}
+
+/// PUT /api/resource-templates/:uri_template - Update a resource template
+pub async fn update_resource_template(
+    State(state): State<ApiState>,
+    Path(uri_template): Path<String>,
+    Json(dto): Json<ResourceTemplateDto>,
+) -> impl IntoResponse {
+    let mut settings = state.settings.write().await;
+    let decoded_uri = urlencoding::decode(&uri_template)
+        .map(|s| s.into_owned())
+        .unwrap_or(uri_template);
+
+    if let Some(template) = settings
+        .resource_templates
+        .iter_mut()
+        .find(|r| r.uri_template == decoded_uri)
+    {
+        template.name = dto.name.clone();
+        template.description = dto.description.clone();
+        template.mime_type = dto.mime_type.clone();
+        template.input_schema = dto.input_schema.clone();
+        template.output_schema = dto.output_schema.clone();
+        template.content = dto.content.clone();
+        template.mock = dto.mock.clone();
+        (StatusCode::OK, Json(ApiResponse::success(dto)))
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiResponse::<ResourceTemplateDto>::error("Resource template not found")),
+        )
+    }
+}
+
+/// DELETE /api/resource-templates/:uri_template - Delete a resource template
+pub async fn delete_resource_template(
+    State(state): State<ApiState>,
+    Path(uri_template): Path<String>,
+) -> impl IntoResponse {
+    let mut settings = state.settings.write().await;
+    let decoded_uri = urlencoding::decode(&uri_template)
+        .map(|s| s.into_owned())
+        .unwrap_or(uri_template);
+
+    let initial_len = settings.resource_templates.len();
+    settings
+        .resource_templates
+        .retain(|r| r.uri_template != decoded_uri);
+
+    if settings.resource_templates.len() < initial_len {
+        (StatusCode::OK, Json(ApiResponse::<()>::ok()))
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiResponse::<()>::error("Resource template not found")),
+        )
+    }
+}
+
+/// POST /api/resource-templates/:uri_template/test - Test a resource template with arguments
+pub async fn test_resource_template(
+    State(state): State<ApiState>,
+    Path(uri_template): Path<String>,
+    Json(req): Json<TestRequest>,
+) -> impl IntoResponse {
+    let start = std::time::Instant::now();
+    let decoded_uri = urlencoding::decode(&uri_template)
+        .map(|s| s.into_owned())
+        .unwrap_or(uri_template);
+    let settings = state.settings.read().await;
+
+    // Find the resource template
+    let template = match settings
+        .resource_templates
+        .iter()
+        .find(|r| r.uri_template == decoded_uri)
+    {
+        Some(t) => t.clone(),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ApiResponse::<TestResult>::error("Resource template not found")),
+            );
+        }
+    };
+    drop(settings);
+
+    // Resolve URI template with arguments
+    let resolved_uri = resolve_uri_template(&template.uri_template, &req.args);
+
+    // Generate resource content
+    let output = if let Some(mock_config) = &template.mock {
+        match state
+            .mock_strategy
+            .generate(mock_config, Some(&req.args))
+            .await
+        {
+            Ok(result) => {
+                json!({
+                    "uri_template": template.uri_template,
+                    "resolved_uri": resolved_uri,
+                    "name": template.name,
+                    "mime_type": template.mime_type,
+                    "content": result
+                })
+            }
+            Err(e) => {
+                let elapsed = start.elapsed().as_millis() as u64;
+                return (
+                    StatusCode::OK,
+                    Json(ApiResponse::success(TestResult {
+                        output: Value::Null,
+                        error: Some(format!("Mock strategy error: {}", e)),
+                        execution_time_ms: elapsed,
+                    })),
+                );
+            }
+        }
+    } else if let Some(content) = &template.content {
+        // Also resolve template variables in static content
+        let resolved_content = resolve_uri_template(content, &req.args);
+        json!({
+            "uri_template": template.uri_template,
+            "resolved_uri": resolved_uri,
+            "name": template.name,
+            "mime_type": template.mime_type,
+            "content": resolved_content
+        })
+    } else {
+        json!({
+            "uri_template": template.uri_template,
+            "resolved_uri": resolved_uri,
+            "name": template.name,
+            "mime_type": template.mime_type,
+            "content": ""
+        })
+    };
+
+    let elapsed = start.elapsed().as_millis() as u64;
+    (
+        StatusCode::OK,
+        Json(ApiResponse::success(TestResult {
+            output,
+            error: None,
+            execution_time_ms: elapsed,
+        })),
+    )
+}
+
+/// Resolve a URI template by substituting {variable} placeholders with argument values
+fn resolve_uri_template(uri_template: &str, args: &Value) -> String {
+    let mut resolved = uri_template.to_string();
+    if let Some(obj) = args.as_object() {
+        for (key, value) in obj {
+            let placeholder = format!("{{{}}}", key);
+            let replacement = match value {
+                Value::String(s) => s.clone(),
+                Value::Number(n) => n.to_string(),
+                Value::Bool(b) => b.to_string(),
+                _ => value.to_string(),
+            };
+            resolved = resolved.replace(&placeholder, &replacement);
+        }
+    }
+    resolved
 }
 
 // ============================================================================

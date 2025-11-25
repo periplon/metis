@@ -9,10 +9,11 @@ use rmcp::{
     handler::server::ServerHandler,
     model::{
         CallToolRequestParam, CallToolResult, Content, GetPromptRequestParam, GetPromptResult,
-        Implementation, ListPromptsResult, ListResourcesResult, ListToolsResult,
-        PaginatedRequestParam, Prompt, PromptArgument, PromptMessage, PromptMessageRole,
-        RawResource, ReadResourceRequestParam, ReadResourceResult, Resource, ResourceContents,
-        ServerCapabilities, ServerInfo, Tool,
+        Implementation, ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult,
+        ListToolsResult, PaginatedRequestParam, Prompt, PromptArgument, PromptMessage,
+        PromptMessageRole, RawResource, RawResourceTemplate, ReadResourceRequestParam,
+        ReadResourceResult, Resource, ResourceContents, ResourceTemplate, ServerCapabilities,
+        ServerInfo, Tool,
     },
     service::RequestContext,
     ErrorData as McpError, RoleServer,
@@ -120,6 +121,42 @@ impl ServerHandler for MetisServer {
 
             Ok(ReadResourceResult {
                 contents: vec![ResourceContents::text(result.content, result.uri)],
+            })
+        }
+    }
+
+    fn list_resource_templates(
+        &self,
+        _request: Option<PaginatedRequestParam>,
+        _context: RequestContext<RoleServer>,
+    ) -> impl std::future::Future<Output = Result<ListResourceTemplatesResult, McpError>> + Send + '_
+    {
+        let handler = self.resource_handler.clone();
+        async move {
+            let templates = handler
+                .list_resource_templates()
+                .await
+                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+
+            let mcp_templates: Vec<ResourceTemplate> = templates
+                .into_iter()
+                .map(|t| {
+                    ResourceTemplate::new(
+                        RawResourceTemplate {
+                            uri_template: t.uri_template.into(),
+                            name: t.name.into(),
+                            title: None,
+                            description: t.description.map(Into::into),
+                            mime_type: t.mime_type.map(Into::into),
+                        },
+                        None,
+                    )
+                })
+                .collect();
+
+            Ok(ListResourceTemplatesResult {
+                resource_templates: mcp_templates,
+                next_cursor: None,
             })
         }
     }

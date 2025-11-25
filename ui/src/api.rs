@@ -83,6 +83,45 @@ pub async fn test_resource(uri: &str, args: &serde_json::Value) -> Result<crate:
 }
 
 // ============================================================================
+// Resource Templates
+// ============================================================================
+
+pub async fn list_resource_templates() -> Result<Vec<ResourceTemplate>, String> {
+    let url = format!("{}/resource-templates", API_BASE);
+    fetch_json::<Vec<ResourceTemplate>>(&url).await
+}
+
+pub async fn get_resource_template(uri_template: &str) -> Result<ResourceTemplate, String> {
+    let encoded_uri = urlencoding_encode(uri_template);
+    let url = format!("{}/resource-templates/{}", API_BASE, encoded_uri);
+    fetch_json::<ResourceTemplate>(&url).await
+}
+
+pub async fn create_resource_template(template: &ResourceTemplate) -> Result<ResourceTemplate, String> {
+    let url = format!("{}/resource-templates", API_BASE);
+    post_json::<ResourceTemplate, ResourceTemplate>(&url, template).await
+}
+
+pub async fn update_resource_template(uri_template: &str, template: &ResourceTemplate) -> Result<ResourceTemplate, String> {
+    let encoded_uri = urlencoding_encode(uri_template);
+    let url = format!("{}/resource-templates/{}", API_BASE, encoded_uri);
+    put_json::<ResourceTemplate, ResourceTemplate>(&url, template).await
+}
+
+pub async fn delete_resource_template(uri_template: &str) -> Result<(), String> {
+    let encoded_uri = urlencoding_encode(uri_template);
+    let url = format!("{}/resource-templates/{}", API_BASE, encoded_uri);
+    delete_request(&url).await
+}
+
+pub async fn test_resource_template(uri_template: &str, args: &serde_json::Value) -> Result<crate::types::TestResult, String> {
+    let encoded_uri = urlencoding_encode(uri_template);
+    let url = format!("{}/resource-templates/{}/test", API_BASE, encoded_uri);
+    let req = crate::types::TestRequest { args: args.clone() };
+    post_json::<crate::types::TestRequest, crate::types::TestResult>(&url, &req).await
+}
+
+// ============================================================================
 // Tools
 // ============================================================================
 

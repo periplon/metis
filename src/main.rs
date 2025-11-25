@@ -37,6 +37,7 @@ async fn main() -> anyhow::Result<()> {
         "metis.toml".to_string(),
         "config/tools".to_string(),
         "config/resources".to_string(),
+        "config/resource_templates".to_string(),
         "config/prompts".to_string(),
     ];
     let _watcher = ConfigWatcher::new(paths, move || {

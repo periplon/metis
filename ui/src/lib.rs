@@ -10,6 +10,7 @@ use components::dashboard::Dashboard;
 use components::config::Config;
 use components::logs::Logs;
 use components::resources::{Resources, ResourceForm, ResourceEditForm};
+use components::resource_templates::{ResourceTemplates, ResourceTemplateForm, ResourceTemplateEditForm};
 use components::tools::{Tools, ToolForm, ToolEditForm};
 use components::prompts::{Prompts, PromptForm, PromptEditForm};
 use components::workflows::{Workflows, WorkflowForm, WorkflowEditForm};
@@ -25,6 +26,7 @@ pub fn App() -> impl IntoView {
                     <nav class="space-y-1 flex-1">
                         <NavLink href="/" label="Dashboard" />
                         <NavLink href="/resources" label="Resources" />
+                        <NavLink href="/resource-templates" label="Resource Templates" />
                         <NavLink href="/tools" label="Tools" />
                         <NavLink href="/prompts" label="Prompts" />
                         <NavLink href="/workflows" label="Workflows" />
@@ -44,6 +46,9 @@ pub fn App() -> impl IntoView {
                         <Route path=path!("/resources/new") view=ResourceForm/>
                         <Route path=path!("/resources/edit/:uri") view=ResourceEditForm/>
                         <Route path=path!("/resources") view=Resources/>
+                        <Route path=path!("/resource-templates/new") view=ResourceTemplateForm/>
+                        <Route path=path!("/resource-templates/edit/:uri_template") view=ResourceTemplateEditForm/>
+                        <Route path=path!("/resource-templates") view=ResourceTemplates/>
                         <Route path=path!("/tools/new") view=ToolForm/>
                         <Route path=path!("/tools/edit/:name") view=ToolEditForm/>
                         <Route path=path!("/tools") view=Tools/>
