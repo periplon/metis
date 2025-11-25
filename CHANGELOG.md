@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.11.0 - 2025-11-25
+#### Features
+- **(ui)** add schema editors and DAG workflow support - (1852524) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.10.0 - 2025-11-24
 #### Features
 - **(ui)** add test functionality for tools, resources, prompts, and workflows - (8fca53b) - Joan Marc Carbo Arnau
