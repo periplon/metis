@@ -29,11 +29,11 @@ clean:
 
 # Run the UI development server
 ui-dev:
-	cd ui && cargo leptos watch
+	cd ui && trunk serve
 
 # Build the UI for production
 ui-build:
-	cd ui && cargo leptos build --release
+	cd ui && trunk build --release
 
 # Run the full application with UI
 start-full:
@@ -47,7 +47,7 @@ build-release:
 
 # Build all release binaries including UI (UI embedded)
 build-release-all:
-	cd ui && cargo leptos build --release
+	cd ui && trunk build --release
 	cargo build --release
 
 # Build Docker image

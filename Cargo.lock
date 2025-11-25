@@ -3808,6 +3808,7 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
+ "urlencoding",
  "wasm-bindgen",
  "wasm-bindgen-futures",
 ]

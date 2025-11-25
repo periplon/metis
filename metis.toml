@@ -2,11 +2,17 @@
 host = "127.0.0.1"
 port = 3000
 
+[auth]
+enabled = false
+mode = "None"
+jwt_algorithm = "HS256"
+
 [[resources]]
 uri = "file:///template_example.txt"
 name = "Template Example"
 description = "Resource using Tera template"
 mime_type = "text/plain"
+
 [resources.mock]
 strategy = "template"
 template = "Hello, {{ name }}! Today is {{ day }}."
@@ -16,22 +22,72 @@ uri = "file:///random_example.txt"
 name = "Random Example"
 description = "Resource using Faker"
 mime_type = "text/plain"
+
 [resources.mock]
 strategy = "random"
 faker_type = "sentence"
 
 [[tools]]
-name = "random_user"
-description = "Generates a random user"
-input_schema = { type = "object", properties = {} }
-[tools.mock]
-strategy = "random"
-faker_type = "name"
-
-[[tools]]
 name = "template_tool"
 description = "Tool using template"
-input_schema = { type = "object", properties = { name = { type = "string" } } }
+
+[tools.input_schema]
+type = "object"
+
+[tools.input_schema.properties.name]
+type = "string"
+
 [tools.mock]
 strategy = "template"
-template = "{\"message\": \"Hello, {{ name }}!\"}"
+template = '{"message": "Hello, {{ name }}!"}'
+
+[[tools]]
+name = "asdf"
+description = "jñlkjñ"
+
+[tools.input_schema]
+required = ["jlkjñj"]
+type = "object"
+
+[tools.input_schema.properties."jlkjñj"]
+description = "jñljñl jñlk jñlkjj ñjl "
+type = "string"
+
+[tools.static_response]
+asdfs = "b"
+
+[[prompts]]
+name = "blabla"
+description = "bla"
+
+[[workflows]]
+name = "jñlkj"
+description = "jñlkjlñk"
+on_error = "fail"
+
+[workflows.input_schema]
+type = "object"
+
+[[workflows.steps]]
+id = "step1"
+tool = "asdf"
+depends_on = []
+loop_var = "item"
+loop_concurrency = 1
+on_error = "fail"
+
+[[workflows]]
+name = "bb"
+description = "bbb"
+on_error = "fail"
+
+[workflows.input_schema]
+type = "object"
+
+[[workflows.steps]]
+id = "step1"
+tool = "asdf"
+depends_on = []
+loop_var = "item"
+loop_concurrency = 1
+on_error = "fail"

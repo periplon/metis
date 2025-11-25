@@ -1,9 +1,9 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::cli::Cli;
 
 /// S3 configuration for remote configuration source
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct S3Config {
     /// Whether S3 configuration source is enabled
     #[serde(default)]

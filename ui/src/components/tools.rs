@@ -19,8 +19,18 @@ enum ViewMode {
     Card,
 }
 
-/// Extract properties from a JSON Schema and return (name, type, description, required)
-fn extract_schema_properties(schema: &serde_json::Value) -> Vec<(String, String, Option<String>, bool)> {
+/// Schema field information for test forms
+#[derive(Clone, Debug)]
+struct SchemaFieldInfo {
+    name: String,
+    field_type: String,
+    description: Option<String>,
+    required: bool,
+    enum_values: Vec<String>,
+}
+
+/// Extract properties from a JSON Schema
+fn extract_schema_properties(schema: &serde_json::Value) -> Vec<SchemaFieldInfo> {
     let mut props = Vec::new();
 
     if let Some(properties) = schema.get("properties").and_then(|p| p.as_object()) {
@@ -39,7 +49,20 @@ fn extract_schema_properties(schema: &serde_json::Value) -> Vec<(String, String,
                 .and_then(|d| d.as_str())
                 .map(|s| s.to_string());
             let is_required = required_fields.contains(name);
-            props.push((name.clone(), prop_type, description, is_required));
+
+            // Extract enum values if present
+            let enum_values: Vec<String> = prop.get("enum")
+                .and_then(|e| e.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                .unwrap_or_default();
+
+            props.push(SchemaFieldInfo {
+                name: name.clone(),
+                field_type: prop_type,
+                description,
+                required: is_required,
+                enum_values,
+            });
         }
     }
 
@@ -256,18 +279,46 @@ pub fn Tools() -> impl IntoView {
                             } else {
                                 view! {
                                     <div class="space-y-4">
-                                        {schema_props.into_iter().map(|(name, prop_type, description, required)| {
-                                            let field_name = name.clone();
-                                            let field_name_for_handler = name.clone();
-                                            let label = format!("{}{}", name, if required { " *" } else { "" });
+                                        {schema_props.into_iter().map(|field_info| {
+                                            let field_name = field_info.name.clone();
+                                            let field_name_for_handler = field_info.name.clone();
+                                            let label = format!("{}{}", field_info.name, if field_info.required { " *" } else { "" });
+                                            let field_type = field_info.field_type.clone();
+                                            let has_enum = !field_info.enum_values.is_empty();
+                                            let enum_values = field_info.enum_values.clone();
 
                                             view! {
                                                 <div>
                                                     <label class="block text-sm font-medium text-gray-700 mb-1">
                                                         {label}
-                                                        <span class="ml-2 text-xs text-gray-400 font-normal">{format!("({})", prop_type)}</span>
+                                                        <span class="ml-2 text-xs text-gray-400 font-normal">
+                                                            {if has_enum { "(enum)".to_string() } else { format!("({})", field_type) }}
+                                                        </span>
                                                     </label>
-                                                    {match prop_type.as_str() {
+                                                    {if has_enum {
+                                                        // Enum type - render as select dropdown
+                                                        let field_name_for_enum = field_name_for_handler.clone();
+                                                        view! {
+                                                            <select
+                                                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 bg-yellow-50"
+                                                                on:change=move |ev| {
+                                                                    let target = ev.target().unwrap();
+                                                                    let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
+                                                                    set_test_form_fields.update(|fields| {
+                                                                        fields.insert(field_name_for_enum.clone(), select.value());
+                                                                    });
+                                                                }
+                                                            >
+                                                                <option value="">"-- Select --"</option>
+                                                                {enum_values.iter().map(|v| {
+                                                                    let value = v.clone();
+                                                                    let display_value = v.clone();
+                                                                    view! { <option value=value>{display_value}</option> }
+                                                                }).collect::<Vec<_>>()}
+                                                            </select>
+                                                        }.into_any()
+                                                    } else {
+                                                        match field_type.as_str() {
                                                         "boolean" => view! {
                                                             <select
                                                                 class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
@@ -287,9 +338,9 @@ pub fn Tools() -> impl IntoView {
                                                         "number" | "integer" => view! {
                                                             <input
                                                                 type="number"
-                                                                step=if prop_type == "integer" { "1" } else { "any" }
+                                                                step=if field_type == "integer" { "1" } else { "any" }
                                                                 class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
-                                                                placeholder=format!("Enter {}", prop_type)
+                                                                placeholder=format!("Enter {}", field_type)
                                                                 on:input=move |ev| {
                                                                     let target = ev.target().unwrap();
                                                                     let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
@@ -303,7 +354,7 @@ pub fn Tools() -> impl IntoView {
                                                             <textarea
                                                                 rows=3
                                                                 class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 font-mono text-sm"
-                                                                placeholder=if prop_type == "array" { "[...]" } else { "{...}" }
+                                                                placeholder=if field_type == "array" { "[...]" } else { "{...}" }
                                                                 on:input=move |ev| {
                                                                     let target = ev.target().unwrap();
                                                                     let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
@@ -327,8 +378,8 @@ pub fn Tools() -> impl IntoView {
                                                                 }
                                                             />
                                                         }.into_any(),
-                                                    }}
-                                                    {description.map(|desc| view! {
+                                                    }}}
+                                                    {field_info.description.clone().map(|desc| view! {
                                                         <p class="mt-1 text-xs text-gray-500">{desc}</p>
                                                     })}
                                                 </div>

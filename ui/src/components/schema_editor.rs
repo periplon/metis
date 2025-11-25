@@ -20,6 +20,8 @@ pub struct SchemaProperty {
     pub items_type: String,
     /// For objects: nested properties (recursive)
     pub nested_properties: Vec<SchemaProperty>,
+    /// For enums: allowed values (comma-separated in UI)
+    pub enum_values: Vec<String>,
 }
 
 static NEXT_PROP_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
@@ -38,13 +40,23 @@ impl SchemaProperty {
             required: false,
             items_type: "string".to_string(),
             nested_properties: Vec::new(),
+            enum_values: Vec::new(),
         }
     }
 
     /// Convert to JSON Schema Value
     pub fn to_schema_value(&self) -> Value {
         let mut prop = Map::new();
-        prop.insert("type".to_string(), json!(self.prop_type));
+
+        // Handle enum type specially - it's a string with enum constraint
+        if self.prop_type == "enum" {
+            prop.insert("type".to_string(), json!("string"));
+            if !self.enum_values.is_empty() {
+                prop.insert("enum".to_string(), json!(self.enum_values));
+            }
+        } else {
+            prop.insert("type".to_string(), json!(self.prop_type));
+        }
 
         if !self.description.is_empty() {
             prop.insert("description".to_string(), json!(self.description));
@@ -55,6 +67,9 @@ impl SchemaProperty {
                 let items = if self.items_type == "object" && !self.nested_properties.is_empty() {
                     let nested_schema = properties_to_schema(&self.nested_properties);
                     nested_schema
+                } else if self.items_type == "enum" && !self.enum_values.is_empty() {
+                    // Array of enum values
+                    json!({"type": "string", "enum": self.enum_values})
                 } else {
                     json!({"type": self.items_type})
                 };
@@ -115,35 +130,68 @@ pub fn schema_to_properties(schema: &Value) -> Vec<SchemaProperty> {
             .unwrap_or_default();
 
         for (name, prop) in props {
-            let prop_type = prop.get("type")
+            let raw_type = prop.get("type")
                 .and_then(|t| t.as_str())
                 .unwrap_or("string")
                 .to_string();
+
+            // Check if this is an enum (has "enum" field)
+            let enum_values: Vec<String> = prop.get("enum")
+                .and_then(|e| e.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                .unwrap_or_default();
+
+            // If it has enum values, treat it as enum type
+            let prop_type = if !enum_values.is_empty() {
+                "enum".to_string()
+            } else {
+                raw_type.clone()
+            };
 
             let description = prop.get("description")
                 .and_then(|d| d.as_str())
                 .unwrap_or("")
                 .to_string();
 
-            let (items_type, nested_properties) = if prop_type == "array" {
+            let (items_type, nested_properties, items_enum_values) = if raw_type == "array" {
                 if let Some(items) = prop.get("items") {
                     let items_t = items.get("type")
                         .and_then(|t| t.as_str())
                         .unwrap_or("string")
                         .to_string();
+
+                    // Check if array items have enum
+                    let items_enum: Vec<String> = items.get("enum")
+                        .and_then(|e| e.as_array())
+                        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                        .unwrap_or_default();
+
+                    let actual_items_type = if !items_enum.is_empty() {
+                        "enum".to_string()
+                    } else {
+                        items_t.clone()
+                    };
+
                     let nested = if items_t == "object" {
                         schema_to_properties(items)
                     } else {
                         Vec::new()
                     };
-                    (items_t, nested)
+                    (actual_items_type, nested, items_enum)
                 } else {
-                    ("string".to_string(), Vec::new())
+                    ("string".to_string(), Vec::new(), Vec::new())
                 }
-            } else if prop_type == "object" {
-                ("string".to_string(), schema_to_properties(prop))
+            } else if raw_type == "object" {
+                ("string".to_string(), schema_to_properties(prop), Vec::new())
             } else {
-                ("string".to_string(), Vec::new())
+                ("string".to_string(), Vec::new(), Vec::new())
+            };
+
+            // Use items_enum_values if this is an array of enums, otherwise use the property's enum_values
+            let final_enum_values = if raw_type == "array" && !items_enum_values.is_empty() {
+                items_enum_values
+            } else {
+                enum_values
             };
 
             properties.push(SchemaProperty {
@@ -154,6 +202,7 @@ pub fn schema_to_properties(schema: &Value) -> Vec<SchemaProperty> {
                 required: required_fields.contains(name),
                 items_type,
                 nested_properties,
+                enum_values: final_enum_values,
             });
         }
     }
@@ -331,6 +380,10 @@ fn RecursivePropertyEditor(
         let props = properties.get();
         get_property_at_path(&props, &path_stored.get_value()).map(|p| p.items_type.clone()).unwrap_or_default()
     };
+    let enum_values = move || {
+        let props = properties.get();
+        get_property_at_path(&props, &path_stored.get_value()).map(|p| p.enum_values.join(", ")).unwrap_or_default()
+    };
     let has_nested = move || {
         let props = properties.get();
         let path = path_stored.get_value();
@@ -385,6 +438,9 @@ fn RecursivePropertyEditor(
                                     if p.prop_type != "object" && p.prop_type != "array" {
                                         p.nested_properties.clear();
                                     }
+                                    if p.prop_type != "enum" {
+                                        p.enum_values.clear();
+                                    }
                                 });
                             });
                         }
@@ -393,6 +449,7 @@ fn RecursivePropertyEditor(
                         <option value="number">"number"</option>
                         <option value="integer">"integer"</option>
                         <option value="boolean">"boolean"</option>
+                        <option value="enum">"enum"</option>
                         <option value="array">"array"</option>
                         <option value="object">"object"</option>
                     </select>
@@ -415,6 +472,9 @@ fn RecursivePropertyEditor(
                                         if p.items_type != "object" {
                                             p.nested_properties.clear();
                                         }
+                                        if p.items_type != "enum" {
+                                            p.enum_values.clear();
+                                        }
                                     });
                                 });
                             }
@@ -423,6 +483,7 @@ fn RecursivePropertyEditor(
                             <option value="number">"[number]"</option>
                             <option value="integer">"[integer]"</option>
                             <option value="boolean">"[boolean]"</option>
+                            <option value="enum">"[enum]"</option>
                             <option value="object">"[object]"</option>
                         </select>
                     </div>
@@ -503,6 +564,33 @@ fn RecursivePropertyEditor(
                     }
                 />
             </div>
+
+            // Enum values input (shown when type is enum or array of enum)
+            <Show when=move || prop_type() == "enum" || (prop_type() == "array" && items_type() == "enum")>
+                <div class="mt-2">
+                    <input
+                        type="text"
+                        class=format!("w-full px-2 py-1 text-sm border border-gray-300 rounded {} bg-yellow-50", ring_color)
+                        placeholder="Enum values (comma-separated, e.g.: low, medium, high)"
+                        value=enum_values
+                        on:blur=move |ev| {
+                            let target = ev.target().unwrap();
+                            let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                            let value = input.value();
+                            let path = path_stored.get_value();
+                            set_properties.update(move |props| {
+                                mutate_property_at_path(props, &path, |p| {
+                                    p.enum_values = value.split(',')
+                                        .map(|s| s.trim().to_string())
+                                        .filter(|s| !s.is_empty())
+                                        .collect();
+                                });
+                            });
+                        }
+                    />
+                    <p class="mt-1 text-xs text-gray-500">"Enter allowed values separated by commas (parsed on blur)"</p>
+                </div>
+            </Show>
 
             // Nested properties for object/array[object]
             <Show when=move || has_nested() && expanded.get()>

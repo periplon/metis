@@ -14,19 +14,46 @@ pub fn Dashboard() -> impl IntoView {
 
             <Suspense fallback=move || view! { <div class="text-gray-500">"Loading..."</div> }>
                 {move || {
-                    config.get().map(|data| {
-                        match data {
-                            Some(overview) => view! {
-                                <div>
-                                    <ServerInfoCard overview=overview.clone() />
-                                    <StatsGrid overview=overview />
-                                </div>
-                            }.into_any(),
-                            None => view! {
-                                <div class="text-red-500">"Failed to load configuration"</div>
-                            }.into_any(),
-                        }
-                    })
+                    match config.get() {
+                        Some(Some(overview)) => {
+                            if !overview.config_file_loaded {
+                                // No config file - show dashboard with info banner
+                                view! {
+                                    <div>
+                                        <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+                                            <p class="text-blue-800">
+                                                <strong>"No configuration file found."</strong>
+                                                " The server is running with default settings. "
+                                                <a href="/config" class="underline font-semibold">"Configure server settings"</a>
+                                                " to create a configuration file."
+                                            </p>
+                                        </div>
+                                        <ServerInfoCard overview=overview.clone() />
+                                        <StatsGrid overview=overview />
+                                    </div>
+                                }.into_any()
+                            } else {
+                                // Config file exists - show normal dashboard
+                                view! {
+                                    <div>
+                                        <ServerInfoCard overview=overview.clone() />
+                                        <StatsGrid overview=overview />
+                                    </div>
+                                }.into_any()
+                            }
+                        },
+                        Some(None) => view! {
+                            <div class="bg-red-50 border border-red-200 rounded-lg p-4">
+                                <p class="text-red-800">
+                                    <strong>"Failed to load configuration."</strong>
+                                    " Please check if the server is running properly."
+                                </p>
+                            </div>
+                        }.into_any(),
+                        None => view! {
+                            <div class="text-gray-500">"Loading configuration..."</div>
+                        }.into_any(),
+                    }
                 }}
             </Suspense>
         </div>

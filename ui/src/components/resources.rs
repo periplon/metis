@@ -7,6 +7,10 @@ use crate::types::{
     Resource, MockConfig, MockStrategyType, StatefulConfig, StateOperation,
     FileConfig, ScriptLang, LLMConfig, LLMProvider, DatabaseConfig,
 };
+use crate::components::schema_editor::{
+    JsonSchemaEditor, SchemaPreview, SchemaProperty,
+    properties_to_schema, schema_to_properties,
+};
 
 #[derive(Clone, Copy, PartialEq)]
 enum ViewMode {
@@ -501,6 +505,10 @@ pub fn ResourceForm() -> impl IntoView {
     let (error, set_error) = signal(Option::<String>::None);
     let (saving, set_saving) = signal(false);
 
+    // Schema signals
+    let (input_schema_properties, set_input_schema_properties) = signal(Vec::<SchemaProperty>::new());
+    let (output_schema_properties, set_output_schema_properties) = signal(Vec::<SchemaProperty>::new());
+
     // Mock strategy signals
     let (mock_strategy, set_mock_strategy) = signal("none".to_string());
     let (mock_template, set_mock_template) = signal(String::new());
@@ -613,13 +621,28 @@ pub fn ResourceForm() -> impl IntoView {
         set_saving.set(true);
         set_error.set(None);
 
+        // Build schemas from properties
+        let input_props = input_schema_properties.get();
+        let input_schema = if input_props.is_empty() {
+            None
+        } else {
+            Some(properties_to_schema(&input_props))
+        };
+
+        let output_props = output_schema_properties.get();
+        let output_schema = if output_props.is_empty() {
+            None
+        } else {
+            Some(properties_to_schema(&output_props))
+        };
+
         let resource = Resource {
             name: name.get(),
             uri: uri.get(),
             description: if description.get().is_empty() { None } else { Some(description.get()) },
             mime_type: if mime_type.get().is_empty() { None } else { Some(mime_type.get()) },
-            input_schema: None,  // TODO: Add schema editor
-            output_schema: None, // TODO: Add schema editor
+            input_schema,
+            output_schema,
             content: if content.get().is_empty() { None } else { Some(content.get()) },
             mock: build_mock_config(),
         };
@@ -665,6 +688,10 @@ pub fn ResourceForm() -> impl IntoView {
                     description=description set_description=set_description
                     mime_type=mime_type set_mime_type=set_mime_type
                     content=content set_content=set_content
+                    input_schema_properties=input_schema_properties
+                    set_input_schema_properties=set_input_schema_properties
+                    output_schema_properties=output_schema_properties
+                    set_output_schema_properties=set_output_schema_properties
                     mock_strategy=mock_strategy set_mock_strategy=set_mock_strategy
                     mock_template=mock_template set_mock_template=set_mock_template
                     mock_faker_type=mock_faker_type set_mock_faker_type=set_mock_faker_type
@@ -716,6 +743,10 @@ fn ResourceFormFields(
     set_mime_type: WriteSignal<String>,
     content: ReadSignal<String>,
     set_content: WriteSignal<String>,
+    input_schema_properties: ReadSignal<Vec<SchemaProperty>>,
+    set_input_schema_properties: WriteSignal<Vec<SchemaProperty>>,
+    output_schema_properties: ReadSignal<Vec<SchemaProperty>>,
+    set_output_schema_properties: WriteSignal<Vec<SchemaProperty>>,
     mock_strategy: ReadSignal<String>,
     set_mock_strategy: WriteSignal<String>,
     mock_template: ReadSignal<String>,
@@ -812,6 +843,31 @@ fn ResourceFormFields(
                                 set_mime_type.set(input.value());
                             }
                         />
+                    </div>
+                </div>
+            </div>
+
+            // Schema Section
+            <div class="border-b pb-4">
+                <h3 class="text-lg font-semibold text-gray-800 mb-4">"Parameters & Output Schema"</h3>
+                <div class="space-y-4">
+                    <div>
+                        <JsonSchemaEditor
+                            properties=input_schema_properties
+                            set_properties=set_input_schema_properties
+                            label="Input Parameters"
+                            color="blue"
+                        />
+                        <SchemaPreview properties=input_schema_properties />
+                    </div>
+                    <div>
+                        <JsonSchemaEditor
+                            properties=output_schema_properties
+                            set_properties=set_output_schema_properties
+                            label="Output Schema"
+                            color="green"
+                        />
+                        <SchemaPreview properties=output_schema_properties />
                     </div>
                 </div>
             </div>
@@ -1220,6 +1276,10 @@ pub fn ResourceEditForm() -> impl IntoView {
     let (loading, set_loading) = signal(true);
     let (original_uri, set_original_uri) = signal(String::new());
 
+    // Schema signals
+    let (input_schema_properties, set_input_schema_properties) = signal(Vec::<SchemaProperty>::new());
+    let (output_schema_properties, set_output_schema_properties) = signal(Vec::<SchemaProperty>::new());
+
     // Mock strategy signals
     let (mock_strategy, set_mock_strategy) = signal("none".to_string());
     let (mock_template, set_mock_template) = signal(String::new());
@@ -1245,6 +1305,7 @@ pub fn ResourceEditForm() -> impl IntoView {
         if uri_param.is_empty() {
             return;
         }
+        // Decode the URL-encoded URI from the route parameter
         let decoded_uri = urlencoding::decode(&uri_param);
         set_loading.set(true);
         wasm_bindgen_futures::spawn_local(async move {
@@ -1256,6 +1317,14 @@ pub fn ResourceEditForm() -> impl IntoView {
                     set_description.set(resource.description.clone().unwrap_or_default());
                     set_mime_type.set(resource.mime_type.clone().unwrap_or_default());
                     set_content.set(resource.content.clone().unwrap_or_default());
+
+                    // Load schemas if present
+                    if let Some(input_schema) = &resource.input_schema {
+                        set_input_schema_properties.set(schema_to_properties(input_schema));
+                    }
+                    if let Some(output_schema) = &resource.output_schema {
+                        set_output_schema_properties.set(schema_to_properties(output_schema));
+                    }
 
                     // Load mock config
                     if let Some(mock) = &resource.mock {
@@ -1432,13 +1501,29 @@ pub fn ResourceEditForm() -> impl IntoView {
         set_error.set(None);
 
         let orig_uri = original_uri.get();
+
+        // Build schemas from properties
+        let input_props = input_schema_properties.get();
+        let input_schema = if input_props.is_empty() {
+            None
+        } else {
+            Some(properties_to_schema(&input_props))
+        };
+
+        let output_props = output_schema_properties.get();
+        let output_schema = if output_props.is_empty() {
+            None
+        } else {
+            Some(properties_to_schema(&output_props))
+        };
+
         let resource = Resource {
             name: name.get(),
             uri: resource_uri.get(),
             description: if description.get().is_empty() { None } else { Some(description.get()) },
             mime_type: if mime_type.get().is_empty() { None } else { Some(mime_type.get()) },
-            input_schema: None,  // TODO: Add schema editor
-            output_schema: None, // TODO: Add schema editor
+            input_schema,
+            output_schema,
             content: if content.get().is_empty() { None } else { Some(content.get()) },
             mock: build_mock_config(),
         };
@@ -1493,6 +1578,10 @@ pub fn ResourceEditForm() -> impl IntoView {
                             description=description set_description=set_description
                             mime_type=mime_type set_mime_type=set_mime_type
                             content=content set_content=set_content
+                            input_schema_properties=input_schema_properties
+                            set_input_schema_properties=set_input_schema_properties
+                            output_schema_properties=output_schema_properties
+                            set_output_schema_properties=set_output_schema_properties
                             mock_strategy=mock_strategy set_mock_strategy=set_mock_strategy
                             mock_template=mock_template set_mock_template=set_mock_template
                             mock_faker_type=mock_faker_type set_mock_faker_type=set_mock_faker_type

@@ -703,6 +703,8 @@ pub async fn update_resource(
         resource.name = dto.name.clone();
         resource.description = dto.description.clone();
         resource.mime_type = dto.mime_type.clone();
+        resource.input_schema = dto.input_schema.clone();
+        resource.output_schema = dto.output_schema.clone();
         resource.content = dto.content.clone();
         resource.mock = dto.mock.clone();
         (StatusCode::OK, Json(ApiResponse::success(dto)))

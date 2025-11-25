@@ -206,12 +206,7 @@ pub async fn reset_state() -> Result<(), String> {
 // ============================================================================
 
 fn urlencoding_encode(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => c.to_string(),
-            _ => format!("%{:02X}", c as u8),
-        })
-        .collect()
+    urlencoding::encode(s).into_owned()
 }
 
 async fn fetch_json<T: serde::de::DeserializeOwned>(url: &str) -> Result<T, String> {
