@@ -186,7 +186,15 @@ impl ToolPort for BasicToolHandler {
             if let Ok(agents) = agent_handler.list_agents().await {
                 for agent in agents {
                     // Build input schema for agent
-                    let input_schema = if agent.input_schema.is_null() {
+                    // Schema must have "type": "object" to be valid
+                    let has_valid_schema = agent.input_schema
+                        .as_object()
+                        .map(|obj| obj.contains_key("type"))
+                        .unwrap_or(false);
+
+                    let input_schema = if has_valid_schema {
+                        agent.input_schema.clone()
+                    } else {
                         json!({
                             "type": "object",
                             "properties": {
@@ -201,8 +209,6 @@ impl ToolPort for BasicToolHandler {
                             },
                             "required": ["prompt"]
                         })
-                    } else {
-                        agent.input_schema.clone()
                     };
 
                     tools.push(Tool {

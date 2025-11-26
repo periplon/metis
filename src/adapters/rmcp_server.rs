@@ -244,9 +244,11 @@ impl ServerHandler for MetisServer {
                     );
 
                     // Use the agent's input schema or default prompt schema
-                    let schema = match agent.input_schema {
-                        serde_json::Value::Object(obj) => obj,
+                    // MCP requires schemas to have at least "type": "object"
+                    let schema = match &agent.input_schema {
+                        serde_json::Value::Object(obj) if obj.contains_key("type") => obj.clone(),
                         _ => {
+                            // Default schema for agents without a proper input schema
                             let mut default = serde_json::Map::new();
                             default.insert("type".to_string(), json!("object"));
                             default.insert(
