@@ -118,9 +118,6 @@ async fn main() -> anyhow::Result<()> {
     let metrics_handler =
         Arc::new(metis::adapters::metrics_handler::MetricsHandler::new(metrics_collector));
 
-    // Create MetisServer using rmcp SDK
-    let metis_server = MetisServer::new(resource_handler, tool_handler, prompt_handler);
-
     // Create in-memory secrets store for API keys
     let secrets_store = create_secrets_store();
     info!("Initialized in-memory secrets store");
@@ -131,6 +128,34 @@ async fn main() -> anyhow::Result<()> {
         let passphrase = cli.secret_passphrase.as_deref();
         load_secrets_from_config(&settings_read.secrets, &secrets_store, passphrase).await;
     }
+
+    // Create agent handler with secrets support
+    let agent_handler = metis::agents::handler::AgentHandler::new_with_secrets(
+        settings.clone(),
+        tool_handler.clone(),
+        secrets_store.clone(),
+    );
+
+    // Initialize agents
+    if let Err(e) = agent_handler.initialize().await {
+        tracing::warn!("Failed to initialize agents: {}", e);
+    } else {
+        info!("Agents initialized successfully");
+    }
+
+    // Wrap in Arc for sharing
+    let agent_handler: Arc<dyn metis::agents::domain::AgentPort> = Arc::new(agent_handler);
+
+    // Wire up agent handler to tool handler so agents can call other agents
+    tool_handler.set_agent_handler(agent_handler.clone()).await;
+
+    // Create MetisServer with agent support
+    let metis_server = MetisServer::with_agents(
+        resource_handler,
+        tool_handler,
+        prompt_handler,
+        agent_handler,
+    );
 
     // Create application using the library function
     let app = metis::create_app(metis_server, health_handler, metrics_handler, settings, state_manager, secrets_store).await;
