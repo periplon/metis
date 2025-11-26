@@ -95,11 +95,16 @@ mod tests {
             },
             auth: Default::default(),
             resources: vec![],
+            resource_templates: vec![],
             tools: vec![],
             prompts: vec![],
             rate_limit: None,
             s3: None,
             workflows: vec![],
+            agents: vec![],
+            orchestrations: vec![],
+            mcp_servers: vec![],
+            secrets: Default::default(),
         };
         let handler = HealthHandler::new(Arc::new(RwLock::new(settings)));
 
@@ -116,11 +121,16 @@ mod tests {
             },
             auth: Default::default(),
             resources: vec![],
+            resource_templates: vec![],
             tools: vec![],
             prompts: vec![],
             rate_limit: None,
             s3: None,
             workflows: vec![],
+            agents: vec![],
+            orchestrations: vec![],
+            mcp_servers: vec![],
+            secrets: Default::default(),
         };
         let handler = HealthHandler::new(Arc::new(RwLock::new(settings)));
 
@@ -138,11 +148,16 @@ mod tests {
             },
             auth: Default::default(),
             resources: vec![],
+            resource_templates: vec![],
             tools: vec![],
             prompts: vec![],
             rate_limit: None,
             s3: None,
             workflows: vec![],
+            agents: vec![],
+            orchestrations: vec![],
+            mcp_servers: vec![],
+            secrets: Default::default(),
         };
         let handler = HealthHandler::new(Arc::new(RwLock::new(settings)));
 

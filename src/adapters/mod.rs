@@ -1,5 +1,6 @@
 pub mod api_handler;
 pub mod auth_middleware;
+pub mod encryption;
 pub mod health_handler;
 pub mod jwks;
 pub mod mcp_client;
@@ -10,6 +11,7 @@ pub mod rate_limit;
 pub mod resource_handler;
 pub mod rmcp_server;
 pub mod sampling_handler;
+pub mod secrets;
 pub mod state_manager;
 pub mod tool_handler;
 pub mod ui_handler;

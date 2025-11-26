@@ -222,11 +222,16 @@ mod tests {
             },
             auth: Default::default(),
             resources: vec![],
+            resource_templates: vec![],
             tools: vec![],
             prompts: vec![],
             rate_limit: None,
             s3: None,
             workflows: vec![],
+            agents: vec![],
+            orchestrations: vec![],
+            mcp_servers: vec![],
+            secrets: Default::default(),
         };
 
         let result = ConfigValidator::validate(&settings);
@@ -242,11 +247,16 @@ mod tests {
             },
             auth: Default::default(),
             resources: vec![],
+            resource_templates: vec![],
             tools: vec![],
             prompts: vec![],
             rate_limit: None,
             s3: None,
             workflows: vec![],
+            agents: vec![],
+            orchestrations: vec![],
+            mcp_servers: vec![],
+            secrets: Default::default(),
         };
 
         let result = ConfigValidator::validate(&settings);
@@ -269,6 +279,7 @@ mod tests {
                     name: "First".to_string(),
                     description: None,
                     mime_type: None,
+                    output_schema: None,
                     content: Some("content".to_string()),
                     mock: None,
                 },
@@ -277,15 +288,21 @@ mod tests {
                     name: "Second".to_string(),
                     description: None,
                     mime_type: None,
+                    output_schema: None,
                     content: Some("content".to_string()),
                     mock: None,
                 },
             ],
+            resource_templates: vec![],
             tools: vec![],
             prompts: vec![],
             rate_limit: None,
             s3: None,
             workflows: vec![],
+            agents: vec![],
+            orchestrations: vec![],
+            mcp_servers: vec![],
+            secrets: Default::default(),
         };
 
         let result = ConfigValidator::validate(&settings);

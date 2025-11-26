@@ -391,6 +391,60 @@ pub async fn reset_state() -> Result<(), String> {
 }
 
 // ============================================================================
+// Secrets Management
+// ============================================================================
+
+/// Status of a single secret key
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct SecretKeyStatus {
+    pub key: String,
+    pub label: String,
+    pub description: String,
+    pub is_set: bool,
+    pub category: String,
+}
+
+/// Response showing which secrets are configured
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct SecretsStatusResponse {
+    /// List of secret keys that have been set
+    pub configured: Vec<String>,
+    /// All known secret keys with their set status
+    pub keys: Vec<SecretKeyStatus>,
+}
+
+/// List all secrets and their status (not values)
+pub async fn list_secrets() -> Result<SecretsStatusResponse, String> {
+    let url = format!("{}/secrets", API_BASE);
+    fetch_json::<SecretsStatusResponse>(&url).await
+}
+
+/// Set a secret value
+pub async fn set_secret(key: &str, value: &str) -> Result<(), String> {
+    let url = format!("{}/secrets/{}", API_BASE, key);
+    #[derive(serde::Serialize)]
+    struct SetSecretRequest {
+        value: String,
+    }
+    let req = SetSecretRequest {
+        value: value.to_string(),
+    };
+    post_empty(&url, &req).await
+}
+
+/// Delete a secret
+pub async fn delete_secret(key: &str) -> Result<(), String> {
+    let url = format!("{}/secrets/{}", API_BASE, key);
+    delete_request(&url).await
+}
+
+/// Clear all secrets
+pub async fn clear_secrets() -> Result<(), String> {
+    let url = format!("{}/secrets", API_BASE);
+    delete_request(&url).await
+}
+
+// ============================================================================
 // LLM Models Discovery
 // ============================================================================
 

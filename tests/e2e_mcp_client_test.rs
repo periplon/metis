@@ -54,11 +54,16 @@ impl TestServer {
             },
             auth: Default::default(),
             resources,
+            resource_templates: vec![],
             tools,
             prompts,
             rate_limit: None,
             s3: None,
             workflows: vec![],
+            agents: vec![],
+            orchestrations: vec![],
+            mcp_servers: vec![],
+            secrets: Default::default(),
         }));
 
         let state_manager = Arc::new(StateManager::new());
@@ -74,8 +79,11 @@ impl TestServer {
         // Create MetisServer using rmcp SDK
         let metis_server = MetisServer::new(resource_handler, tool_handler, prompt_handler);
 
+        // Create test secrets store
+        let secrets_store = metis::adapters::secrets::create_secrets_store();
+
         let app =
-            metis::create_app(metis_server, health_handler, metrics_handler, settings, state_manager).await;
+            metis::create_app(metis_server, health_handler, metrics_handler, settings, state_manager, secrets_store).await;
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -109,6 +117,7 @@ impl TestServer {
                 },
                 "required": ["message"]
             }),
+            output_schema: None,
             static_response: Some(json!({"echoed": "hello"})),
             mock: Some(MockConfig {
                 strategy: MockStrategyType::Static,
@@ -133,6 +142,7 @@ impl TestServer {
             name: "Sample Resource".to_string(),
             description: Some("A sample resource for testing".to_string()),
             mime_type: Some("text/plain".to_string()),
+            output_schema: None,
             content: Some("Sample resource content".to_string()),
             mock: Some(MockConfig {
                 strategy: MockStrategyType::Static,
@@ -161,6 +171,7 @@ impl TestServer {
                 },
                 "required": ["message"]
             }),
+            output_schema: None,
             static_response: Some(json!({"echoed": "hello"})),
             mock: Some(MockConfig {
                 strategy: MockStrategyType::Static,
@@ -184,6 +195,7 @@ impl TestServer {
                 description: Some("Name to greet".to_string()),
                 required: true,
             }]),
+            input_schema: None,
             messages: Some(vec![PromptMessage {
                 role: "user".to_string(),
                 content: "Hello, {{name}}!".to_string(),
@@ -317,6 +329,7 @@ async fn test_list_tools_with_configured_tools() {
             },
             "required": ["message"]
         }),
+        output_schema: None,
         static_response: Some(json!({"echoed": "hello"})),
         mock: Some(MockConfig {
             strategy: MockStrategyType::Static,
@@ -360,6 +373,7 @@ async fn test_call_tool() {
             },
             "required": ["message"]
         }),
+        output_schema: None,
         static_response: Some(json!({"echoed": "hello"})),
         mock: Some(MockConfig {
             strategy: MockStrategyType::Static,
@@ -418,6 +432,7 @@ async fn test_list_resources_with_configured_resources() {
         name: "Sample Resource".to_string(),
         description: Some("A sample resource for testing".to_string()),
         mime_type: Some("text/plain".to_string()),
+        output_schema: None,
         content: Some("Sample resource content".to_string()),
         mock: Some(MockConfig {
             strategy: MockStrategyType::Static,
@@ -457,6 +472,7 @@ async fn test_read_resource() {
         name: "Sample Resource".to_string(),
         description: Some("A sample resource".to_string()),
         mime_type: Some("text/plain".to_string()),
+        output_schema: None,
         content: Some("Sample resource content".to_string()),
         mock: Some(MockConfig {
             strategy: MockStrategyType::Static,
@@ -506,6 +522,7 @@ async fn test_list_prompts_with_configured_prompts() {
             description: Some("Name to greet".to_string()),
             required: true,
         }]),
+        input_schema: None,
         messages: Some(vec![PromptMessage {
             role: "user".to_string(),
             content: "Hello, {{name}}!".to_string(),
@@ -535,6 +552,7 @@ async fn test_get_prompt() {
             description: Some("Name to greet".to_string()),
             required: true,
         }]),
+        input_schema: None,
         messages: Some(vec![PromptMessage {
             role: "user".to_string(),
             content: "Hello, {{name}}!".to_string(),

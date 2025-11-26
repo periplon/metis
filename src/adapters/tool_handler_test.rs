@@ -14,19 +14,25 @@ async fn test_execute_tool_static() {
         name: "test_tool".to_string(),
         description: "Test Tool".to_string(),
         input_schema: json!({}),
+        output_schema: None,
         static_response: Some(json!({ "result": "success" })),
         mock: None,
     }];
-    
+
     let settings = Settings {
         server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
         auth: Default::default(),
-            resources: vec![],
+        resources: vec![],
+        resource_templates: vec![],
         tools: config,
         prompts: vec![],
         rate_limit: None,
         s3: None,
         workflows: vec![],
+        agents: vec![],
+        orchestrations: vec![],
+        mcp_servers: vec![],
+        secrets: Default::default(),
     };
     let handler = BasicToolHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -43,6 +49,7 @@ async fn test_execute_tool_mock() {
         name: "mock_tool".to_string(),
         description: "Mock Tool".to_string(),
         input_schema: json!({}),
+        output_schema: None,
         static_response: None,
         mock: Some(MockConfig {
             strategy: MockStrategyType::Template,
@@ -57,16 +64,21 @@ async fn test_execute_tool_mock() {
             database: None,
         }),
     }];
-    
+
     let settings = Settings {
         server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
         auth: Default::default(),
-            resources: vec![],
+        resources: vec![],
+        resource_templates: vec![],
         tools: config,
         prompts: vec![],
         rate_limit: None,
         s3: None,
         workflows: vec![],
+        agents: vec![],
+        orchestrations: vec![],
+        mcp_servers: vec![],
+        secrets: Default::default(),
     };
     let handler = BasicToolHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -83,19 +95,25 @@ async fn test_execute_tool_echo_fallback() {
         name: "echo".to_string(),
         description: "Echo".to_string(),
         input_schema: json!({}),
+        output_schema: None,
         static_response: None,
         mock: None,
     }];
-    
+
     let settings = Settings {
         server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
         auth: Default::default(),
-            resources: vec![],
+        resources: vec![],
+        resource_templates: vec![],
         tools: config,
         prompts: vec![],
         rate_limit: None,
         s3: None,
         workflows: vec![],
+        agents: vec![],
+        orchestrations: vec![],
+        mcp_servers: vec![],
+        secrets: Default::default(),
     };
     let handler = BasicToolHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -111,12 +129,17 @@ async fn test_execute_tool_not_found() {
     let settings = Settings {
         server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
         auth: Default::default(),
-            resources: vec![],
+        resources: vec![],
+        resource_templates: vec![],
         tools: vec![],
         prompts: vec![],
         rate_limit: None,
         s3: None,
         workflows: vec![],
+        agents: vec![],
+        orchestrations: vec![],
+        mcp_servers: vec![],
+        secrets: Default::default(),
     };
     let handler = BasicToolHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -132,6 +155,7 @@ async fn test_list_tools() {
             name: "t1".to_string(),
             description: "d1".to_string(),
             input_schema: json!({}),
+            output_schema: None,
             static_response: None,
             mock: None,
         },
@@ -139,20 +163,26 @@ async fn test_list_tools() {
             name: "t2".to_string(),
             description: "d2".to_string(),
             input_schema: json!({}),
+            output_schema: None,
             static_response: None,
             mock: None,
         },
     ];
-    
+
     let settings = Settings {
         server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
         auth: Default::default(),
-            resources: vec![],
+        resources: vec![],
+        resource_templates: vec![],
         tools: config,
         prompts: vec![],
         rate_limit: None,
         s3: None,
         workflows: vec![],
+        agents: vec![],
+        orchestrations: vec![],
+        mcp_servers: vec![],
+        secrets: Default::default(),
     };
     let handler = BasicToolHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 

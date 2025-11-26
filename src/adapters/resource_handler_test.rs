@@ -13,19 +13,25 @@ use tokio::sync::RwLock;
         name: "Test".to_string(),
         description: None,
         mime_type: Some("text/plain".to_string()),
+        output_schema: None,
         content: Some("Static Content".to_string()),
         mock: None,
     }];
-    
+
     let settings = Settings {
         server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
         auth: Default::default(),
         resources: config,
+        resource_templates: vec![],
         tools: vec![],
         prompts: vec![],
         rate_limit: None,
         s3: None,
         workflows: vec![],
+        agents: vec![],
+        orchestrations: vec![],
+        mcp_servers: vec![],
+        secrets: Default::default(),
     };
     let handler = InMemoryResourceHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -42,6 +48,7 @@ use tokio::sync::RwLock;
         name: "Mock".to_string(),
         description: None,
         mime_type: Some("text/plain".to_string()),
+        output_schema: None,
         content: None,
         mock: Some(MockConfig {
             strategy: MockStrategyType::Template,
@@ -56,16 +63,21 @@ use tokio::sync::RwLock;
             database: None,
         }),
     }];
-    
+
     let settings = Settings {
         server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
         auth: Default::default(),
         resources: config,
+        resource_templates: vec![],
         tools: vec![],
         prompts: vec![],
         rate_limit: None,
         s3: None,
         workflows: vec![],
+        agents: vec![],
+        orchestrations: vec![],
+        mcp_servers: vec![],
+        secrets: Default::default(),
     };
     let handler = InMemoryResourceHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -80,12 +92,17 @@ use tokio::sync::RwLock;
     let settings = Settings {
         server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
         auth: Default::default(),
-            resources: vec![],
+        resources: vec![],
+        resource_templates: vec![],
         tools: vec![],
         prompts: vec![],
         rate_limit: None,
         s3: None,
         workflows: vec![],
+        agents: vec![],
+        orchestrations: vec![],
+        mcp_servers: vec![],
+        secrets: Default::default(),
     };
     let handler = InMemoryResourceHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -101,6 +118,7 @@ use tokio::sync::RwLock;
             name: "One".to_string(),
             description: None,
             mime_type: Some("text/plain".to_string()),
+            output_schema: None,
             content: None,
             mock: None,
         },
@@ -109,20 +127,26 @@ use tokio::sync::RwLock;
             name: "Two".to_string(),
             description: None,
             mime_type: Some("text/plain".to_string()),
+            output_schema: None,
             content: None,
             mock: None,
         },
     ];
-    
+
     let settings = Settings {
         server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
         auth: Default::default(),
         resources: config,
+        resource_templates: vec![],
         tools: vec![],
         prompts: vec![],
         rate_limit: None,
         s3: None,
         workflows: vec![],
+        agents: vec![],
+        orchestrations: vec![],
+        mcp_servers: vec![],
+        secrets: Default::default(),
     };
     let handler = InMemoryResourceHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 

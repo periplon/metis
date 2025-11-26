@@ -10,6 +10,7 @@ use super::{
     CompletionRequest, CompletionResponse, FinishReason, LlmProvider, LlmStream, LlmStreamSender,
     StreamChunk, TokenUsage, ToolCallDelta,
 };
+use crate::adapters::secrets::SharedSecretsStore;
 use crate::agents::config::LlmProviderConfig;
 use crate::agents::domain::{Message, Role, ToolCall};
 use crate::agents::error::{LlmError, LlmResult};
@@ -39,6 +40,37 @@ impl OpenAiProvider {
                 LlmError::Authentication("OPENAI_API_KEY environment variable not set".to_string())
             })?
         };
+
+        let base_url = config
+            .base_url
+            .clone()
+            .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+
+        Ok(Self {
+            client: reqwest::Client::new(),
+            api_key,
+            base_url,
+            model: config.model.clone(),
+            default_temperature: config.temperature,
+            default_max_tokens: config.max_tokens,
+        })
+    }
+
+    /// Create a new OpenAI provider using secrets store for API key
+    ///
+    /// Checks the secrets store first, then falls back to environment variables.
+    pub async fn new_with_secrets(
+        config: &LlmProviderConfig,
+        secrets: SharedSecretsStore,
+    ) -> LlmResult<Self> {
+        let env_var = config.api_key_env.as_deref().unwrap_or("OPENAI_API_KEY");
+
+        let api_key = secrets.get_or_env(env_var).await.ok_or_else(|| {
+            LlmError::Authentication(format!(
+                "API key not found in secrets store or environment variable {}",
+                env_var
+            ))
+        })?;
 
         let base_url = config
             .base_url

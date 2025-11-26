@@ -1,3 +1,7 @@
+resource_templates = []
+orchestrations = []
+mcp_servers = []
+
 [server]
 host = "127.0.0.1"
 port = 3000
@@ -91,3 +95,86 @@ depends_on = []
 loop_var = "item"
 loop_concurrency = 1
 on_error = "fail"
+
+[[agents]]
+name = "aadfs"
+description = ""
+agent_type = "react"
+system_prompt = "You are a prominent scientist"
+available_tools = [
+    "template_tool",
+    "asdf",
+]
+mcp_tools = []
+max_iterations = 10
+timeout_seconds = 300
+
+[agents.input_schema]
+
+[agents.llm]
+provider = "openai"
+model = "gpt-5.1"
+api_key_env = "OPENAI_API_KEY"
+stream = true
+
+[agents.memory]
+backend = "in_memory"
+max_messages = 100
+
+[agents.memory.strategy]
+type = "full"
+
+[[agents]]
+name = "test-flash"
+description = "Test agent"
+agent_type = "react"
+system_prompt = "Be brief"
+available_tools = [
+    "template_tool",
+    "asdf",
+]
+mcp_tools = []
+max_iterations = 10
+timeout_seconds = 300
+
+[agents.input_schema]
+
+[agents.llm]
+provider = "gemini"
+model = "gemini-3-pro-preview"
+api_key_env = "GEMINI_API_KEY"
+stream = true
+
+[agents.memory]
+backend = "in_memory"
+max_messages = 100
+
+[agents.memory.strategy]
+type = "full"
+
+[[agents]]
+name = "test-g3"
+description = "Test"
+agent_type = "single_turn"
+system_prompt = "Be brief"
+available_tools = []
+mcp_tools = []
+max_iterations = 10
+timeout_seconds = 60
+
+[agents.input_schema]
+
+[agents.llm]
+provider = "gemini"
+model = "gemini-3-pro-preview"
+api_key_env = "GEMINI_API_KEY"
+stream = false
+
+[agents.memory]
+backend = "in_memory"
+max_messages = 100
+
+[agents.memory.strategy]
+type = "full"
+
+[secrets]

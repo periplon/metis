@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 /// MCP Mock Server - A flexible mock server for Model Context Protocol
@@ -16,6 +16,11 @@ pub struct Cli {
     /// Server port
     #[arg(long, env = "METIS_PORT")]
     pub port: Option<u16>,
+
+    /// Passphrase for decrypting AGE-encrypted secrets in config
+    /// Can also be set via METIS_SECRET_PASSPHRASE environment variable
+    #[arg(long, env = "METIS_SECRET_PASSPHRASE")]
+    pub secret_passphrase: Option<String>,
 
     /// Enable S3 configuration source
     #[arg(long, env = "METIS_S3_ENABLED", num_args = 0..=1, default_missing_value = "true")]
@@ -40,6 +45,31 @@ pub struct Cli {
     /// S3 configuration polling interval in seconds
     #[arg(long, env = "METIS_S3_POLL_INTERVAL")]
     pub s3_poll_interval: Option<u64>,
+
+    /// Subcommand
+    #[command(subcommand)]
+    pub command: Option<Commands>,
+}
+
+/// CLI subcommands
+#[derive(Subcommand, Debug, Clone)]
+pub enum Commands {
+    /// Encrypt a secret value using AGE passphrase encryption
+    EncryptSecret {
+        /// The value to encrypt
+        value: String,
+        /// Passphrase for encryption (will prompt if not provided)
+        #[arg(short, long)]
+        passphrase: Option<String>,
+    },
+    /// Decrypt an AGE-encrypted secret value
+    DecryptSecret {
+        /// The encrypted value (starting with "age:")
+        value: String,
+        /// Passphrase for decryption (will prompt if not provided)
+        #[arg(short, long)]
+        passphrase: Option<String>,
+    },
 }
 
 impl Cli {

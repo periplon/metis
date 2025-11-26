@@ -160,6 +160,8 @@ pub struct TokenUsage {
     pub total_tokens: u32,
 }
 
+use crate::adapters::secrets::SharedSecretsStore;
+
 /// Create an LLM provider from configuration
 pub fn create_provider(config: &LlmProviderConfig) -> LlmResult<Arc<dyn LlmProvider>> {
     match config.provider {
@@ -181,6 +183,40 @@ pub fn create_provider(config: &LlmProviderConfig) -> LlmResult<Arc<dyn LlmProvi
         }
         LlmProviderType::AzureOpenAI => {
             let provider = AzureOpenAiProvider::new(config)?;
+            Ok(Arc::new(provider))
+        }
+    }
+}
+
+/// Create an LLM provider from configuration, using secrets store for API keys
+///
+/// This function checks the secrets store first for API keys, then falls back to
+/// environment variables if not found. This allows keys to be set via the UI
+/// and stored in memory without persisting to disk.
+pub async fn create_provider_with_secrets(
+    config: &LlmProviderConfig,
+    secrets: SharedSecretsStore,
+) -> LlmResult<Arc<dyn LlmProvider>> {
+    match config.provider {
+        LlmProviderType::OpenAI => {
+            let provider = OpenAiProvider::new_with_secrets(config, secrets).await?;
+            Ok(Arc::new(provider))
+        }
+        LlmProviderType::Anthropic => {
+            let provider = AnthropicProvider::new_with_secrets(config, secrets).await?;
+            Ok(Arc::new(provider))
+        }
+        LlmProviderType::Gemini => {
+            let provider = GeminiProvider::new_with_secrets(config, secrets).await?;
+            Ok(Arc::new(provider))
+        }
+        LlmProviderType::Ollama => {
+            // Ollama doesn't require an API key
+            let provider = OllamaProvider::new(config)?;
+            Ok(Arc::new(provider))
+        }
+        LlmProviderType::AzureOpenAI => {
+            let provider = AzureOpenAiProvider::new_with_secrets(config, secrets).await?;
             Ok(Arc::new(provider))
         }
     }

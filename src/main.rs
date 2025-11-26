@@ -1,24 +1,32 @@
 use clap::Parser;
+use metis::adapters::encryption;
 use metis::adapters::mock_strategy::MockStrategyHandler;
 use metis::adapters::prompt_handler::InMemoryPromptHandler;
 use metis::adapters::resource_handler::InMemoryResourceHandler;
 use metis::adapters::rmcp_server::MetisServer;
+use metis::adapters::secrets::{create_secrets_store, keys};
 use metis::adapters::state_manager::StateManager;
 use metis::adapters::tool_handler::BasicToolHandler;
-use metis::cli::Cli;
+use metis::cli::{Cli, Commands};
 use metis::config::{watcher::ConfigWatcher, S3Watcher, Settings};
+use std::io::{self, Write};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize tracing
-    tracing_subscriber::fmt::init();
-
     // Parse CLI arguments
     let cli = Cli::parse();
+
+    // Handle subcommands first (these don't need the full server setup)
+    if let Some(cmd) = &cli.command {
+        return handle_command(cmd);
+    }
+
+    // Initialize tracing (only for server mode)
+    tracing_subscriber::fmt::init();
 
     // Load configuration with CLI overrides
     let settings = Settings::new_with_cli(&cli)?;
@@ -113,8 +121,19 @@ async fn main() -> anyhow::Result<()> {
     // Create MetisServer using rmcp SDK
     let metis_server = MetisServer::new(resource_handler, tool_handler, prompt_handler);
 
+    // Create in-memory secrets store for API keys
+    let secrets_store = create_secrets_store();
+    info!("Initialized in-memory secrets store");
+
+    // Load secrets from config file into secrets store
+    {
+        let settings_read = settings.read().await;
+        let passphrase = cli.secret_passphrase.as_deref();
+        load_secrets_from_config(&settings_read.secrets, &secrets_store, passphrase).await;
+    }
+
     // Create application using the library function
-    let app = metis::create_app(metis_server, health_handler, metrics_handler, settings, state_manager).await;
+    let app = metis::create_app(metis_server, health_handler, metrics_handler, settings, state_manager, secrets_store).await;
 
     // Start server
     let addr: SocketAddr = format!("{}:{}", host, port).parse()?;
@@ -123,4 +142,106 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+/// Handle CLI subcommands
+fn handle_command(cmd: &Commands) -> anyhow::Result<()> {
+    match cmd {
+        Commands::EncryptSecret { value, passphrase } => {
+            let pass = get_passphrase(passphrase.as_deref(), "Enter passphrase for encryption: ")?;
+            match encryption::encrypt(value, &pass) {
+                Ok(encrypted) => {
+                    println!("{}", encrypted);
+                    Ok(())
+                }
+                Err(e) => {
+                    eprintln!("Encryption failed: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        Commands::DecryptSecret { value, passphrase } => {
+            let pass = get_passphrase(passphrase.as_deref(), "Enter passphrase for decryption: ")?;
+            match encryption::decrypt(value, &pass) {
+                Ok(decrypted) => {
+                    println!("{}", decrypted);
+                    Ok(())
+                }
+                Err(e) => {
+                    eprintln!("Decryption failed: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
+}
+
+/// Get passphrase from argument or prompt user
+fn get_passphrase(provided: Option<&str>, prompt: &str) -> anyhow::Result<String> {
+    if let Some(pass) = provided {
+        return Ok(pass.to_string());
+    }
+
+    // Prompt for passphrase
+    print!("{}", prompt);
+    io::stdout().flush()?;
+
+    let mut passphrase = String::new();
+    io::stdin().read_line(&mut passphrase)?;
+
+    Ok(passphrase.trim().to_string())
+}
+
+/// Load secrets from config into the secrets store
+async fn load_secrets_from_config(
+    secrets_config: &metis::config::SecretsConfig,
+    secrets_store: &metis::adapters::secrets::SharedSecretsStore,
+    passphrase: Option<&str>,
+) {
+    let mut loaded_count = 0;
+
+    // Helper to decrypt and load a secret
+    let mut load_secret = |key: &str, value: Option<&String>| {
+        if let Some(val) = value {
+            match encryption::decrypt_if_encrypted(val, passphrase) {
+                Ok(decrypted) => {
+                    // Use blocking runtime context since we're in async
+                    let store = secrets_store.clone();
+                    let k = key.to_string();
+                    let v = decrypted;
+                    tokio::spawn(async move {
+                        store.set(&k, &v).await;
+                    });
+                    loaded_count += 1;
+                    info!("Loaded secret {} from config", key);
+                }
+                Err(e) => {
+                    if encryption::is_encrypted(val) {
+                        warn!("Failed to decrypt secret {}: {} (passphrase may be missing or incorrect)", key, e);
+                    } else {
+                        // Plain text value, load it
+                        let store = secrets_store.clone();
+                        let k = key.to_string();
+                        let v = val.clone();
+                        tokio::spawn(async move {
+                            store.set(&k, &v).await;
+                        });
+                        loaded_count += 1;
+                        info!("Loaded secret {} from config", key);
+                    }
+                }
+            }
+        }
+    };
+
+    load_secret(keys::OPENAI_API_KEY, secrets_config.openai_api_key.as_ref());
+    load_secret(keys::ANTHROPIC_API_KEY, secrets_config.anthropic_api_key.as_ref());
+    load_secret(keys::GEMINI_API_KEY, secrets_config.gemini_api_key.as_ref());
+    load_secret(keys::AWS_ACCESS_KEY_ID, secrets_config.aws_access_key_id.as_ref());
+    load_secret(keys::AWS_SECRET_ACCESS_KEY, secrets_config.aws_secret_access_key.as_ref());
+    load_secret(keys::AWS_REGION, secrets_config.aws_region.as_ref());
+
+    if loaded_count > 0 {
+        info!("Loaded {} secrets from config file", loaded_count);
+    }
 }

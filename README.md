@@ -111,24 +111,31 @@ The server will start on `http://127.0.0.1:3000` by default.
 ### Command Line Options
 
 ```bash
-metis [OPTIONS]
+metis [OPTIONS] [COMMAND]
+
+Commands:
+  encrypt-secret  Encrypt a secret value using AGE passphrase encryption
+  decrypt-secret  Decrypt an AGE-encrypted secret value
+  help            Print help for commands
 
 Options:
-  -c, --config <CONFIG>           Path to config file [default: metis.toml]
-      --host <HOST>               Server host address
-      --port <PORT>               Server port
-      --s3-enabled                Enable S3 configuration source
-      --s3-bucket <BUCKET>        S3 bucket name for configuration files
-      --s3-prefix <PREFIX>        S3 key prefix (e.g., "config/")
-      --s3-region <REGION>        AWS region for S3
-      --s3-endpoint <ENDPOINT>    S3 endpoint URL (for MinIO/LocalStack)
-      --s3-poll-interval <SECS>   S3 polling interval in seconds
-  -h, --help                      Print help
-  -V, --version                   Print version
+  -c, --config <CONFIG>               Path to config file [default: metis.toml]
+      --host <HOST>                   Server host address
+      --port <PORT>                   Server port
+      --secret-passphrase <PASS>      Passphrase for decrypting AGE-encrypted secrets
+      --s3-enabled                    Enable S3 configuration source
+      --s3-bucket <BUCKET>            S3 bucket name for configuration files
+      --s3-prefix <PREFIX>            S3 key prefix (e.g., "config/")
+      --s3-region <REGION>            AWS region for S3
+      --s3-endpoint <ENDPOINT>        S3 endpoint URL (for MinIO/LocalStack)
+      --s3-poll-interval <SECS>       S3 polling interval in seconds
+  -h, --help                          Print help
+  -V, --version                       Print version
 ```
 
 All CLI options can also be set via environment variables:
 - `METIS_CONFIG`, `METIS_HOST`, `METIS_PORT`
+- `METIS_SECRET_PASSPHRASE` - Passphrase for AGE-encrypted secrets
 - `METIS_S3_ENABLED`, `METIS_S3_BUCKET`, `METIS_S3_PREFIX`
 - `METIS_S3_REGION`, `METIS_S3_ENDPOINT`, `METIS_S3_POLL_INTERVAL`
 
@@ -224,6 +231,95 @@ metis
 ```
 
 **Configuration Precedence:** CLI > Environment Variables > Config File > Defaults
+
+### Secrets Management
+
+Metis provides flexible API key and credential management with multiple options:
+
+#### Priority Order for API Keys
+1. **In-memory secrets** (set via Web UI) - highest priority
+2. **Config file secrets** (plain or AGE-encrypted)
+3. **Environment variables** - fallback
+
+#### In-Memory Secrets (Web UI)
+
+The Web UI provides a secure way to enter API keys that are stored only in server memory:
+
+- Navigate to **Configuration** → **API Keys & Credentials**
+- Enter keys for AI providers (OpenAI, Anthropic, Google) and AWS/S3
+- Keys are **write-only** - never displayed after entry
+- Keys are **lost on server restart** (ephemeral storage)
+
+Available secret keys:
+- `OPENAI_API_KEY` - OpenAI API key
+- `ANTHROPIC_API_KEY` - Anthropic API key
+- `GEMINI_API_KEY` - Google Gemini API key
+- `AWS_ACCESS_KEY_ID` - AWS access key
+- `AWS_SECRET_ACCESS_KEY` - AWS secret key
+- `AWS_REGION` - AWS region
+
+#### Config File Secrets
+
+Store secrets directly in your config file (plain text or encrypted):
+
+```toml
+[secrets]
+openai_api_key = "sk-..."                    # Plain text
+anthropic_api_key = "age:YWdlLWVuY3J5..."    # AGE-encrypted
+gemini_api_key = "AIza..."
+aws_access_key_id = "AKIA..."
+aws_secret_access_key = "age:YWdlLWVuY3J5..." # AGE-encrypted
+aws_region = "us-east-1"
+```
+
+#### AGE Encryption
+
+Encrypt sensitive values using [AGE](https://github.com/FiloSottile/age) passphrase encryption:
+
+**Encrypt a secret:**
+```bash
+# With passphrase flag
+metis encrypt-secret "sk-your-api-key" -p "your-passphrase"
+
+# Interactive (prompts for passphrase)
+metis encrypt-secret "sk-your-api-key"
+```
+
+Output: `age:YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IHNjcnlwdC...`
+
+**Decrypt a secret:**
+```bash
+metis decrypt-secret "age:YWdlLWVuY3J5cHRpb24..." -p "your-passphrase"
+```
+
+**Use encrypted secrets in config:**
+```toml
+[secrets]
+openai_api_key = "age:YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IHNjcnlwdC..."
+```
+
+**Provide passphrase at runtime:**
+```bash
+# Via CLI flag
+metis --secret-passphrase "your-passphrase"
+
+# Via environment variable
+export METIS_SECRET_PASSPHRASE="your-passphrase"
+metis
+```
+
+#### Environment Variables
+
+Environment variables are always checked as a fallback:
+
+```bash
+export OPENAI_API_KEY="sk-..."
+export ANTHROPIC_API_KEY="sk-ant-..."
+export GEMINI_API_KEY="AIza..."
+export AWS_ACCESS_KEY_ID="AKIA..."
+export AWS_SECRET_ACCESS_KEY="..."
+export AWS_REGION="us-east-1"
+```
 
 ### Authentication Configuration (Optional)
 
@@ -489,9 +585,11 @@ Metis implements the following MCP protocol methods:
 - ✅ Rate Limiting
 - ✅ Basic Web UI (Embedded)
 - ✅ Authentication (API Key, JWT Bearer, Basic Auth, OAuth2/JWKS)
+- ✅ Secrets Management (Web UI + AGE encryption)
 
 ### Planned Features
 - ✅ Advanced Workflow engine
+- ✅ Secrets Management with AGE encryption
 - [ ] Enhanced Web UI for configuration management
 - [ ] Performance optimizations (>10k req/s)
 

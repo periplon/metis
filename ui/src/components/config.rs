@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use crate::api;
+use crate::components::secrets::SecretsEditor;
 use crate::types::{ConfigOverview, ServerSettings, AuthConfig, RateLimitConfig, S3Config};
 
 // Re-export web_sys types with full features for file operations
@@ -51,6 +52,7 @@ pub fn Config() -> impl IntoView {
                                 view! {
                                     <div class="space-y-6">
                                         <NewConfigBanner />
+                                        <SecretsEditor />
                                         <SettingsEditorCard initial_settings=server_settings />
                                     </div>
                                 }.into_any()
@@ -59,6 +61,7 @@ pub fn Config() -> impl IntoView {
                                 view! {
                                     <div class="space-y-6">
                                         <ServerConfigCard overview=overview.clone() />
+                                        <SecretsEditor />
                                         <SettingsEditorCard initial_settings=server_settings />
                                         <QuickLinksCard overview=overview />
                                     </div>
@@ -96,6 +99,7 @@ pub fn Config() -> impl IntoView {
                                 view! {
                                     <div class="space-y-6">
                                         <NewConfigBanner />
+                                        <SecretsEditor />
                                         <SettingsEditorCard initial_settings=default_settings />
                                     </div>
                                 }.into_any()
@@ -104,6 +108,7 @@ pub fn Config() -> impl IntoView {
                                 view! {
                                     <div class="space-y-6">
                                         <ServerConfigCard overview=overview.clone() />
+                                        <SecretsEditor />
                                         <FeaturesCard overview=overview.clone() />
                                         <QuickLinksCard overview=overview />
                                     </div>

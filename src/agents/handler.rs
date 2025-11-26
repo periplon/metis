@@ -7,13 +7,14 @@ use async_trait::async_trait;
 use serde_json::Value;
 use tokio::sync::RwLock;
 
+use crate::adapters::secrets::SharedSecretsStore;
 use crate::agents::config::{AgentConfig, OrchestrationConfig};
 use crate::agents::core::{create_agent, Agent};
 use crate::agents::domain::{
     AgentInfo, AgentPort, AgentResponse, AgentStream, ConversationSession, SessionSummary,
 };
 use crate::agents::error::{AgentError, AgentResult};
-use crate::agents::llm::{create_provider, LlmProvider};
+use crate::agents::llm::{create_provider, create_provider_with_secrets, LlmProvider};
 use crate::agents::memory::{create_store, ConversationStore};
 use crate::agents::orchestration::OrchestrationEngine;
 use crate::config::Settings;
@@ -31,6 +32,8 @@ pub struct AgentHandler {
     default_store: Arc<dyn ConversationStore>,
     /// Orchestration engine
     orchestration: Arc<RwLock<Option<OrchestrationEngine>>>,
+    /// Secrets store for API keys
+    secrets: Option<SharedSecretsStore>,
 }
 
 impl AgentHandler {
@@ -45,6 +48,26 @@ impl AgentHandler {
             providers: Arc::new(RwLock::new(HashMap::new())),
             default_store,
             orchestration: Arc::new(RwLock::new(None)),
+            secrets: None,
+        }
+    }
+
+    /// Create a new agent handler with secrets store
+    pub fn new_with_secrets(
+        settings: Arc<RwLock<Settings>>,
+        tool_handler: Arc<dyn ToolPort>,
+        secrets: SharedSecretsStore,
+    ) -> Self {
+        let default_store = Arc::new(crate::agents::memory::InMemoryStore::new(100));
+
+        Self {
+            settings,
+            tool_handler,
+            agents: Arc::new(RwLock::new(HashMap::new())),
+            providers: Arc::new(RwLock::new(HashMap::new())),
+            default_store,
+            orchestration: Arc::new(RwLock::new(None)),
+            secrets: Some(secrets),
         }
     }
 
@@ -104,8 +127,14 @@ impl AgentHandler {
             return Ok(provider.clone());
         }
 
-        // Create new provider
-        let provider = create_provider(config).map_err(|e| AgentError::Configuration(e.to_string()))?;
+        // Create new provider, using secrets store if available
+        let provider = if let Some(secrets) = &self.secrets {
+            create_provider_with_secrets(config, secrets.clone())
+                .await
+                .map_err(|e| AgentError::Configuration(e.to_string()))?
+        } else {
+            create_provider(config).map_err(|e| AgentError::Configuration(e.to_string()))?
+        };
 
         // Cache it
         self.providers.write().await.insert(key, provider.clone());

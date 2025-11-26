@@ -14,6 +14,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::adapters::mock_strategy::MockStrategyHandler;
+use crate::adapters::secrets::SharedSecretsStore;
 use crate::adapters::state_manager::StateManager;
 use crate::adapters::workflow_engine::WorkflowEngine;
 use crate::agents::config::{
@@ -36,6 +37,8 @@ pub struct ApiState {
     pub agent_handler: Option<Arc<dyn AgentPort>>,
     /// Shared agent handler for testing (persists memory across requests)
     pub test_agent_handler: Arc<RwLock<Option<crate::agents::handler::AgentHandler>>>,
+    /// Secrets store for API keys (in-memory)
+    pub secrets: SharedSecretsStore,
 }
 
 /// Tool handler for workflow testing that uses mock strategies
@@ -2153,26 +2156,29 @@ pub async fn test_agent(
     }
     drop(settings);
 
-    // Get or create the shared test agent handler (persists memory across requests)
+    // Always reinitialize the agent handler to pick up newly created agents and use secrets store
     {
         let mut handler_guard = state.test_agent_handler.write().await;
-        if handler_guard.is_none() {
-            let tool_handler = Arc::new(BasicToolHandler::new(
-                state.settings.clone(),
-                state.mock_strategy.clone(),
-            ));
-            let agent_handler = AgentHandler::new(state.settings.clone(), tool_handler);
+        let tool_handler = Arc::new(BasicToolHandler::new(
+            state.settings.clone(),
+            state.mock_strategy.clone(),
+        ));
+        // Use new_with_secrets to enable API key lookup from secrets store
+        let agent_handler = AgentHandler::new_with_secrets(
+            state.settings.clone(),
+            tool_handler,
+            state.secrets.clone(),
+        );
 
-            // Initialize the agent handler to populate agent cache
-            if let Err(e) = agent_handler.initialize().await {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiResponse::<TestResult>::error(&format!("Failed to initialize agent handler: {}", e))),
-                );
-            }
-
-            *handler_guard = Some(agent_handler);
+        // Initialize the agent handler to populate agent cache
+        if let Err(e) = agent_handler.initialize().await {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::<TestResult>::error(&format!("Failed to initialize agent handler: {}", e))),
+            );
         }
+
+        *handler_guard = Some(agent_handler);
     }
 
     // Use the shared handler
@@ -2323,7 +2329,7 @@ pub async fn test_orchestration(
         state.settings.clone(),
         state.mock_strategy.clone(),
     ));
-    let agent_handler = AgentHandler::new(state.settings.clone(), tool_handler);
+    let agent_handler = AgentHandler::new_with_secrets(state.settings.clone(), tool_handler, state.secrets.clone());
 
     // Initialize the agent handler to populate agent cache and orchestration engine
     if let Err(e) = agent_handler.initialize().await {
@@ -2403,13 +2409,14 @@ pub struct FetchModelsRequest {
 
 /// GET /api/llm/models/:provider - Fetch available models from an LLM provider
 pub async fn fetch_llm_models(
+    State(state): State<ApiState>,
     Path(provider): Path<String>,
     axum::extract::Query(params): axum::extract::Query<FetchModelsRequest>,
 ) -> impl IntoResponse {
     let models = match provider.to_lowercase().as_str() {
-        "openai" => fetch_openai_models(params.api_key_env).await,
+        "openai" => fetch_openai_models(params.api_key_env, &state.secrets).await,
         "anthropic" => fetch_anthropic_models().await,
-        "gemini" => fetch_gemini_models(params.api_key_env).await,
+        "gemini" => fetch_gemini_models(params.api_key_env, &state.secrets).await,
         "ollama" => fetch_ollama_models(params.base_url).await,
         "azureopenai" => fetch_azure_openai_models().await,
         _ => Err(format!("Unknown provider: {}", provider)),
@@ -2428,8 +2435,10 @@ pub async fn fetch_llm_models(
     }
 }
 
-async fn fetch_openai_models(api_key_env: Option<String>) -> Result<Vec<LlmModelInfo>, String> {
-    let api_key = get_api_key(api_key_env.as_deref().unwrap_or("OPENAI_API_KEY"))?;
+async fn fetch_openai_models(api_key_env: Option<String>, secrets: &SharedSecretsStore) -> Result<Vec<LlmModelInfo>, String> {
+    let env_var = api_key_env.as_deref().unwrap_or("OPENAI_API_KEY");
+    let api_key = secrets.get_or_env(env_var).await
+        .ok_or_else(|| format!("API key not found: {} (set via UI Secrets or environment variable)", env_var))?;
 
     let client = reqwest::Client::new();
     let response = client
@@ -2489,11 +2498,14 @@ async fn fetch_anthropic_models() -> Result<Vec<LlmModelInfo>, String> {
     ])
 }
 
-async fn fetch_gemini_models(api_key_env: Option<String>) -> Result<Vec<LlmModelInfo>, String> {
-    let api_key = get_api_key(api_key_env.as_deref().unwrap_or("GEMINI_API_KEY"))?;
+async fn fetch_gemini_models(api_key_env: Option<String>, secrets: &SharedSecretsStore) -> Result<Vec<LlmModelInfo>, String> {
+    let env_var = api_key_env.as_deref().unwrap_or("GEMINI_API_KEY");
+    let api_key = secrets.get_or_env(env_var).await
+        .ok_or_else(|| format!("API key not found: {} (set via UI Secrets or environment variable)", env_var))?;
 
     let client = reqwest::Client::new();
-    let url = format!("https://generativelanguage.googleapis.com/v1/models?key={}", api_key);
+    // Use v1beta endpoint to get all models including Gemini 2.0+
+    let url = format!("https://generativelanguage.googleapis.com/v1beta/models?key={}", api_key);
 
     let response = client
         .get(&url)
@@ -2602,10 +2614,6 @@ async fn fetch_azure_openai_models() -> Result<Vec<LlmModelInfo>, String> {
     ])
 }
 
-fn get_api_key(env_var: &str) -> Result<String, String> {
-    std::env::var(env_var).map_err(|_| format!("Environment variable {} not set", env_var))
-}
-
 fn format_model_name(id: &str) -> String {
     // Convert model IDs to friendly names
     match id {
@@ -2654,9 +2662,139 @@ fn get_default_openai_models() -> Vec<LlmModelInfo> {
 
 fn get_default_gemini_models() -> Vec<LlmModelInfo> {
     vec![
+        LlmModelInfo { id: "gemini-2.5-pro-preview-06-05".to_string(), name: "Gemini 2.5 Pro Preview".to_string(), description: Some("Latest preview".to_string()) },
+        LlmModelInfo { id: "gemini-2.5-flash-preview-05-20".to_string(), name: "Gemini 2.5 Flash Preview".to_string(), description: None },
         LlmModelInfo { id: "gemini-2.0-flash".to_string(), name: "Gemini 2.0 Flash".to_string(), description: None },
+        LlmModelInfo { id: "gemini-2.0-flash-lite".to_string(), name: "Gemini 2.0 Flash Lite".to_string(), description: Some("Cost efficient".to_string()) },
+        LlmModelInfo { id: "gemini-2.0-flash-thinking-exp".to_string(), name: "Gemini 2.0 Flash Thinking".to_string(), description: Some("Reasoning model".to_string()) },
         LlmModelInfo { id: "gemini-1.5-pro".to_string(), name: "Gemini 1.5 Pro".to_string(), description: None },
         LlmModelInfo { id: "gemini-1.5-flash".to_string(), name: "Gemini 1.5 Flash".to_string(), description: None },
-        LlmModelInfo { id: "gemini-1.0-pro".to_string(), name: "Gemini 1.0 Pro".to_string(), description: None },
     ]
+}
+
+// ============================================================================
+// Secrets Management - In-Memory API Key Storage
+// ============================================================================
+
+/// Shared state for secrets API (separate from ApiState to allow different routes)
+#[derive(Clone)]
+pub struct SecretsApiState {
+    pub secrets: SharedSecretsStore,
+}
+
+/// Request body for setting a secret
+#[derive(Deserialize)]
+pub struct SetSecretRequest {
+    pub value: String,
+}
+
+/// Response showing which secrets are configured (not values)
+#[derive(Serialize)]
+pub struct SecretsStatusResponse {
+    /// List of secret keys that have been set
+    pub configured: Vec<String>,
+    /// All known secret keys with their set status
+    pub keys: Vec<SecretKeyStatus>,
+}
+
+/// Status of a single secret key
+#[derive(Serialize)]
+pub struct SecretKeyStatus {
+    pub key: String,
+    pub label: String,
+    pub description: String,
+    pub is_set: bool,
+    pub category: String,
+}
+
+/// GET /api/secrets - List all secrets and their status (not values)
+pub async fn list_secrets(
+    State(state): State<SecretsApiState>,
+) -> impl IntoResponse {
+    let configured = state.secrets.list_keys().await;
+
+    // Define all known secret keys with metadata
+    let all_keys = vec![
+        ("OPENAI_API_KEY", "OpenAI API Key", "API key for OpenAI models (GPT-4, etc.)", "AI Providers"),
+        ("ANTHROPIC_API_KEY", "Anthropic API Key", "API key for Anthropic models", "AI Providers"),
+        ("GEMINI_API_KEY", "Gemini API Key", "API key for Google Gemini models", "AI Providers"),
+        ("AWS_ACCESS_KEY_ID", "AWS Access Key ID", "AWS access key for S3 and other services", "AWS/S3"),
+        ("AWS_SECRET_ACCESS_KEY", "AWS Secret Access Key", "AWS secret key for S3 and other services", "AWS/S3"),
+        ("AWS_REGION", "AWS Region", "Default AWS region (e.g., us-east-1)", "AWS/S3"),
+    ];
+
+    let keys: Vec<SecretKeyStatus> = all_keys
+        .into_iter()
+        .map(|(key, label, desc, category)| SecretKeyStatus {
+            key: key.to_string(),
+            label: label.to_string(),
+            description: desc.to_string(),
+            is_set: configured.contains(&key.to_string()),
+            category: category.to_string(),
+        })
+        .collect();
+
+    let response = SecretsStatusResponse { configured, keys };
+    (StatusCode::OK, Json(ApiResponse::success(response)))
+}
+
+/// POST /api/secrets/:key - Set a secret value
+pub async fn set_secret(
+    State(state): State<SecretsApiState>,
+    Path(key): Path<String>,
+    Json(req): Json<SetSecretRequest>,
+) -> impl IntoResponse {
+    // Validate the key is a known secret key
+    let valid_keys = [
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_REGION",
+    ];
+
+    if !valid_keys.contains(&key.as_str()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse::<()>::error(format!("Unknown secret key: {}", key))),
+        );
+    }
+
+    if req.value.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse::<()>::error("Secret value cannot be empty".to_string())),
+        );
+    }
+
+    state.secrets.set(&key, &req.value).await;
+    tracing::info!("Secret '{}' has been set", key);
+
+    (StatusCode::OK, Json(ApiResponse::<()>::ok()))
+}
+
+/// DELETE /api/secrets/:key - Delete a secret
+pub async fn delete_secret(
+    State(state): State<SecretsApiState>,
+    Path(key): Path<String>,
+) -> impl IntoResponse {
+    if state.secrets.delete(&key).await {
+        tracing::info!("Secret '{}' has been deleted", key);
+        (StatusCode::OK, Json(ApiResponse::<()>::ok()))
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ApiResponse::<()>::error(format!("Secret '{}' not found", key))),
+        )
+    }
+}
+
+/// DELETE /api/secrets - Clear all secrets
+pub async fn clear_secrets(
+    State(state): State<SecretsApiState>,
+) -> impl IntoResponse {
+    state.secrets.clear().await;
+    tracing::info!("All secrets have been cleared");
+    (StatusCode::OK, Json(ApiResponse::<()>::ok()))
 }

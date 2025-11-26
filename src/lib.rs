@@ -43,12 +43,13 @@ pub mod cli;
 pub mod config;
 pub mod domain;
 
-use crate::adapters::api_handler::{self, ApiState};
+use crate::adapters::api_handler::{self, ApiState, SecretsApiState};
 use crate::adapters::auth_middleware::{auth_middleware, AuthMiddleware, SharedAuthMiddleware};
 use crate::adapters::health_handler::HealthHandler;
 use crate::adapters::metrics_handler::MetricsHandler;
 use crate::adapters::mock_strategy::MockStrategyHandler;
 use crate::adapters::rmcp_server::MetisServer;
+use crate::adapters::secrets::SharedSecretsStore;
 use crate::adapters::state_manager::StateManager;
 use crate::agents::domain::AgentPort;
 use crate::agents::handler::AgentHandler;
@@ -68,6 +69,7 @@ use tokio::sync::RwLock;
 /// * `metrics_handler` - Metrics collection handler
 /// * `settings` - Application settings
 /// * `state_manager` - State manager for stateful mocks
+/// * `secrets_store` - In-memory secrets store for API keys
 ///
 /// # Returns
 ///
@@ -78,6 +80,7 @@ pub async fn create_app(
     metrics_handler: Arc<MetricsHandler>,
     settings: Arc<RwLock<crate::config::Settings>>,
     state_manager: Arc<StateManager>,
+    secrets_store: SharedSecretsStore,
 ) -> Router {
     // Create rmcp HTTP transport service
     let session_manager = Arc::new(LocalSessionManager::default());
@@ -139,7 +142,7 @@ pub async fn create_app(
                 mock_strategy.clone(),
             ));
 
-            let handler = AgentHandler::new(settings.clone(), tool_handler);
+            let handler = AgentHandler::new_with_secrets(settings.clone(), tool_handler, secrets_store.clone());
             tracing::info!("AgentHandler initialized with {} agents", settings_read.agents.len());
             Some(Arc::new(handler) as Arc<dyn AgentPort>)
         } else {
@@ -154,6 +157,7 @@ pub async fn create_app(
         mock_strategy,
         agent_handler,
         test_agent_handler: Arc::new(tokio::sync::RwLock::new(None)),
+        secrets: secrets_store.clone(),
     };
 
     // API routes for Web UI
@@ -201,6 +205,18 @@ pub async fn create_app(
         // LLM models discovery
         .route("/llm/models/:provider", get(api_handler::fetch_llm_models))
         .with_state(api_state);
+
+    // Secrets API routes (separate state for secrets store)
+    let secrets_state = SecretsApiState {
+        secrets: secrets_store,
+    };
+    let secrets_router = Router::new()
+        .route("/secrets", get(api_handler::list_secrets).delete(api_handler::clear_secrets))
+        .route("/secrets/:key", post(api_handler::set_secret).delete(api_handler::delete_secret))
+        .with_state(secrets_state);
+
+    // Merge API routers
+    let api_router = api_router.merge(secrets_router);
 
     // Build protected router with API routes
     let mut protected_router = protected_router

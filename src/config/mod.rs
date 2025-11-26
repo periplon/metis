@@ -39,6 +39,34 @@ pub struct Settings {
     /// External MCP servers that can be connected to for tools
     #[serde(default)]
     pub mcp_servers: Vec<McpServerConfig>,
+    /// Encrypted secrets that can be stored in the config file
+    /// Values can be plain text or AGE-encrypted (prefixed with "age:")
+    /// Encrypted values require METIS_SECRET_PASSPHRASE env var or --secret-passphrase flag
+    #[serde(default)]
+    pub secrets: SecretsConfig,
+}
+
+/// Configuration for embedded secrets (can be encrypted with AGE)
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
+pub struct SecretsConfig {
+    /// OpenAI API key (plain or AGE-encrypted)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub openai_api_key: Option<String>,
+    /// Anthropic API key (plain or AGE-encrypted)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anthropic_api_key: Option<String>,
+    /// Gemini API key (plain or AGE-encrypted)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gemini_api_key: Option<String>,
+    /// AWS Access Key ID (plain or AGE-encrypted)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aws_access_key_id: Option<String>,
+    /// AWS Secret Access Key (plain or AGE-encrypted)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aws_secret_access_key: Option<String>,
+    /// AWS Region
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aws_region: Option<String>,
 }
 
 /// Configuration for connecting to an external MCP server
