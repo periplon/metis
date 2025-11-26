@@ -10,6 +10,7 @@
 //! named "assistant" becomes the tool "agent_assistant". When called, the agent
 //! executes and returns its response as the tool result.
 
+use crate::adapters::tool_handler::AGENT_TOOL_PREFIX;
 use crate::agents::domain::AgentPort;
 use crate::domain::{PromptPort, ResourcePort, ToolPort};
 use rmcp::{
@@ -28,9 +29,6 @@ use rmcp::{
 use serde_json::json;
 use tracing::info;
 use std::sync::Arc;
-
-/// Prefix for agent tools exposed via MCP
-const AGENT_TOOL_PREFIX: &str = "agent_";
 
 /// Metis MCP Server
 ///

@@ -36,7 +36,7 @@ pub struct ApiState {
     pub mock_strategy: Arc<MockStrategyHandler>,
     pub agent_handler: Option<Arc<dyn AgentPort>>,
     /// Shared agent handler for testing (persists memory across requests)
-    pub test_agent_handler: Arc<RwLock<Option<crate::agents::handler::AgentHandler>>>,
+    pub test_agent_handler: Arc<RwLock<Option<Arc<crate::agents::handler::AgentHandler>>>>,
     /// Secrets store for API keys (in-memory)
     pub secrets: SharedSecretsStore,
 }
@@ -2171,7 +2171,7 @@ pub async fn test_agent(
                 // Use new_with_secrets to enable API key lookup from secrets store
                 let agent_handler = AgentHandler::new_with_secrets(
                     state.settings.clone(),
-                    tool_handler,
+                    tool_handler.clone(),
                     state.secrets.clone(),
                 );
 
@@ -2182,6 +2182,10 @@ pub async fn test_agent(
                         Json(ApiResponse::<TestResult>::error(&format!("Failed to initialize agent handler: {}", e))),
                     );
                 }
+
+                // Wire up agent handler to tool handler so agents can call other agents
+                let agent_handler = Arc::new(agent_handler);
+                tool_handler.set_agent_handler(agent_handler.clone()).await;
 
                 *handler_guard = Some(agent_handler);
             }

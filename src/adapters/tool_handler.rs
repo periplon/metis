@@ -1,13 +1,17 @@
 use crate::adapters::mcp_client::McpClientManager;
 use crate::adapters::mock_strategy::MockStrategyHandler;
 use crate::adapters::workflow_engine::WorkflowEngine;
+use crate::agents::domain::AgentPort;
 use crate::config::{Settings, ToolConfig, WorkflowConfig};
 use crate::domain::{Tool, ToolPort};
 use anyhow::Result;
 use async_trait::async_trait;
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::sync::{Arc, OnceLock};
 use tokio::sync::RwLock;
+
+/// Prefix for agent tools
+pub const AGENT_TOOL_PREFIX: &str = "agent_";
 
 /// Inner tool handler that only handles regular (non-workflow) tools.
 /// This prevents circular dependency when WorkflowEngine needs to call tools.
@@ -62,13 +66,15 @@ impl ToolPort for InnerToolHandler {
     }
 }
 
-/// Main tool handler that combines regular tools, workflow tools, and MCP tools.
-/// Workflows are exposed as tools that can be called via MCP.
+/// Main tool handler that combines regular tools, workflow tools, MCP tools, and agents.
+/// Workflows and agents are exposed as tools that can be called via MCP or by other agents.
 pub struct BasicToolHandler {
     settings: Arc<RwLock<Settings>>,
     inner_handler: Arc<InnerToolHandler>,
     workflow_engine: OnceLock<Arc<WorkflowEngine>>,
     mcp_client: Arc<McpClientManager>,
+    /// Optional agent handler for exposing agents as tools
+    agent_handler: Arc<RwLock<Option<Arc<dyn AgentPort>>>>,
 }
 
 impl BasicToolHandler {
@@ -79,6 +85,7 @@ impl BasicToolHandler {
             inner_handler,
             workflow_engine: OnceLock::new(),
             mcp_client: Arc::new(McpClientManager::new()),
+            agent_handler: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -94,7 +101,13 @@ impl BasicToolHandler {
             inner_handler,
             workflow_engine: OnceLock::new(),
             mcp_client,
+            agent_handler: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Set the agent handler to expose agents as tools
+    pub async fn set_agent_handler(&self, handler: Arc<dyn AgentPort>) {
+        *self.agent_handler.write().await = Some(handler);
     }
 
     /// Get the MCP client manager
@@ -168,6 +181,40 @@ impl ToolPort for BasicToolHandler {
         // Drop the settings lock before async call
         drop(settings);
 
+        // Agent tools (agents exposed as tools with agent_ prefix)
+        if let Some(agent_handler) = self.agent_handler.read().await.as_ref() {
+            if let Ok(agents) = agent_handler.list_agents().await {
+                for agent in agents {
+                    // Build input schema for agent
+                    let input_schema = if agent.input_schema.is_null() {
+                        json!({
+                            "type": "object",
+                            "properties": {
+                                "prompt": {
+                                    "type": "string",
+                                    "description": "The input prompt for the agent"
+                                },
+                                "session_id": {
+                                    "type": "string",
+                                    "description": "Optional session ID for multi-turn conversations"
+                                }
+                            },
+                            "required": ["prompt"]
+                        })
+                    } else {
+                        agent.input_schema.clone()
+                    };
+
+                    tools.push(Tool {
+                        name: format!("{}{}", AGENT_TOOL_PREFIX, agent.name),
+                        description: format!("[Agent:{}] {}", agent.agent_type, agent.description),
+                        input_schema,
+                        output_schema: agent.output_schema,
+                    });
+                }
+            }
+        }
+
         // MCP tools from external servers
         let mcp_tools = self.mcp_client.list_all_tools().await;
         for (_, tool) in mcp_tools {
@@ -178,6 +225,34 @@ impl ToolPort for BasicToolHandler {
     }
 
     async fn execute_tool(&self, name: &str, args: Value) -> Result<Value> {
+        // Check if this is an agent tool
+        if let Some(agent_name) = name.strip_prefix(AGENT_TOOL_PREFIX) {
+            if let Some(agent_handler) = self.agent_handler.read().await.as_ref() {
+                // Extract session_id if provided
+                let session_id = args
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                // Execute the agent
+                let response = agent_handler
+                    .execute(agent_name, args.clone(), session_id)
+                    .await?;
+
+                // Return agent response as tool result
+                return Ok(json!({
+                    "output": response.output,
+                    "session_id": response.session_id,
+                    "iterations": response.iterations,
+                    "tool_calls": response.tool_calls.len(),
+                    "reasoning_steps": response.reasoning_steps.len(),
+                    "execution_time_ms": response.execution_time_ms
+                }));
+            } else {
+                return Err(anyhow::anyhow!("Agent handler not available for agent: {}", agent_name));
+            }
+        }
+
         // Check if this is an MCP tool
         if McpClientManager::is_mcp_tool(name) {
             return self.mcp_client.call_tool(name, args).await;
