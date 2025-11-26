@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.17.0 - 2025-11-26
+#### Features
+- **(agents)** expose agents as tools for agent-to-agent and workflow consumption - (1806342) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.16.1 - 2025-11-26
 #### Bug Fixes
 - **(agents)** preserve conversation context in multi-turn ReAct sessions - (8af33cf) - Joan Marc Carbo Arnau
