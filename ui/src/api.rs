@@ -37,6 +37,83 @@ pub async fn save_config_to_s3() -> Result<(), String> {
     post_empty(&url, &()).await
 }
 
+/// Export config as JSON
+pub async fn export_config() -> Result<serde_json::Value, String> {
+    let url = format!("{}/config/export", API_BASE);
+    fetch_json::<serde_json::Value>(&url).await
+}
+
+/// Import config from JSON
+pub async fn import_config(config: &serde_json::Value) -> Result<(), String> {
+    let url = format!("{}/config/import", API_BASE);
+    post_empty(&url, config).await
+}
+
+/// Merge result showing what was added
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct MergeResult {
+    pub resources_added: usize,
+    pub resource_templates_added: usize,
+    pub tools_added: usize,
+    pub prompts_added: usize,
+    pub workflows_added: usize,
+    pub agents_added: usize,
+    pub orchestrations_added: usize,
+    pub mcp_servers_added: usize,
+}
+
+impl MergeResult {
+    pub fn total_added(&self) -> usize {
+        self.resources_added
+            + self.resource_templates_added
+            + self.tools_added
+            + self.prompts_added
+            + self.workflows_added
+            + self.agents_added
+            + self.orchestrations_added
+            + self.mcp_servers_added
+    }
+
+    pub fn summary(&self) -> String {
+        let mut parts = Vec::new();
+        if self.resources_added > 0 {
+            parts.push(format!("{} resources", self.resources_added));
+        }
+        if self.resource_templates_added > 0 {
+            parts.push(format!("{} templates", self.resource_templates_added));
+        }
+        if self.tools_added > 0 {
+            parts.push(format!("{} tools", self.tools_added));
+        }
+        if self.prompts_added > 0 {
+            parts.push(format!("{} prompts", self.prompts_added));
+        }
+        if self.workflows_added > 0 {
+            parts.push(format!("{} workflows", self.workflows_added));
+        }
+        if self.agents_added > 0 {
+            parts.push(format!("{} agents", self.agents_added));
+        }
+        if self.orchestrations_added > 0 {
+            parts.push(format!("{} orchestrations", self.orchestrations_added));
+        }
+        if self.mcp_servers_added > 0 {
+            parts.push(format!("{} MCP servers", self.mcp_servers_added));
+        }
+        if parts.is_empty() {
+            "No new items added (all items already exist)".to_string()
+        } else {
+            format!("Added: {}", parts.join(", "))
+        }
+    }
+}
+
+/// Merge config from JSON (only adds new elements)
+pub async fn merge_config(config: &serde_json::Value) -> Result<MergeResult, String> {
+    let url = format!("{}/config/merge", API_BASE);
+    post_json::<serde_json::Value, MergeResult>(&url, config).await
+}
+
 /// Fetch metrics as JSON
 pub async fn get_metrics() -> Result<serde_json::Value, String> {
     let url = format!("{}/metrics/json", API_BASE);
@@ -78,7 +155,7 @@ pub async fn delete_resource(uri: &str) -> Result<(), String> {
 pub async fn test_resource(uri: &str, args: &serde_json::Value) -> Result<crate::types::TestResult, String> {
     let encoded_uri = urlencoding_encode(uri);
     let url = format!("{}/resources/{}/test", API_BASE, encoded_uri);
-    let req = crate::types::TestRequest { args: args.clone() };
+    let req = crate::types::TestRequest { args: args.clone(), session_id: None };
     post_json::<crate::types::TestRequest, crate::types::TestResult>(&url, &req).await
 }
 
@@ -117,7 +194,7 @@ pub async fn delete_resource_template(uri_template: &str) -> Result<(), String> 
 pub async fn test_resource_template(uri_template: &str, args: &serde_json::Value) -> Result<crate::types::TestResult, String> {
     let encoded_uri = urlencoding_encode(uri_template);
     let url = format!("{}/resource-templates/{}/test", API_BASE, encoded_uri);
-    let req = crate::types::TestRequest { args: args.clone() };
+    let req = crate::types::TestRequest { args: args.clone(), session_id: None };
     post_json::<crate::types::TestRequest, crate::types::TestResult>(&url, &req).await
 }
 
@@ -152,7 +229,7 @@ pub async fn delete_tool(name: &str) -> Result<(), String> {
 
 pub async fn test_tool(name: &str, args: &serde_json::Value) -> Result<crate::types::TestResult, String> {
     let url = format!("{}/tools/{}/test", API_BASE, name);
-    let req = crate::types::TestRequest { args: args.clone() };
+    let req = crate::types::TestRequest { args: args.clone(), session_id: None };
     post_json::<crate::types::TestRequest, crate::types::TestResult>(&url, &req).await
 }
 
@@ -187,7 +264,7 @@ pub async fn delete_prompt(name: &str) -> Result<(), String> {
 
 pub async fn test_prompt(name: &str, args: &serde_json::Value) -> Result<crate::types::TestResult, String> {
     let url = format!("{}/prompts/{}/test", API_BASE, name);
-    let req = crate::types::TestRequest { args: args.clone() };
+    let req = crate::types::TestRequest { args: args.clone(), session_id: None };
     post_json::<crate::types::TestRequest, crate::types::TestResult>(&url, &req).await
 }
 
@@ -222,7 +299,80 @@ pub async fn delete_workflow(name: &str) -> Result<(), String> {
 
 pub async fn test_workflow(name: &str, args: &serde_json::Value) -> Result<crate::types::TestResult, String> {
     let url = format!("{}/workflows/{}/test", API_BASE, name);
-    let req = crate::types::TestRequest { args: args.clone() };
+    let req = crate::types::TestRequest { args: args.clone(), session_id: None };
+    post_json::<crate::types::TestRequest, crate::types::TestResult>(&url, &req).await
+}
+
+// ============================================================================
+// Agents
+// ============================================================================
+
+pub async fn list_agents() -> Result<Vec<Agent>, String> {
+    let url = format!("{}/agents", API_BASE);
+    fetch_json::<Vec<Agent>>(&url).await
+}
+
+pub async fn get_agent(name: &str) -> Result<Agent, String> {
+    let url = format!("{}/agents/{}", API_BASE, name);
+    fetch_json::<Agent>(&url).await
+}
+
+pub async fn create_agent(agent: &Agent) -> Result<Agent, String> {
+    let url = format!("{}/agents", API_BASE);
+    post_json::<Agent, Agent>(&url, agent).await
+}
+
+pub async fn update_agent(name: &str, agent: &Agent) -> Result<Agent, String> {
+    let url = format!("{}/agents/{}", API_BASE, name);
+    put_json::<Agent, Agent>(&url, agent).await
+}
+
+pub async fn delete_agent(name: &str) -> Result<(), String> {
+    let url = format!("{}/agents/{}", API_BASE, name);
+    delete_request(&url).await
+}
+
+pub async fn test_agent(name: &str, args: &serde_json::Value, session_id: Option<String>) -> Result<crate::types::TestResult, String> {
+    let url = format!("{}/agents/{}/test", API_BASE, name);
+    let req = crate::types::TestRequest {
+        args: args.clone(),
+        session_id,
+    };
+    post_json::<crate::types::TestRequest, crate::types::TestResult>(&url, &req).await
+}
+
+// ============================================================================
+// Orchestrations
+// ============================================================================
+
+pub async fn list_orchestrations() -> Result<Vec<Orchestration>, String> {
+    let url = format!("{}/orchestrations", API_BASE);
+    fetch_json::<Vec<Orchestration>>(&url).await
+}
+
+pub async fn get_orchestration(name: &str) -> Result<Orchestration, String> {
+    let url = format!("{}/orchestrations/{}", API_BASE, name);
+    fetch_json::<Orchestration>(&url).await
+}
+
+pub async fn create_orchestration(orchestration: &Orchestration) -> Result<Orchestration, String> {
+    let url = format!("{}/orchestrations", API_BASE);
+    post_json::<Orchestration, Orchestration>(&url, orchestration).await
+}
+
+pub async fn update_orchestration(name: &str, orchestration: &Orchestration) -> Result<Orchestration, String> {
+    let url = format!("{}/orchestrations/{}", API_BASE, name);
+    put_json::<Orchestration, Orchestration>(&url, orchestration).await
+}
+
+pub async fn delete_orchestration(name: &str) -> Result<(), String> {
+    let url = format!("{}/orchestrations/{}", API_BASE, name);
+    delete_request(&url).await
+}
+
+pub async fn test_orchestration(name: &str, args: &serde_json::Value) -> Result<crate::types::TestResult, String> {
+    let url = format!("{}/orchestrations/{}/test", API_BASE, name);
+    let req = crate::types::TestRequest { args: args.clone(), session_id: None };
     post_json::<crate::types::TestRequest, crate::types::TestResult>(&url, &req).await
 }
 
@@ -238,6 +388,41 @@ pub async fn get_state() -> Result<std::collections::HashMap<String, serde_json:
 pub async fn reset_state() -> Result<(), String> {
     let url = format!("{}/state", API_BASE);
     delete_request(&url).await
+}
+
+// ============================================================================
+// LLM Models Discovery
+// ============================================================================
+
+/// Model info returned from LLM providers
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct LlmModelInfo {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+}
+
+/// Fetch available models for a given LLM provider
+pub async fn fetch_llm_models(provider: &str, base_url: Option<&str>, api_key_env: Option<&str>) -> Result<Vec<LlmModelInfo>, String> {
+    let mut url = format!("{}/llm/models/{}", API_BASE, provider);
+
+    let mut params = Vec::new();
+    if let Some(base) = base_url {
+        if !base.is_empty() {
+            params.push(format!("base_url={}", urlencoding_encode(base)));
+        }
+    }
+    if let Some(env) = api_key_env {
+        if !env.is_empty() {
+            params.push(format!("api_key_env={}", urlencoding_encode(env)));
+        }
+    }
+
+    if !params.is_empty() {
+        url = format!("{}?{}", url, params.join("&"));
+    }
+
+    fetch_json::<Vec<LlmModelInfo>>(&url).await
 }
 
 // ============================================================================

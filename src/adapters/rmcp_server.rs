@@ -3,7 +3,14 @@
 //! This module provides the MCP server implementation using the official rmcp SDK.
 //! It wraps the existing handler infrastructure (ResourcePort, ToolPort, PromptPort)
 //! and exposes them through the standard MCP protocol.
+//!
+//! ## Agent Integration
+//!
+//! Agents are exposed as MCP tools with the prefix `agent_`. For example, an agent
+//! named "assistant" becomes the tool "agent_assistant". When called, the agent
+//! executes and returns its response as the tool result.
 
+use crate::agents::domain::AgentPort;
 use crate::domain::{PromptPort, ResourcePort, ToolPort};
 use rmcp::{
     handler::server::ServerHandler,
@@ -18,8 +25,12 @@ use rmcp::{
     service::RequestContext,
     ErrorData as McpError, RoleServer,
 };
-use tracing::debug;
+use serde_json::json;
+use tracing::info;
 use std::sync::Arc;
+
+/// Prefix for agent tools exposed via MCP
+const AGENT_TOOL_PREFIX: &str = "agent_";
 
 /// Metis MCP Server
 ///
@@ -30,6 +41,8 @@ pub struct MetisServer {
     resource_handler: Arc<dyn ResourcePort>,
     tool_handler: Arc<dyn ToolPort>,
     prompt_handler: Arc<dyn PromptPort>,
+    /// Optional agent handler - when present, agents are exposed as tools
+    agent_handler: Option<Arc<dyn AgentPort>>,
 }
 
 impl MetisServer {
@@ -43,7 +56,28 @@ impl MetisServer {
             resource_handler,
             tool_handler,
             prompt_handler,
+            agent_handler: None,
         }
+    }
+
+    /// Create a new MetisServer with agent support
+    pub fn with_agents(
+        resource_handler: Arc<dyn ResourcePort>,
+        tool_handler: Arc<dyn ToolPort>,
+        prompt_handler: Arc<dyn PromptPort>,
+        agent_handler: Arc<dyn AgentPort>,
+    ) -> Self {
+        Self {
+            resource_handler,
+            tool_handler,
+            prompt_handler,
+            agent_handler: Some(agent_handler),
+        }
+    }
+
+    /// Set the agent handler
+    pub fn set_agent_handler(&mut self, agent_handler: Arc<dyn AgentPort>) {
+        self.agent_handler = Some(agent_handler);
     }
 }
 
@@ -75,7 +109,7 @@ impl ServerHandler for MetisServer {
         _context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<(), McpError>> + Send + '_ {
         async move {
-            debug!("Received ping request");
+            info!("MCP ping received");
             Ok(())
         }
     }
@@ -178,13 +212,14 @@ impl ServerHandler for MetisServer {
         _context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<ListToolsResult, McpError>> + Send + '_ {
         let handler = self.tool_handler.clone();
+        let agent_handler = self.agent_handler.clone();
         async move {
             let tools = handler
                 .list_tools()
                 .await
                 .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
-            let mcp_tools: Vec<Tool> = tools
+            let mut mcp_tools: Vec<Tool> = tools
                 .into_iter()
                 .map(|t| {
                     // Input schema should be a JSON object
@@ -195,6 +230,48 @@ impl ServerHandler for MetisServer {
                     Tool::new(t.name, t.description, schema)
                 })
                 .collect();
+
+            // Add agents as tools if agent handler is present
+            if let Some(agent_h) = agent_handler {
+                let agents = agent_h
+                    .list_agents()
+                    .await
+                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+
+                for agent in agents {
+                    let tool_name = format!("{}{}", AGENT_TOOL_PREFIX, agent.name);
+                    let description = format!(
+                        "[AI Agent] {} (Type: {:?}, LLM: {}/{})",
+                        agent.description, agent.agent_type, agent.llm_provider, agent.llm_model
+                    );
+
+                    // Use the agent's input schema or default prompt schema
+                    let schema = match agent.input_schema {
+                        serde_json::Value::Object(obj) => obj,
+                        _ => {
+                            let mut default = serde_json::Map::new();
+                            default.insert("type".to_string(), json!("object"));
+                            default.insert(
+                                "properties".to_string(),
+                                json!({
+                                    "prompt": {
+                                        "type": "string",
+                                        "description": "The input prompt for the agent"
+                                    },
+                                    "session_id": {
+                                        "type": "string",
+                                        "description": "Optional session ID for multi-turn conversations"
+                                    }
+                                }),
+                            );
+                            default.insert("required".to_string(), json!(["prompt"]));
+                            default
+                        }
+                    };
+
+                    mcp_tools.push(Tool::new(tool_name, description, schema));
+                }
+            }
 
             Ok(ListToolsResult {
                 tools: mcp_tools,
@@ -209,6 +286,7 @@ impl ServerHandler for MetisServer {
         _context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<CallToolResult, McpError>> + Send + '_ {
         let handler = self.tool_handler.clone();
+        let agent_handler = self.agent_handler.clone();
         async move {
             let name = request.name.as_ref();
             let args = request
@@ -216,6 +294,41 @@ impl ServerHandler for MetisServer {
                 .map(serde_json::Value::Object)
                 .unwrap_or(serde_json::Value::Null);
 
+            // Check if this is an agent call
+            if let Some(agent_name) = name.strip_prefix(AGENT_TOOL_PREFIX) {
+                if let Some(agent_h) = agent_handler {
+                    // Extract session_id if provided
+                    let session_id = args
+                        .get("session_id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+
+                    // Execute the agent
+                    let response = agent_h
+                        .execute(agent_name, args, session_id)
+                        .await
+                        .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+
+                    // Build the result with agent response details
+                    let result = json!({
+                        "output": response.output,
+                        "session_id": response.session_id,
+                        "iterations": response.iterations,
+                        "execution_time_ms": response.execution_time_ms,
+                        "tool_calls": response.tool_calls.len(),
+                        "reasoning_steps": response.reasoning_steps.len()
+                    });
+
+                    return Ok(CallToolResult::success(vec![Content::text(result.to_string())]));
+                } else {
+                    return Err(McpError::invalid_params(
+                        format!("Agent handler not available for agent: {}", agent_name),
+                        None,
+                    ));
+                }
+            }
+
+            // Regular tool call
             let result = handler
                 .execute_tool(name, args)
                 .await

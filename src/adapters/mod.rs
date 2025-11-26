@@ -2,6 +2,7 @@ pub mod api_handler;
 pub mod auth_middleware;
 pub mod health_handler;
 pub mod jwks;
+pub mod mcp_client;
 pub mod metrics_handler;
 pub mod mock_strategy;
 pub mod prompt_handler;

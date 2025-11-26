@@ -1,3 +1,4 @@
+use crate::adapters::mcp_client::McpClientManager;
 use crate::adapters::mock_strategy::MockStrategyHandler;
 use crate::adapters::workflow_engine::WorkflowEngine;
 use crate::config::{Settings, ToolConfig, WorkflowConfig};
@@ -61,12 +62,13 @@ impl ToolPort for InnerToolHandler {
     }
 }
 
-/// Main tool handler that combines regular tools and workflow tools.
+/// Main tool handler that combines regular tools, workflow tools, and MCP tools.
 /// Workflows are exposed as tools that can be called via MCP.
 pub struct BasicToolHandler {
     settings: Arc<RwLock<Settings>>,
     inner_handler: Arc<InnerToolHandler>,
     workflow_engine: OnceLock<Arc<WorkflowEngine>>,
+    mcp_client: Arc<McpClientManager>,
 }
 
 impl BasicToolHandler {
@@ -76,7 +78,34 @@ impl BasicToolHandler {
             settings,
             inner_handler,
             workflow_engine: OnceLock::new(),
+            mcp_client: Arc::new(McpClientManager::new()),
         }
+    }
+
+    /// Create with an existing MCP client manager
+    pub fn with_mcp_client(
+        settings: Arc<RwLock<Settings>>,
+        mock_strategy: Arc<MockStrategyHandler>,
+        mcp_client: Arc<McpClientManager>,
+    ) -> Self {
+        let inner_handler = Arc::new(InnerToolHandler::new(settings.clone(), mock_strategy));
+        Self {
+            settings,
+            inner_handler,
+            workflow_engine: OnceLock::new(),
+            mcp_client,
+        }
+    }
+
+    /// Get the MCP client manager
+    pub fn mcp_client(&self) -> &Arc<McpClientManager> {
+        &self.mcp_client
+    }
+
+    /// Initialize MCP connections (should be called after construction)
+    pub async fn initialize_mcp(&self) -> Result<()> {
+        let settings = self.settings.read().await;
+        self.mcp_client.initialize(&settings.mcp_servers).await
     }
 
     /// Get or initialize the workflow engine (lazy initialization to break circular dep)
@@ -100,6 +129,12 @@ impl BasicToolHandler {
     async fn is_workflow(&self, name: &str) -> bool {
         let settings = self.settings.read().await;
         settings.workflows.iter().any(|w| w.name == name)
+    }
+
+    /// Get MCP tools matching the given specifications
+    /// Format: "server_name:tool_name" or "server_name:*" for all
+    pub async fn get_mcp_tools(&self, specs: &[String]) -> Vec<Tool> {
+        self.mcp_client.get_tools_for_specs(specs).await
     }
 }
 
@@ -130,11 +165,25 @@ impl ToolPort for BasicToolHandler {
             });
         }
 
+        // Drop the settings lock before async call
+        drop(settings);
+
+        // MCP tools from external servers
+        let mcp_tools = self.mcp_client.list_all_tools().await;
+        for (_, tool) in mcp_tools {
+            tools.push(tool);
+        }
+
         Ok(tools)
     }
 
     async fn execute_tool(&self, name: &str, args: Value) -> Result<Value> {
-        // Check if this is a workflow first
+        // Check if this is an MCP tool
+        if McpClientManager::is_mcp_tool(name) {
+            return self.mcp_client.call_tool(name, args).await;
+        }
+
+        // Check if this is a workflow
         if self.is_workflow(name).await {
             if let Some(workflow) = self.find_workflow_config(name).await {
                 let engine = self.get_workflow_engine();

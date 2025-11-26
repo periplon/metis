@@ -14,6 +14,7 @@ use components::resource_templates::{ResourceTemplates, ResourceTemplateForm, Re
 use components::tools::{Tools, ToolForm, ToolEditForm};
 use components::prompts::{Prompts, PromptForm, PromptEditForm};
 use components::workflows::{Workflows, WorkflowForm, WorkflowEditForm};
+use components::agents::{Agents, AgentForm, AgentEditForm};
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -30,6 +31,7 @@ pub fn App() -> impl IntoView {
                         <NavLink href="/tools" label="Tools" />
                         <NavLink href="/prompts" label="Prompts" />
                         <NavLink href="/workflows" label="Workflows" />
+                        <NavLink href="/agents" label="AI Agents" />
                         <div class="border-t border-gray-700 my-4"></div>
                         <NavLink href="/config" label="Configuration" />
                         <NavLink href="/logs" label="Logs" />
@@ -58,6 +60,9 @@ pub fn App() -> impl IntoView {
                         <Route path=path!("/workflows/new") view=WorkflowForm/>
                         <Route path=path!("/workflows/edit/:name") view=WorkflowEditForm/>
                         <Route path=path!("/workflows") view=Workflows/>
+                        <Route path=path!("/agents/new") view=AgentForm/>
+                        <Route path=path!("/agents/edit/:name") view=AgentEditForm/>
+                        <Route path=path!("/agents") view=Agents/>
                         <Route path=path!("/config") view=Config/>
                         <Route path=path!("/logs") view=Logs/>
                     </Routes>

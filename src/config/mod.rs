@@ -10,6 +10,7 @@ pub mod watcher;
 pub use s3::S3Config;
 pub use s3_watcher::S3Watcher;
 
+use crate::agents::config::{AgentConfig, OrchestrationConfig};
 use crate::cli::Cli;
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -28,9 +29,45 @@ pub struct Settings {
     #[serde(default)]
     pub workflows: Vec<WorkflowConfig>,
     #[serde(default)]
+    pub agents: Vec<AgentConfig>,
+    #[serde(default)]
+    pub orchestrations: Vec<OrchestrationConfig>,
+    #[serde(default)]
     pub rate_limit: Option<RateLimitConfig>,
     #[serde(default)]
     pub s3: Option<S3Config>,
+    /// External MCP servers that can be connected to for tools
+    #[serde(default)]
+    pub mcp_servers: Vec<McpServerConfig>,
+}
+
+/// Configuration for connecting to an external MCP server
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct McpServerConfig {
+    /// Unique name for this MCP server connection
+    pub name: String,
+    /// URL of the MCP server (e.g., "http://localhost:3001/mcp")
+    pub url: String,
+    /// Optional API key for authentication
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    /// Environment variable containing the API key
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key_env: Option<String>,
+    /// Whether this server is enabled
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+    /// Connection timeout in seconds
+    #[serde(default = "default_mcp_timeout")]
+    pub timeout_seconds: u64,
+}
+
+fn default_enabled() -> bool {
+    true
+}
+
+fn default_mcp_timeout() -> u64 {
+    30
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -391,6 +428,8 @@ impl Settings {
         self.load_resource_templates_from_dir(&format!("{}/config/resource_templates", root))?;
         self.load_prompts_from_dir(&format!("{}/config/prompts", root))?;
         self.load_workflows_from_dir(&format!("{}/config/workflows", root))?;
+        self.load_agents_from_dir(&format!("{}/config/agents", root))?;
+        self.load_orchestrations_from_dir(&format!("{}/config/orchestrations", root))?;
         Ok(())
     }
 
@@ -500,6 +539,52 @@ impl Settings {
                                 _ => serde_yaml::from_str(&content)?,
                             };
                             self.workflows.push(workflow);
+                        }
+                    }
+                }
+                Err(e) => tracing::warn!("Failed to read glob entry: {}", e),
+            }
+        }
+        Ok(())
+    }
+
+    fn load_agents_from_dir(&mut self, path: &str) -> Result<(), anyhow::Error> {
+        let pattern = format!("{}/*", path);
+        for entry in glob::glob(&pattern)? {
+            match entry {
+                Ok(path) => {
+                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                        if matches!(ext, "json" | "yaml" | "yml" | "toml") {
+                            let content = std::fs::read_to_string(&path)?;
+                            let agent: AgentConfig = match ext {
+                                "json" => serde_json::from_str(&content)?,
+                                "toml" => toml::from_str(&content)?,
+                                _ => serde_yaml::from_str(&content)?,
+                            };
+                            self.agents.push(agent);
+                        }
+                    }
+                }
+                Err(e) => tracing::warn!("Failed to read glob entry: {}", e),
+            }
+        }
+        Ok(())
+    }
+
+    fn load_orchestrations_from_dir(&mut self, path: &str) -> Result<(), anyhow::Error> {
+        let pattern = format!("{}/*", path);
+        for entry in glob::glob(&pattern)? {
+            match entry {
+                Ok(path) => {
+                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                        if matches!(ext, "json" | "yaml" | "yml" | "toml") {
+                            let content = std::fs::read_to_string(&path)?;
+                            let orchestration: OrchestrationConfig = match ext {
+                                "json" => serde_json::from_str(&content)?,
+                                "toml" => toml::from_str(&content)?,
+                                _ => serde_yaml::from_str(&content)?,
+                            };
+                            self.orchestrations.push(orchestration);
                         }
                     }
                 }

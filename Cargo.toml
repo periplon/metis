@@ -25,7 +25,7 @@ config = "0.13"
 anyhow = "1.0"
 thiserror = "1.0"
 async-trait = "0.1"
-rmcp = { version = "0.9", features = ["server", "macros", "transport-streamable-http-server", "transport-streamable-http-server-session", "tower"] }
+rmcp = { version = "0.9", features = ["server", "client", "macros", "transport-streamable-http-server", "transport-streamable-http-server-session", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "tower"] }
 schemars = "0.8"
 tera = "1"
 fake = { version = "2.9", features = ["derive"] }
@@ -44,7 +44,7 @@ tower-http = { version = "0.5", features = ["auth", "cors", "fs"] }
 async-openai = "0.20"
 tiktoken-rs = "0.5"
 backoff = { version = "0.4", features = ["tokio"] }
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.11", features = ["json", "stream"] }
 
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "any", "postgres", "mysql", "sqlite"] }
 base64 = "0.21"
@@ -57,6 +57,7 @@ aws-sdk-s3 = "1.65"
 futures = "0.3"
 toml = "0.8"
 urlencoding = "2.1"
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 tower = { version = "0.4", features = ["util"] }

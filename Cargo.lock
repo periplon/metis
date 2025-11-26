@@ -3793,6 +3793,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "urlencoding",
+ "uuid",
 ]
 
 [[package]]
@@ -3803,6 +3804,7 @@ dependencies = [
  "console_log",
  "gloo-net",
  "gloo-timers",
+ "js-sys",
  "leptos",
  "leptos_router",
  "log",
@@ -3811,6 +3813,7 @@ dependencies = [
  "urlencoding",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]
@@ -5020,10 +5023,12 @@ dependencies = [
  "system-configuration",
  "tokio",
  "tokio-native-tls",
+ "tokio-util",
  "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "wasm-streams",
  "web-sys",
  "winreg 0.50.0",
 ]

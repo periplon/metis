@@ -2,8 +2,12 @@ use leptos::prelude::*;
 use leptos::web_sys;
 use std::collections::HashMap;
 use wasm_bindgen::JsCast;
+use wasm_bindgen::closure::Closure;
 use crate::api;
 use crate::types::{ConfigOverview, ServerSettings, AuthConfig, RateLimitConfig, S3Config};
+
+// Re-export web_sys types with full features for file operations
+use web_sys::{Blob, BlobPropertyBag, FileReader, Url};
 
 #[component]
 pub fn Config() -> impl IntoView {
@@ -336,13 +340,172 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
         });
     };
 
+    // Export config to local file
+    let (exporting, set_exporting) = signal(false);
+    let on_export = move |_| {
+        set_exporting.set(true);
+        set_message.set(None);
+        wasm_bindgen_futures::spawn_local(async move {
+            match api::export_config().await {
+                Ok(config_json) => {
+                    // Create blob and download
+                    let json_str = serde_json::to_string_pretty(&config_json)
+                        .unwrap_or_else(|_| config_json.to_string());
+
+                    if let Some(window) = web_sys::window() {
+                        if let Some(document) = window.document() {
+                            // Create blob
+                            let blob_parts = js_sys::Array::new();
+                            blob_parts.push(&wasm_bindgen::JsValue::from_str(&json_str));
+                            let options = BlobPropertyBag::new();
+                            options.set_type("application/json");
+                            if let Ok(blob) = Blob::new_with_str_sequence_and_options(&blob_parts, &options) {
+                                // Create URL
+                                if let Ok(url) = Url::create_object_url_with_blob(&blob) {
+                                    // Create download link
+                                    if let Ok(link) = document.create_element("a") {
+                                        let link: web_sys::HtmlAnchorElement = link.dyn_into().unwrap();
+                                        link.set_href(&url);
+                                        link.set_download("metis-config.json");
+                                        link.click();
+                                        let _ = Url::revoke_object_url(&url);
+                                        set_message.set(Some(("Configuration exported successfully!".to_string(), true)));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    set_message.set(Some((format!("Failed to export config: {}", e), false)));
+                }
+            }
+            set_exporting.set(false);
+        });
+    };
+
+    // Import config from local file (replaces all)
+    let (importing, set_importing) = signal(false);
+    let file_input_ref = NodeRef::<leptos::html::Input>::new();
+
+    let on_import_click = move |_| {
+        if let Some(input) = file_input_ref.get() {
+            input.click();
+        }
+    };
+
+    let on_file_selected = move |_| {
+        if let Some(input) = file_input_ref.get() {
+            // Get the native DOM element and cast to HtmlInputElement with files support
+            let input_el: web_sys::HtmlInputElement = input.clone().into();
+            if let Some(files) = input_el.files() {
+                if let Some(file) = files.get(0) {
+                    set_importing.set(true);
+                    set_message.set(None);
+
+                    let reader = FileReader::new().unwrap();
+                    let reader_clone = reader.clone();
+
+                    let onload = Closure::once(Box::new(move || {
+                        if let Ok(result) = reader_clone.result() {
+                            if let Some(text) = result.as_string() {
+                                // Parse JSON and import
+                                wasm_bindgen_futures::spawn_local(async move {
+                                    match serde_json::from_str::<serde_json::Value>(&text) {
+                                        Ok(config) => {
+                                            match api::import_config(&config).await {
+                                                Ok(_) => {
+                                                    // Reload the page to reflect imported config
+                                                    if let Some(window) = web_sys::window() {
+                                                        let _ = window.location().reload();
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    log::error!("Failed to import config: {}", e);
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            log::error!("Failed to parse JSON: {}", e);
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                    }) as Box<dyn FnOnce()>);
+
+                    reader.set_onload(Some(onload.as_ref().unchecked_ref()));
+                    onload.forget(); // Prevent closure from being dropped
+                    let _ = reader.read_as_text(&file);
+                }
+            }
+        }
+    };
+
+    // Merge config from local file (only adds new elements)
+    let (merging, set_merging) = signal(false);
+    let merge_file_input_ref = NodeRef::<leptos::html::Input>::new();
+
+    let on_merge_click = move |_| {
+        if let Some(input) = merge_file_input_ref.get() {
+            input.click();
+        }
+    };
+
+    let on_merge_file_selected = move |_| {
+        if let Some(input) = merge_file_input_ref.get() {
+            let input_el: web_sys::HtmlInputElement = input.clone().into();
+            if let Some(files) = input_el.files() {
+                if let Some(file) = files.get(0) {
+                    set_merging.set(true);
+                    set_message.set(None);
+
+                    let reader = FileReader::new().unwrap();
+                    let reader_clone = reader.clone();
+
+                    let onload = Closure::once(Box::new(move || {
+                        if let Ok(result) = reader_clone.result() {
+                            if let Some(text) = result.as_string() {
+                                wasm_bindgen_futures::spawn_local(async move {
+                                    match serde_json::from_str::<serde_json::Value>(&text) {
+                                        Ok(config) => {
+                                            match api::merge_config(&config).await {
+                                                Ok(merge_result) => {
+                                                    // Show success message with summary, then reload
+                                                    log::info!("Merge successful: {}", merge_result.summary());
+                                                    if let Some(window) = web_sys::window() {
+                                                        let _ = window.location().reload();
+                                                    }
+                                                }
+                                                Err(e) => {
+                                                    log::error!("Failed to merge config: {}", e);
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            log::error!("Failed to parse JSON: {}", e);
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                    }) as Box<dyn FnOnce()>);
+
+                    reader.set_onload(Some(onload.as_ref().unchecked_ref()));
+                    onload.forget();
+                    let _ = reader.read_as_text(&file);
+                }
+            }
+        }
+    };
+
     view! {
-        <div class="bg-white rounded-lg shadow overflow-hidden">
-            <div class="px-6 py-4 border-b border-gray-200 bg-gray-50">
+        <div class="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+            <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
                 <div class="flex justify-between items-center mb-2">
-                    <h3 class="text-lg font-semibold text-gray-800">"Settings Editor"</h3>
+                    <h3 class="text-lg font-semibold text-gray-800 dark:text-white">"Settings Editor"</h3>
                 </div>
-                <div class="flex gap-2">
+                <div class="flex flex-wrap gap-2">
                     <button
                         on:click=on_save
                         disabled=move || saving.get()
@@ -364,6 +527,53 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
                     >
                         {move || if saving_s3.get() { "Saving..." } else { "Save to S3" }}
                     </button>
+                    <div class="border-l border-gray-300 dark:border-gray-600 h-6 mx-1"></div>
+                    <button
+                        on:click=on_export
+                        disabled=move || exporting.get()
+                        class="px-4 py-2 bg-amber-500 text-white text-sm rounded hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                    >
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                        </svg>
+                        {move || if exporting.get() { "Exporting..." } else { "Export" }}
+                    </button>
+                    <button
+                        on:click=on_import_click
+                        disabled=move || importing.get()
+                        class="px-4 py-2 bg-teal-500 text-white text-sm rounded hover:bg-teal-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                        title="Replace all configuration with imported file"
+                    >
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                        </svg>
+                        {move || if importing.get() { "Importing..." } else { "Import" }}
+                    </button>
+                    <button
+                        on:click=on_merge_click
+                        disabled=move || merging.get()
+                        class="px-4 py-2 bg-indigo-500 text-white text-sm rounded hover:bg-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+                        title="Merge new items from file (keeps existing, adds new)"
+                    >
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/>
+                        </svg>
+                        {move || if merging.get() { "Merging..." } else { "Merge" }}
+                    </button>
+                    <input
+                        type="file"
+                        accept=".json"
+                        class="hidden"
+                        node_ref=file_input_ref
+                        on:change=on_file_selected
+                    />
+                    <input
+                        type="file"
+                        accept=".json"
+                        class="hidden"
+                        node_ref=merge_file_input_ref
+                        on:change=on_merge_file_selected
+                    />
                 </div>
             </div>
 

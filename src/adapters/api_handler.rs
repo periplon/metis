@@ -16,6 +16,11 @@ use tokio::sync::RwLock;
 use crate::adapters::mock_strategy::MockStrategyHandler;
 use crate::adapters::state_manager::StateManager;
 use crate::adapters::workflow_engine::WorkflowEngine;
+use crate::agents::config::{
+    AgentConfig, AgentReference, LlmProviderConfig, LlmProviderType, MemoryConfig,
+    MergeStrategy, OrchestrationConfig, OrchestrationPattern,
+};
+use crate::agents::domain::{AgentPort, AgentType};
 use crate::config::{
     MockConfig, PromptArgument, PromptConfig, PromptMessage, RateLimitConfig, ResourceConfig,
     ResourceTemplateConfig, Settings, ToolConfig, WorkflowConfig, WorkflowStep,
@@ -28,6 +33,9 @@ pub struct ApiState {
     pub settings: Arc<RwLock<Settings>>,
     pub state_manager: Arc<StateManager>,
     pub mock_strategy: Arc<MockStrategyHandler>,
+    pub agent_handler: Option<Arc<dyn AgentPort>>,
+    /// Shared agent handler for testing (persists memory across requests)
+    pub test_agent_handler: Arc<RwLock<Option<crate::agents::handler::AgentHandler>>>,
 }
 
 /// Tool handler for workflow testing that uses mock strategies
@@ -135,6 +143,7 @@ pub struct ConfigOverview {
     pub rate_limit_enabled: bool,
     pub s3_enabled: bool,
     pub config_file_loaded: bool,
+    pub mcp_servers_count: usize,
 }
 
 #[derive(Serialize)]
@@ -501,6 +510,7 @@ pub async fn get_config_overview(
         rate_limit_enabled: settings.rate_limit.as_ref().is_some_and(|r| r.enabled),
         s3_enabled: settings.s3.as_ref().is_some_and(|s| s.enabled),
         config_file_loaded,
+        mcp_servers_count: settings.mcp_servers.len(),
     };
 
     (StatusCode::OK, Json(ApiResponse::success(overview)))
@@ -1407,6 +1417,132 @@ pub async fn save_config_to_s3(
     }
 }
 
+/// GET /api/config/export - Export current configuration as JSON for browser download
+pub async fn export_config(
+    State(state): State<ApiState>,
+) -> impl IntoResponse {
+    let settings = state.settings.read().await;
+
+    // Serialize settings to JSON
+    match serde_json::to_value(&*settings) {
+        Ok(json_value) => (StatusCode::OK, Json(ApiResponse::success(json_value))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse::<Value>::error(format!("Failed to serialize config: {}", e)))
+        ),
+    }
+}
+
+/// POST /api/config/import - Import configuration from JSON
+pub async fn import_config(
+    State(state): State<ApiState>,
+    Json(new_settings): Json<Settings>,
+) -> impl IntoResponse {
+    let mut settings = state.settings.write().await;
+
+    // Replace the current settings with the imported ones
+    *settings = new_settings;
+
+    (StatusCode::OK, Json(ApiResponse::<()>::ok()))
+}
+
+/// Response for merge operation showing what was added
+#[derive(Serialize)]
+pub struct MergeResult {
+    pub resources_added: usize,
+    pub resource_templates_added: usize,
+    pub tools_added: usize,
+    pub prompts_added: usize,
+    pub workflows_added: usize,
+    pub agents_added: usize,
+    pub orchestrations_added: usize,
+    pub mcp_servers_added: usize,
+}
+
+/// POST /api/config/merge - Merge configuration from JSON, only adding new elements
+pub async fn merge_config(
+    State(state): State<ApiState>,
+    Json(new_settings): Json<Settings>,
+) -> impl IntoResponse {
+    let mut settings = state.settings.write().await;
+    let mut result = MergeResult {
+        resources_added: 0,
+        resource_templates_added: 0,
+        tools_added: 0,
+        prompts_added: 0,
+        workflows_added: 0,
+        agents_added: 0,
+        orchestrations_added: 0,
+        mcp_servers_added: 0,
+    };
+
+    // Merge resources (keyed by uri)
+    for resource in new_settings.resources {
+        if !settings.resources.iter().any(|r| r.uri == resource.uri) {
+            settings.resources.push(resource);
+            result.resources_added += 1;
+        }
+    }
+
+    // Merge resource templates (keyed by uri_template)
+    for template in new_settings.resource_templates {
+        if !settings.resource_templates.iter().any(|t| t.uri_template == template.uri_template) {
+            settings.resource_templates.push(template);
+            result.resource_templates_added += 1;
+        }
+    }
+
+    // Merge tools (keyed by name)
+    for tool in new_settings.tools {
+        if !settings.tools.iter().any(|t| t.name == tool.name) {
+            settings.tools.push(tool);
+            result.tools_added += 1;
+        }
+    }
+
+    // Merge prompts (keyed by name)
+    for prompt in new_settings.prompts {
+        if !settings.prompts.iter().any(|p| p.name == prompt.name) {
+            settings.prompts.push(prompt);
+            result.prompts_added += 1;
+        }
+    }
+
+    // Merge workflows (keyed by name)
+    for workflow in new_settings.workflows {
+        if !settings.workflows.iter().any(|w| w.name == workflow.name) {
+            settings.workflows.push(workflow);
+            result.workflows_added += 1;
+        }
+    }
+
+    // Merge agents (keyed by name)
+    for agent in new_settings.agents {
+        if !settings.agents.iter().any(|a| a.name == agent.name) {
+            settings.agents.push(agent);
+            result.agents_added += 1;
+        }
+    }
+
+    // Merge orchestrations (keyed by name)
+    for orchestration in new_settings.orchestrations {
+        if !settings.orchestrations.iter().any(|o| o.name == orchestration.name) {
+            settings.orchestrations.push(orchestration);
+            result.orchestrations_added += 1;
+        }
+    }
+
+    // Merge MCP servers (keyed by name)
+    for mcp_server in new_settings.mcp_servers {
+        if !settings.mcp_servers.iter().any(|m| m.name == mcp_server.name) {
+            settings.mcp_servers.push(mcp_server);
+            result.mcp_servers_added += 1;
+        }
+    }
+
+    (StatusCode::OK, Json(ApiResponse::success(result)))
+}
+
 /// Build AWS SDK configuration for S3 operations
 async fn build_s3_config(config: &crate::config::s3::S3Config) -> anyhow::Result<aws_config::SdkConfig> {
     use aws_config::BehaviorVersion;
@@ -1433,6 +1569,9 @@ async fn build_s3_config(config: &crate::config::s3::S3Config) -> anyhow::Result
 pub struct TestRequest {
     #[serde(default)]
     pub args: Value,
+    /// Optional session ID for multi-turn conversations
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 /// Response for test endpoints
@@ -1685,4 +1824,839 @@ pub async fn test_workflow(
             )
         }
     }
+}
+
+// ============================================================================
+// Agent DTOs
+// ============================================================================
+
+/// Data Transfer Object for Agent configuration
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AgentDto {
+    pub name: String,
+    pub description: String,
+    #[serde(default)]
+    pub agent_type: AgentType,
+    #[serde(default)]
+    pub input_schema: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Value>,
+    pub llm: LlmProviderConfigDto,
+    pub system_prompt: String,
+    #[serde(default)]
+    pub available_tools: Vec<String>,
+    /// MCP tools from external servers (format: "server_name:tool_name" or "server_name:*")
+    #[serde(default)]
+    pub mcp_tools: Vec<String>,
+    #[serde(default)]
+    pub memory: MemoryConfigDto,
+    #[serde(default = "default_max_iterations")]
+    pub max_iterations: u32,
+    #[serde(default = "default_timeout")]
+    pub timeout_seconds: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+}
+
+fn default_max_iterations() -> u32 {
+    10
+}
+
+fn default_timeout() -> u64 {
+    120
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct LlmProviderConfigDto {
+    pub provider: LlmProviderType,
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key_env: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+    #[serde(default = "default_stream")]
+    pub stream: bool,
+}
+
+fn default_stream() -> bool {
+    true
+}
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+pub struct MemoryConfigDto {
+    #[serde(default)]
+    pub backend: crate::agents::config::MemoryBackend,
+    #[serde(default)]
+    pub strategy: crate::agents::config::MemoryStrategy,
+    #[serde(default = "default_max_messages")]
+    pub max_messages: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub database_url: Option<String>,
+}
+
+fn default_max_messages() -> u32 {
+    100
+}
+
+impl From<&AgentConfig> for AgentDto {
+    fn from(a: &AgentConfig) -> Self {
+        Self {
+            name: a.name.clone(),
+            description: a.description.clone(),
+            agent_type: a.agent_type,
+            input_schema: a.input_schema.clone(),
+            output_schema: a.output_schema.clone(),
+            llm: LlmProviderConfigDto {
+                provider: a.llm.provider,
+                model: a.llm.model.clone(),
+                api_key_env: a.llm.api_key_env.clone(),
+                base_url: a.llm.base_url.clone(),
+                temperature: a.llm.temperature,
+                max_tokens: a.llm.max_tokens,
+                stream: a.llm.stream,
+            },
+            system_prompt: a.system_prompt.clone(),
+            available_tools: a.available_tools.clone(),
+            mcp_tools: a.mcp_tools.clone(),
+            memory: MemoryConfigDto {
+                backend: a.memory.backend,
+                strategy: a.memory.strategy.clone(),
+                max_messages: a.memory.max_messages,
+                file_path: a.memory.file_path.clone(),
+                database_url: a.memory.database_url.clone(),
+            },
+            max_iterations: a.max_iterations,
+            timeout_seconds: a.timeout_seconds,
+            temperature: a.temperature,
+            max_tokens: a.max_tokens,
+        }
+    }
+}
+
+impl From<AgentDto> for AgentConfig {
+    fn from(dto: AgentDto) -> Self {
+        Self {
+            name: dto.name,
+            description: dto.description,
+            agent_type: dto.agent_type,
+            input_schema: dto.input_schema,
+            output_schema: dto.output_schema,
+            llm: LlmProviderConfig {
+                provider: dto.llm.provider,
+                model: dto.llm.model,
+                api_key_env: dto.llm.api_key_env,
+                base_url: dto.llm.base_url,
+                temperature: dto.llm.temperature,
+                max_tokens: dto.llm.max_tokens,
+                stream: dto.llm.stream,
+            },
+            system_prompt: dto.system_prompt,
+            available_tools: dto.available_tools,
+            mcp_tools: dto.mcp_tools,
+            memory: MemoryConfig {
+                backend: dto.memory.backend,
+                strategy: dto.memory.strategy,
+                max_messages: dto.memory.max_messages,
+                file_path: dto.memory.file_path,
+                database_url: dto.memory.database_url,
+            },
+            max_iterations: dto.max_iterations,
+            timeout_seconds: dto.timeout_seconds,
+            temperature: dto.temperature,
+            max_tokens: dto.max_tokens,
+        }
+    }
+}
+
+/// Data Transfer Object for Orchestration configuration
+#[derive(Serialize, Deserialize, Clone)]
+pub struct OrchestrationDto {
+    pub name: String,
+    pub description: String,
+    pub pattern: OrchestrationPattern,
+    #[serde(default)]
+    pub input_schema: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Value>,
+    pub agents: Vec<AgentReferenceDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manager_agent: Option<String>,
+    #[serde(default)]
+    pub merge_strategy: MergeStrategy,
+    #[serde(default = "default_orchestration_timeout")]
+    pub timeout_seconds: u64,
+}
+
+fn default_orchestration_timeout() -> u64 {
+    300
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AgentReferenceDto {
+    pub agent: String,
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub condition: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_transform: Option<String>,
+}
+
+impl From<&OrchestrationConfig> for OrchestrationDto {
+    fn from(o: &OrchestrationConfig) -> Self {
+        Self {
+            name: o.name.clone(),
+            description: o.description.clone(),
+            pattern: o.pattern,
+            input_schema: o.input_schema.clone(),
+            output_schema: o.output_schema.clone(),
+            agents: o.agents.iter().map(|ar| AgentReferenceDto {
+                agent: ar.agent.clone(),
+                depends_on: ar.depends_on.clone(),
+                condition: ar.condition.clone(),
+                input_transform: ar.input_transform.clone(),
+            }).collect(),
+            manager_agent: o.manager_agent.clone(),
+            merge_strategy: o.merge_strategy.clone(),
+            timeout_seconds: o.timeout_seconds,
+        }
+    }
+}
+
+impl From<OrchestrationDto> for OrchestrationConfig {
+    fn from(dto: OrchestrationDto) -> Self {
+        Self {
+            name: dto.name,
+            description: dto.description,
+            pattern: dto.pattern,
+            input_schema: dto.input_schema,
+            output_schema: dto.output_schema,
+            agents: dto.agents.into_iter().map(|ar| AgentReference {
+                agent: ar.agent,
+                depends_on: ar.depends_on,
+                condition: ar.condition,
+                input_transform: ar.input_transform,
+            }).collect(),
+            manager_agent: dto.manager_agent,
+            merge_strategy: dto.merge_strategy,
+            timeout_seconds: dto.timeout_seconds,
+        }
+    }
+}
+
+// ============================================================================
+// Agent CRUD Handlers
+// ============================================================================
+
+/// GET /api/agents - List all agents
+pub async fn list_agents(
+    State(state): State<ApiState>,
+) -> impl IntoResponse {
+    let settings = state.settings.read().await;
+    let agents: Vec<AgentDto> = settings.agents.iter().map(AgentDto::from).collect();
+    (StatusCode::OK, Json(ApiResponse::success(agents)))
+}
+
+/// GET /api/agents/:name - Get a single agent
+pub async fn get_agent(
+    State(state): State<ApiState>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    let settings = state.settings.read().await;
+
+    if let Some(agent) = settings.agents.iter().find(|a| a.name == name) {
+        (StatusCode::OK, Json(ApiResponse::success(AgentDto::from(agent))))
+    } else {
+        (StatusCode::NOT_FOUND, Json(ApiResponse::<AgentDto>::error("Agent not found")))
+    }
+}
+
+/// POST /api/agents - Create a new agent
+pub async fn create_agent(
+    State(state): State<ApiState>,
+    Json(dto): Json<AgentDto>,
+) -> impl IntoResponse {
+    let mut settings = state.settings.write().await;
+
+    // Check for duplicate name
+    if settings.agents.iter().any(|a| a.name == dto.name) {
+        return (
+            StatusCode::CONFLICT,
+            Json(ApiResponse::<AgentDto>::error("Agent with this name already exists")),
+        );
+    }
+
+    let agent: AgentConfig = dto.into();
+    settings.agents.push(agent.clone());
+    (StatusCode::CREATED, Json(ApiResponse::success(AgentDto::from(&agent))))
+}
+
+/// PUT /api/agents/:name - Update an existing agent
+pub async fn update_agent(
+    State(state): State<ApiState>,
+    Path(name): Path<String>,
+    Json(dto): Json<AgentDto>,
+) -> impl IntoResponse {
+    let mut settings = state.settings.write().await;
+
+    if let Some(agent) = settings.agents.iter_mut().find(|a| a.name == name) {
+        *agent = dto.into();
+        (StatusCode::OK, Json(ApiResponse::success(AgentDto::from(&*agent))))
+    } else {
+        (StatusCode::NOT_FOUND, Json(ApiResponse::<AgentDto>::error("Agent not found")))
+    }
+}
+
+/// DELETE /api/agents/:name - Delete an agent
+pub async fn delete_agent(
+    State(state): State<ApiState>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    let mut settings = state.settings.write().await;
+
+    let initial_len = settings.agents.len();
+    settings.agents.retain(|a| a.name != name);
+
+    if settings.agents.len() < initial_len {
+        (StatusCode::OK, Json(ApiResponse::ok()))
+    } else {
+        (StatusCode::NOT_FOUND, Json(ApiResponse::<()>::error("Agent not found")))
+    }
+}
+
+/// POST /api/agents/:name/test - Test an agent
+pub async fn test_agent(
+    State(state): State<ApiState>,
+    Path(name): Path<String>,
+    Json(req): Json<TestRequest>,
+) -> impl IntoResponse {
+    use crate::adapters::tool_handler::BasicToolHandler;
+    use crate::agents::handler::AgentHandler;
+
+    let start = std::time::Instant::now();
+
+    // Verify agent exists in config
+    let settings = state.settings.read().await;
+    if !settings.agents.iter().any(|a| a.name == name) {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(ApiResponse::<TestResult>::error("Agent not found")),
+        );
+    }
+    drop(settings);
+
+    // Get or create the shared test agent handler (persists memory across requests)
+    {
+        let mut handler_guard = state.test_agent_handler.write().await;
+        if handler_guard.is_none() {
+            let tool_handler = Arc::new(BasicToolHandler::new(
+                state.settings.clone(),
+                state.mock_strategy.clone(),
+            ));
+            let agent_handler = AgentHandler::new(state.settings.clone(), tool_handler);
+
+            // Initialize the agent handler to populate agent cache
+            if let Err(e) = agent_handler.initialize().await {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<TestResult>::error(&format!("Failed to initialize agent handler: {}", e))),
+                );
+            }
+
+            *handler_guard = Some(agent_handler);
+        }
+    }
+
+    // Use the shared handler
+    let handler_guard = state.test_agent_handler.read().await;
+    let agent_handler = handler_guard.as_ref().unwrap();
+
+    // Execute the agent with optional session_id for multi-turn conversations
+    match agent_handler.execute(&name, req.args.clone(), req.session_id.clone()).await {
+        Ok(response) => {
+            let elapsed = start.elapsed().as_millis() as u64;
+            let output = json!({
+                "output": response.output,
+                "session_id": response.session_id,
+                "iterations": response.iterations,
+                "tool_calls": response.tool_calls.len(),
+                "reasoning_steps": response.reasoning_steps.len(),
+            });
+
+            (
+                StatusCode::OK,
+                Json(ApiResponse::success(TestResult {
+                    output,
+                    error: None,
+                    execution_time_ms: elapsed,
+                })),
+            )
+        }
+        Err(e) => {
+            let elapsed = start.elapsed().as_millis() as u64;
+            (
+                StatusCode::OK,
+                Json(ApiResponse::success(TestResult {
+                    output: json!({}),
+                    error: Some(e.to_string()),
+                    execution_time_ms: elapsed,
+                })),
+            )
+        }
+    }
+}
+
+// ============================================================================
+// Orchestration CRUD Handlers
+// ============================================================================
+
+/// GET /api/orchestrations - List all orchestrations
+pub async fn list_orchestrations(
+    State(state): State<ApiState>,
+) -> impl IntoResponse {
+    let settings = state.settings.read().await;
+    let orchestrations: Vec<OrchestrationDto> = settings.orchestrations.iter().map(OrchestrationDto::from).collect();
+    (StatusCode::OK, Json(ApiResponse::success(orchestrations)))
+}
+
+/// GET /api/orchestrations/:name - Get a single orchestration
+pub async fn get_orchestration(
+    State(state): State<ApiState>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    let settings = state.settings.read().await;
+
+    if let Some(orchestration) = settings.orchestrations.iter().find(|o| o.name == name) {
+        (StatusCode::OK, Json(ApiResponse::success(OrchestrationDto::from(orchestration))))
+    } else {
+        (StatusCode::NOT_FOUND, Json(ApiResponse::<OrchestrationDto>::error("Orchestration not found")))
+    }
+}
+
+/// POST /api/orchestrations - Create a new orchestration
+pub async fn create_orchestration(
+    State(state): State<ApiState>,
+    Json(dto): Json<OrchestrationDto>,
+) -> impl IntoResponse {
+    let mut settings = state.settings.write().await;
+
+    // Check for duplicate name
+    if settings.orchestrations.iter().any(|o| o.name == dto.name) {
+        return (
+            StatusCode::CONFLICT,
+            Json(ApiResponse::<OrchestrationDto>::error("Orchestration with this name already exists")),
+        );
+    }
+
+    let orchestration: OrchestrationConfig = dto.into();
+    settings.orchestrations.push(orchestration.clone());
+    (StatusCode::CREATED, Json(ApiResponse::success(OrchestrationDto::from(&orchestration))))
+}
+
+/// PUT /api/orchestrations/:name - Update an existing orchestration
+pub async fn update_orchestration(
+    State(state): State<ApiState>,
+    Path(name): Path<String>,
+    Json(dto): Json<OrchestrationDto>,
+) -> impl IntoResponse {
+    let mut settings = state.settings.write().await;
+
+    if let Some(orchestration) = settings.orchestrations.iter_mut().find(|o| o.name == name) {
+        *orchestration = dto.into();
+        (StatusCode::OK, Json(ApiResponse::success(OrchestrationDto::from(&*orchestration))))
+    } else {
+        (StatusCode::NOT_FOUND, Json(ApiResponse::<OrchestrationDto>::error("Orchestration not found")))
+    }
+}
+
+/// DELETE /api/orchestrations/:name - Delete an orchestration
+pub async fn delete_orchestration(
+    State(state): State<ApiState>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    let mut settings = state.settings.write().await;
+
+    let initial_len = settings.orchestrations.len();
+    settings.orchestrations.retain(|o| o.name != name);
+
+    if settings.orchestrations.len() < initial_len {
+        (StatusCode::OK, Json(ApiResponse::ok()))
+    } else {
+        (StatusCode::NOT_FOUND, Json(ApiResponse::<()>::error("Orchestration not found")))
+    }
+}
+
+/// POST /api/orchestrations/:name/test - Test an orchestration
+pub async fn test_orchestration(
+    State(state): State<ApiState>,
+    Path(name): Path<String>,
+    Json(req): Json<TestRequest>,
+) -> impl IntoResponse {
+    use crate::adapters::tool_handler::BasicToolHandler;
+    use crate::agents::handler::AgentHandler;
+
+    let start = std::time::Instant::now();
+    let settings = state.settings.read().await;
+
+    // Find the orchestration
+    let orchestration = match settings.orchestrations.iter().find(|o| o.name == name) {
+        Some(o) => o.clone(),
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ApiResponse::<TestResult>::error("Orchestration not found")),
+            );
+        }
+    };
+    drop(settings);
+
+    // Create agent handler on-demand for testing
+    let tool_handler = Arc::new(BasicToolHandler::new(
+        state.settings.clone(),
+        state.mock_strategy.clone(),
+    ));
+    let agent_handler = AgentHandler::new(state.settings.clone(), tool_handler);
+
+    // Initialize the agent handler to populate agent cache and orchestration engine
+    if let Err(e) = agent_handler.initialize().await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse::<TestResult>::error(&format!("Failed to initialize agent handler: {}", e))),
+        );
+    }
+
+    // Execute the orchestration
+    match agent_handler.execute_orchestration(&orchestration, req.args.clone()) {
+        Ok(stream) => {
+            match stream.collect().await {
+                Ok(response) => {
+                    let elapsed = start.elapsed().as_millis() as u64;
+                    let output = json!({
+                        "output": response.output,
+                        "session_id": response.session_id,
+                        "iterations": response.iterations,
+                        "tool_calls": response.tool_calls.len(),
+                        "reasoning_steps": response.reasoning_steps.len(),
+                    });
+
+                    (
+                        StatusCode::OK,
+                        Json(ApiResponse::success(TestResult {
+                            output,
+                            error: None,
+                            execution_time_ms: elapsed,
+                        })),
+                    )
+                }
+                Err(e) => {
+                    let elapsed = start.elapsed().as_millis() as u64;
+                    (
+                        StatusCode::OK,
+                        Json(ApiResponse::success(TestResult {
+                            output: json!({}),
+                            error: Some(e.to_string()),
+                            execution_time_ms: elapsed,
+                        })),
+                    )
+                }
+            }
+        }
+        Err(e) => {
+            let elapsed = start.elapsed().as_millis() as u64;
+            (
+                StatusCode::OK,
+                Json(ApiResponse::success(TestResult {
+                    output: json!({}),
+                    error: Some(e.to_string()),
+                    execution_time_ms: elapsed,
+                })),
+            )
+        }
+    }
+}
+
+/// Model info returned from LLM providers
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LlmModelInfo {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// Request for fetching models from a provider
+#[derive(Debug, Deserialize)]
+pub struct FetchModelsRequest {
+    #[serde(default)]
+    pub base_url: Option<String>,
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+}
+
+/// GET /api/llm/models/:provider - Fetch available models from an LLM provider
+pub async fn fetch_llm_models(
+    Path(provider): Path<String>,
+    axum::extract::Query(params): axum::extract::Query<FetchModelsRequest>,
+) -> impl IntoResponse {
+    let models = match provider.to_lowercase().as_str() {
+        "openai" => fetch_openai_models(params.api_key_env).await,
+        "anthropic" => fetch_anthropic_models().await,
+        "gemini" => fetch_gemini_models(params.api_key_env).await,
+        "ollama" => fetch_ollama_models(params.base_url).await,
+        "azureopenai" => fetch_azure_openai_models().await,
+        _ => Err(format!("Unknown provider: {}", provider)),
+    };
+
+    match models {
+        Ok(models) => (StatusCode::OK, Json(ApiResponse::success(models))),
+        Err(e) => (
+            StatusCode::OK,
+            Json(ApiResponse::success(vec![LlmModelInfo {
+                id: "error".to_string(),
+                name: format!("Failed to fetch models: {}", e),
+                description: None,
+            }])),
+        ),
+    }
+}
+
+async fn fetch_openai_models(api_key_env: Option<String>) -> Result<Vec<LlmModelInfo>, String> {
+    let api_key = get_api_key(api_key_env.as_deref().unwrap_or("OPENAI_API_KEY"))?;
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get("https://api.openai.com/v1/models")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("API error: {}", response.status()));
+    }
+
+    let data: Value = response.json().await.map_err(|e| format!("Parse error: {}", e))?;
+
+    let mut models: Vec<LlmModelInfo> = data["data"]
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .filter_map(|m| {
+            let id = m["id"].as_str()?;
+            // Filter to only include chat models
+            if id.starts_with("gpt-") || id.starts_with("o1") || id.starts_with("chatgpt") {
+                Some(LlmModelInfo {
+                    id: id.to_string(),
+                    name: format_model_name(id),
+                    description: None,
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Sort by name
+    models.sort_by(|a, b| a.name.cmp(&b.name));
+
+    // If no models found, return defaults
+    if models.is_empty() {
+        models = get_default_openai_models();
+    }
+
+    Ok(models)
+}
+
+async fn fetch_anthropic_models() -> Result<Vec<LlmModelInfo>, String> {
+    // Anthropic doesn't have a public models API, return known models
+    Ok(vec![
+        LlmModelInfo { id: "claude-sonnet-4-20250514".to_string(), name: "Claude Sonnet 4 (Latest)".to_string(), description: Some("Most intelligent model".to_string()) },
+        LlmModelInfo { id: "claude-opus-4-20250514".to_string(), name: "Claude Opus 4".to_string(), description: Some("Highest capability".to_string()) },
+        LlmModelInfo { id: "claude-3-7-sonnet-20250219".to_string(), name: "Claude 3.7 Sonnet".to_string(), description: None },
+        LlmModelInfo { id: "claude-3-5-sonnet-20241022".to_string(), name: "Claude 3.5 Sonnet".to_string(), description: None },
+        LlmModelInfo { id: "claude-3-5-haiku-20241022".to_string(), name: "Claude 3.5 Haiku".to_string(), description: Some("Fast and efficient".to_string()) },
+        LlmModelInfo { id: "claude-3-opus-20240229".to_string(), name: "Claude 3 Opus".to_string(), description: None },
+        LlmModelInfo { id: "claude-3-sonnet-20240229".to_string(), name: "Claude 3 Sonnet".to_string(), description: None },
+        LlmModelInfo { id: "claude-3-haiku-20240307".to_string(), name: "Claude 3 Haiku".to_string(), description: None },
+    ])
+}
+
+async fn fetch_gemini_models(api_key_env: Option<String>) -> Result<Vec<LlmModelInfo>, String> {
+    let api_key = get_api_key(api_key_env.as_deref().unwrap_or("GEMINI_API_KEY"))?;
+
+    let client = reqwest::Client::new();
+    let url = format!("https://generativelanguage.googleapis.com/v1/models?key={}", api_key);
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("API error: {}", response.status()));
+    }
+
+    let data: Value = response.json().await.map_err(|e| format!("Parse error: {}", e))?;
+
+    let mut models: Vec<LlmModelInfo> = data["models"]
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .filter_map(|m| {
+            let name = m["name"].as_str()?;
+            let display_name = m["displayName"].as_str().unwrap_or(name);
+            let description = m["description"].as_str().map(|s| s.to_string());
+
+            // Extract model ID from "models/gemini-1.5-pro" format
+            let id = name.strip_prefix("models/").unwrap_or(name);
+
+            // Only include generative models
+            if id.contains("gemini") && m["supportedGenerationMethods"]
+                .as_array()
+                .map(|arr| arr.iter().any(|v| v.as_str() == Some("generateContent")))
+                .unwrap_or(false)
+            {
+                Some(LlmModelInfo {
+                    id: id.to_string(),
+                    name: display_name.to_string(),
+                    description,
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Sort by name
+    models.sort_by(|a, b| a.name.cmp(&b.name));
+
+    // If no models found, return defaults
+    if models.is_empty() {
+        models = get_default_gemini_models();
+    }
+
+    Ok(models)
+}
+
+async fn fetch_ollama_models(base_url: Option<String>) -> Result<Vec<LlmModelInfo>, String> {
+    let base = base_url.unwrap_or_else(|| "http://localhost:11434".to_string());
+    let url = format!("{}/api/tags", base.trim_end_matches('/'));
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(5))
+        .send()
+        .await
+        .map_err(|e| format!("Cannot connect to Ollama at {}: {}", base, e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Ollama API error: {}", response.status()));
+    }
+
+    let data: Value = response.json().await.map_err(|e| format!("Parse error: {}", e))?;
+
+    let mut models: Vec<LlmModelInfo> = data["models"]
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .filter_map(|m| {
+            let name = m["name"].as_str()?;
+            let size = m["size"].as_u64().map(format_size);
+
+            Some(LlmModelInfo {
+                id: name.to_string(),
+                name: name.to_string(),
+                description: size.map(|s| format!("Size: {}", s)),
+            })
+        })
+        .collect();
+
+    // Sort by name
+    models.sort_by(|a, b| a.name.cmp(&b.name));
+
+    if models.is_empty() {
+        return Err("No models found. Pull models with: ollama pull <model>".to_string());
+    }
+
+    Ok(models)
+}
+
+async fn fetch_azure_openai_models() -> Result<Vec<LlmModelInfo>, String> {
+    // Azure OpenAI models are deployment-specific, return common options
+    Ok(vec![
+        LlmModelInfo { id: "gpt-4o".to_string(), name: "GPT-4o".to_string(), description: Some("Use your deployment name".to_string()) },
+        LlmModelInfo { id: "gpt-4o-mini".to_string(), name: "GPT-4o Mini".to_string(), description: None },
+        LlmModelInfo { id: "gpt-4-turbo".to_string(), name: "GPT-4 Turbo".to_string(), description: None },
+        LlmModelInfo { id: "gpt-4".to_string(), name: "GPT-4".to_string(), description: None },
+        LlmModelInfo { id: "gpt-35-turbo".to_string(), name: "GPT-3.5 Turbo".to_string(), description: None },
+    ])
+}
+
+fn get_api_key(env_var: &str) -> Result<String, String> {
+    std::env::var(env_var).map_err(|_| format!("Environment variable {} not set", env_var))
+}
+
+fn format_model_name(id: &str) -> String {
+    // Convert model IDs to friendly names
+    match id {
+        "gpt-4o" => "GPT-4o (Latest)".to_string(),
+        "gpt-4o-2024-11-20" => "GPT-4o (Nov 2024)".to_string(),
+        "gpt-4o-2024-08-06" => "GPT-4o (Aug 2024)".to_string(),
+        "gpt-4o-2024-05-13" => "GPT-4o (May 2024)".to_string(),
+        "gpt-4o-mini" => "GPT-4o Mini".to_string(),
+        "gpt-4o-mini-2024-07-18" => "GPT-4o Mini (Jul 2024)".to_string(),
+        "gpt-4-turbo" => "GPT-4 Turbo".to_string(),
+        "gpt-4-turbo-preview" => "GPT-4 Turbo Preview".to_string(),
+        "gpt-4" => "GPT-4".to_string(),
+        "gpt-4-0613" => "GPT-4 (Jun 2023)".to_string(),
+        "gpt-3.5-turbo" => "GPT-3.5 Turbo".to_string(),
+        "gpt-3.5-turbo-0125" => "GPT-3.5 Turbo (Jan 2024)".to_string(),
+        "o1" => "o1 (Reasoning)".to_string(),
+        "o1-preview" => "o1 Preview".to_string(),
+        "o1-mini" => "o1 Mini".to_string(),
+        "chatgpt-4o-latest" => "ChatGPT-4o Latest".to_string(),
+        _ => id.to_string(),
+    }
+}
+
+fn format_size(bytes: u64) -> String {
+    const GB: u64 = 1024 * 1024 * 1024;
+    const MB: u64 = 1024 * 1024;
+
+    if bytes >= GB {
+        format!("{:.1} GB", bytes as f64 / GB as f64)
+    } else {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    }
+}
+
+fn get_default_openai_models() -> Vec<LlmModelInfo> {
+    vec![
+        LlmModelInfo { id: "gpt-4o".to_string(), name: "GPT-4o (Latest)".to_string(), description: None },
+        LlmModelInfo { id: "gpt-4o-mini".to_string(), name: "GPT-4o Mini".to_string(), description: None },
+        LlmModelInfo { id: "gpt-4-turbo".to_string(), name: "GPT-4 Turbo".to_string(), description: None },
+        LlmModelInfo { id: "gpt-4".to_string(), name: "GPT-4".to_string(), description: None },
+        LlmModelInfo { id: "gpt-3.5-turbo".to_string(), name: "GPT-3.5 Turbo".to_string(), description: None },
+        LlmModelInfo { id: "o1".to_string(), name: "o1 (Reasoning)".to_string(), description: None },
+        LlmModelInfo { id: "o1-mini".to_string(), name: "o1 Mini".to_string(), description: None },
+    ]
+}
+
+fn get_default_gemini_models() -> Vec<LlmModelInfo> {
+    vec![
+        LlmModelInfo { id: "gemini-2.0-flash".to_string(), name: "Gemini 2.0 Flash".to_string(), description: None },
+        LlmModelInfo { id: "gemini-1.5-pro".to_string(), name: "Gemini 1.5 Pro".to_string(), description: None },
+        LlmModelInfo { id: "gemini-1.5-flash".to_string(), name: "Gemini 1.5 Flash".to_string(), description: None },
+        LlmModelInfo { id: "gemini-1.0-pro".to_string(), name: "Gemini 1.0 Pro".to_string(), description: None },
+    ]
 }

@@ -25,6 +25,8 @@ pub struct ConfigOverview {
     pub rate_limit_enabled: bool,
     pub s3_enabled: bool,
     pub config_file_loaded: bool,
+    #[serde(default)]
+    pub mcp_servers_count: usize,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -32,6 +34,41 @@ pub struct ServerInfo {
     pub host: String,
     pub port: u16,
     pub version: String,
+}
+
+/// Configuration for an external MCP server connection
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct McpServerConfig {
+    pub name: String,
+    pub url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key_env: Option<String>,
+    #[serde(default = "default_mcp_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_mcp_timeout")]
+    pub timeout_seconds: u64,
+}
+
+#[allow(dead_code)]
+fn default_mcp_enabled() -> bool {
+    true
+}
+
+#[allow(dead_code)]
+fn default_mcp_timeout() -> u64 {
+    30
+}
+
+/// MCP tool info for display
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct McpToolInfo {
+    pub server: String,
+    pub name: String,
+    pub description: Option<String>,
 }
 
 /// Editable authentication configuration
@@ -338,6 +375,9 @@ pub struct DatabaseConfig {
 pub struct TestRequest {
     #[serde(default)]
     pub args: Value,
+    /// Optional session ID for multi-turn conversations
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
 }
 
 /// Response from test endpoints
@@ -347,4 +387,189 @@ pub struct TestResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     pub execution_time_ms: u64,
+}
+
+// ============================================================================
+// AI Agent Types
+// ============================================================================
+
+/// AI Agent configuration
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct Agent {
+    pub name: String,
+    pub description: String,
+    #[serde(default)]
+    pub agent_type: AgentType,
+    #[serde(default)]
+    pub input_schema: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Value>,
+    pub llm: AgentLlmConfig,
+    pub system_prompt: String,
+    #[serde(default)]
+    pub available_tools: Vec<String>,
+    /// MCP tools from external servers (format: "server_name:tool_name" or "server_name:*")
+    #[serde(default)]
+    pub mcp_tools: Vec<String>,
+    #[serde(default)]
+    pub memory: MemoryConfig,
+    #[serde(default = "default_max_iterations")]
+    pub max_iterations: u32,
+    #[serde(default = "default_timeout")]
+    pub timeout_seconds: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+}
+
+fn default_max_iterations() -> u32 {
+    10
+}
+
+fn default_timeout() -> u64 {
+    120
+}
+
+/// Agent type
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentType {
+    #[default]
+    SingleTurn,
+    MultiTurn,
+    #[serde(rename = "react")]
+    ReAct,
+}
+
+/// LLM provider configuration for agents
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct AgentLlmConfig {
+    pub provider: AgentLlmProvider,
+    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key_env: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+    #[serde(default = "default_stream")]
+    pub stream: bool,
+}
+
+fn default_stream() -> bool {
+    true
+}
+
+/// Supported LLM providers for agents
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentLlmProvider {
+    #[default]
+    OpenAI,
+    Anthropic,
+    Gemini,
+    Ollama,
+    #[serde(rename = "azureopenai")]
+    AzureOpenAI,
+}
+
+/// Memory configuration for agents
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct MemoryConfig {
+    #[serde(default)]
+    pub backend: MemoryBackend,
+    #[serde(default)]
+    pub strategy: MemoryStrategy,
+    #[serde(default = "default_max_messages")]
+    pub max_messages: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub database_url: Option<String>,
+}
+
+fn default_max_messages() -> u32 {
+    100
+}
+
+/// Memory storage backend
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryBackend {
+    #[default]
+    InMemory,
+    File,
+    Database,
+}
+
+/// Memory management strategy
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MemoryStrategy {
+    #[default]
+    Full,
+    SlidingWindow { size: usize },
+    FirstLast { first: usize, last: usize },
+}
+
+// ============================================================================
+// Orchestration Types
+// ============================================================================
+
+/// Multi-agent orchestration configuration
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct Orchestration {
+    pub name: String,
+    pub description: String,
+    pub pattern: OrchestrationPattern,
+    #[serde(default)]
+    pub input_schema: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_schema: Option<Value>,
+    pub agents: Vec<AgentReference>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub manager_agent: Option<String>,
+    #[serde(default)]
+    pub merge_strategy: MergeStrategy,
+    #[serde(default = "default_orchestration_timeout")]
+    pub timeout_seconds: u64,
+}
+
+fn default_orchestration_timeout() -> u64 {
+    300
+}
+
+/// Orchestration patterns
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum OrchestrationPattern {
+    #[default]
+    Sequential,
+    Hierarchical,
+    Collaborative,
+}
+
+/// Reference to an agent in an orchestration
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct AgentReference {
+    pub agent: String,
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub condition: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_transform: Option<String>,
+}
+
+/// Strategies for merging results in collaborative orchestration
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MergeStrategy {
+    #[default]
+    Concat,
+    Vote,
+    Custom { script: String },
 }

@@ -37,6 +37,7 @@
 //! - **Config**: Configuration management
 
 pub mod adapters;
+pub mod agents;
 pub mod application;
 pub mod cli;
 pub mod config;
@@ -49,6 +50,8 @@ use crate::adapters::metrics_handler::MetricsHandler;
 use crate::adapters::mock_strategy::MockStrategyHandler;
 use crate::adapters::rmcp_server::MetisServer;
 use crate::adapters::state_manager::StateManager;
+use crate::agents::domain::AgentPort;
+use crate::agents::handler::AgentHandler;
 use axum::{routing::{delete, get, post}, Router};
 use rmcp::transport::streamable_http_server::{
     session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
@@ -126,11 +129,31 @@ pub async fn create_app(
     // Create mock strategy handler for test endpoints
     let mock_strategy = Arc::new(MockStrategyHandler::new(state_manager.clone()));
 
+    // Try to create agent handler if agents are configured
+    let agent_handler: Option<Arc<dyn AgentPort>> = {
+        let settings_read = settings.read().await;
+        if !settings_read.agents.is_empty() {
+            // Create a tool handler that uses mock strategies for agent tool calls
+            let tool_handler = Arc::new(crate::adapters::tool_handler::BasicToolHandler::new(
+                settings.clone(),
+                mock_strategy.clone(),
+            ));
+
+            let handler = AgentHandler::new(settings.clone(), tool_handler);
+            tracing::info!("AgentHandler initialized with {} agents", settings_read.agents.len());
+            Some(Arc::new(handler) as Arc<dyn AgentPort>)
+        } else {
+            None
+        }
+    };
+
     // Create API state for REST endpoints
     let api_state = ApiState {
         settings: settings.clone(),
         state_manager,
         mock_strategy,
+        agent_handler,
+        test_agent_handler: Arc::new(tokio::sync::RwLock::new(None)),
     };
 
     // API routes for Web UI
@@ -140,6 +163,9 @@ pub async fn create_app(
         .route("/config/settings", get(api_handler::get_server_settings).put(api_handler::update_server_settings))
         .route("/config/save-disk", post(api_handler::save_config_to_disk))
         .route("/config/save-s3", post(api_handler::save_config_to_s3))
+        .route("/config/export", get(api_handler::export_config))
+        .route("/config/import", post(api_handler::import_config))
+        .route("/config/merge", post(api_handler::merge_config))
         .route("/metrics/json", get(api_handler::get_metrics_json))
         // Resources CRUD + Test
         .route("/resources", get(api_handler::list_resources).post(api_handler::create_resource))
@@ -164,6 +190,16 @@ pub async fn create_app(
         // State management
         .route("/state", get(api_handler::get_state).delete(api_handler::reset_state))
         .route("/state/:key", delete(api_handler::delete_state_key))
+        // Agents CRUD + Test
+        .route("/agents", get(api_handler::list_agents).post(api_handler::create_agent))
+        .route("/agents/:name", get(api_handler::get_agent).put(api_handler::update_agent).delete(api_handler::delete_agent))
+        .route("/agents/:name/test", post(api_handler::test_agent))
+        // Orchestrations CRUD + Test
+        .route("/orchestrations", get(api_handler::list_orchestrations).post(api_handler::create_orchestration))
+        .route("/orchestrations/:name", get(api_handler::get_orchestration).put(api_handler::update_orchestration).delete(api_handler::delete_orchestration))
+        .route("/orchestrations/:name/test", post(api_handler::test_orchestration))
+        // LLM models discovery
+        .route("/llm/models/:provider", get(api_handler::fetch_llm_models))
         .with_state(api_state);
 
     // Build protected router with API routes
