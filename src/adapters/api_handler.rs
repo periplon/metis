@@ -2156,29 +2156,36 @@ pub async fn test_agent(
     }
     drop(settings);
 
-    // Always reinitialize the agent handler to pick up newly created agents and use secrets store
+    // Initialize agent handler only if not already present (preserves memory store for multi-turn)
     {
-        let mut handler_guard = state.test_agent_handler.write().await;
-        let tool_handler = Arc::new(BasicToolHandler::new(
-            state.settings.clone(),
-            state.mock_strategy.clone(),
-        ));
-        // Use new_with_secrets to enable API key lookup from secrets store
-        let agent_handler = AgentHandler::new_with_secrets(
-            state.settings.clone(),
-            tool_handler,
-            state.secrets.clone(),
-        );
+        let handler_guard = state.test_agent_handler.read().await;
+        if handler_guard.is_none() {
+            drop(handler_guard);
+            let mut handler_guard = state.test_agent_handler.write().await;
+            // Double-check after acquiring write lock
+            if handler_guard.is_none() {
+                let tool_handler = Arc::new(BasicToolHandler::new(
+                    state.settings.clone(),
+                    state.mock_strategy.clone(),
+                ));
+                // Use new_with_secrets to enable API key lookup from secrets store
+                let agent_handler = AgentHandler::new_with_secrets(
+                    state.settings.clone(),
+                    tool_handler,
+                    state.secrets.clone(),
+                );
 
-        // Initialize the agent handler to populate agent cache
-        if let Err(e) = agent_handler.initialize().await {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiResponse::<TestResult>::error(&format!("Failed to initialize agent handler: {}", e))),
-            );
+                // Initialize the agent handler to populate agent cache
+                if let Err(e) = agent_handler.initialize().await {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ApiResponse::<TestResult>::error(&format!("Failed to initialize agent handler: {}", e))),
+                    );
+                }
+
+                *handler_guard = Some(agent_handler);
+            }
         }
-
-        *handler_guard = Some(agent_handler);
     }
 
     // Use the shared handler

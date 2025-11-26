@@ -14,7 +14,7 @@ use crate::agents::domain::{
     Message, ToolCallResult, ToolDefinition,
 };
 use crate::agents::llm::{CompletionRequest, FinishReason, LlmProvider, ToolCallAccumulator};
-use crate::agents::memory::ConversationStore;
+use crate::agents::memory::{apply_strategy, ConversationStore};
 use crate::domain::ToolPort;
 
 /// ReAct agent: Reasoning + Action loop with tool calling
@@ -44,7 +44,7 @@ impl ReActAgent {
     async fn execute_internal(
         config: AgentConfig,
         llm: Arc<dyn LlmProvider>,
-        _memory: Arc<dyn ConversationStore>,
+        memory: Arc<dyn ConversationStore>,
         tool_handler: Arc<dyn ToolPort>,
         input: Value,
         session_id: Option<String>,
@@ -57,8 +57,16 @@ impl ReActAgent {
             return;
         }
 
-        // Get session ID
+        // Get or create session
         let session_id = session_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+
+        let mut session = match memory.get_or_create(&session_id, &config.name).await {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = sender.send(AgentChunk::error(format!("Failed to load session: {}", e))).await;
+                return;
+            }
+        };
 
         // Get user prompt
         let prompt = input
@@ -66,11 +74,20 @@ impl ReActAgent {
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
-        // Build initial messages
-        let mut messages = vec![
-            Message::system(&config.system_prompt),
-            Message::user(prompt),
-        ];
+        // Add user message to session
+        let user_message = Message::user(prompt);
+        session.add_message(user_message.clone());
+
+        // Build messages with system prompt + history
+        let mut messages = vec![Message::system(&config.system_prompt)];
+
+        // Apply memory strategy to get conversation history
+        let history_messages = apply_strategy(
+            &session.messages,
+            &config.memory.strategy,
+            None,
+        );
+        messages.extend(history_messages);
 
         // Build tool definitions (includes both regular tools and MCP tools)
         let tools = Self::build_tool_definitions(&tool_handler, &config.available_tools, &config.mcp_tools).await;
@@ -198,6 +215,15 @@ impl ReActAgent {
                 // Track tool call
                 all_tool_calls.push(tool_result);
             }
+        }
+
+        // Save assistant response to session
+        let assistant_message = Message::assistant(&final_content);
+        session.add_message(assistant_message);
+
+        // Persist session
+        if let Err(e) = memory.save(&session).await {
+            tracing::warn!("Failed to save session: {}", e);
         }
 
         // Send complete response
