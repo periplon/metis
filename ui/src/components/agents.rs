@@ -1304,6 +1304,12 @@ pub fn AgentForm() -> impl IntoView {
     // ReAct specific settings
     let (max_iterations, set_max_iterations) = signal(10u32);
 
+    // Schema configuration
+    let (input_schema_str, set_input_schema_str) = signal(String::new());
+    let (output_schema_str, set_output_schema_str) = signal(String::new());
+    let (input_schema_error, set_input_schema_error) = signal(Option::<String>::None);
+    let (output_schema_error, set_output_schema_error) = signal(Option::<String>::None);
+
     // Tools configuration (for ReAct agents)
     let (all_tools, set_all_tools) = signal(Vec::<crate::types::Tool>::new());
     let (selected_tools, set_selected_tools) = signal(Vec::<String>::new());
@@ -1358,6 +1364,36 @@ pub fn AgentForm() -> impl IntoView {
     let on_save = move |_| {
         set_saving.set(true);
         set_error.set(None);
+        set_input_schema_error.set(None);
+        set_output_schema_error.set(None);
+
+        // Parse input schema
+        let input_schema = if input_schema_str.get().trim().is_empty() {
+            serde_json::json!({})
+        } else {
+            match serde_json::from_str(&input_schema_str.get()) {
+                Ok(v) => v,
+                Err(e) => {
+                    set_input_schema_error.set(Some(format!("Invalid JSON: {}", e)));
+                    set_saving.set(false);
+                    return;
+                }
+            }
+        };
+
+        // Parse output schema
+        let output_schema = if output_schema_str.get().trim().is_empty() {
+            None
+        } else {
+            match serde_json::from_str(&output_schema_str.get()) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    set_output_schema_error.set(Some(format!("Invalid JSON: {}", e)));
+                    set_saving.set(false);
+                    return;
+                }
+            }
+        };
 
         let agent = Agent {
             name: name.get(),
@@ -1389,8 +1425,8 @@ pub fn AgentForm() -> impl IntoView {
             timeout_seconds: 300,
             temperature: None,
             max_tokens: None,
-            input_schema: serde_json::json!({}),
-            output_schema: None,
+            input_schema,
+            output_schema,
         };
 
         wasm_bindgen_futures::spawn_local(async move {
@@ -1864,6 +1900,60 @@ pub fn AgentForm() -> impl IntoView {
                         />
                     </div>
 
+                    // Schema Configuration
+                    <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
+                        <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">"Schema Configuration"</h3>
+                        <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                            "Define JSON schemas for agent input and output. These are used when the agent is exposed as a tool."
+                        </p>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                    "Input Schema"
+                                    <span class="text-gray-400 text-xs ml-1">"(JSON Schema, optional)"</span>
+                                </label>
+                                <textarea
+                                    rows="6"
+                                    class=move || format!(
+                                        "w-full px-3 py-2 border rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white font-mono text-sm {}",
+                                        if input_schema_error.get().is_some() { "border-red-500" } else { "border-gray-300 dark:border-gray-600" }
+                                    )
+                                    placeholder=r#"{"type": "object", "properties": {"prompt": {"type": "string"}}}"#
+                                    prop:value=move || input_schema_str.get()
+                                    on:input=move |ev| {
+                                        set_input_schema_str.set(event_target_value(&ev));
+                                        set_input_schema_error.set(None);
+                                    }
+                                />
+                                {move || input_schema_error.get().map(|e| view! {
+                                    <p class="text-red-500 text-xs mt-1">{e}</p>
+                                })}
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                    "Output Schema"
+                                    <span class="text-gray-400 text-xs ml-1">"(JSON Schema, optional)"</span>
+                                </label>
+                                <textarea
+                                    rows="6"
+                                    class=move || format!(
+                                        "w-full px-3 py-2 border rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white font-mono text-sm {}",
+                                        if output_schema_error.get().is_some() { "border-red-500" } else { "border-gray-300 dark:border-gray-600" }
+                                    )
+                                    placeholder=r#"{"type": "object", "properties": {"result": {"type": "string"}}}"#
+                                    prop:value=move || output_schema_str.get()
+                                    on:input=move |ev| {
+                                        set_output_schema_str.set(event_target_value(&ev));
+                                        set_output_schema_error.set(None);
+                                    }
+                                />
+                                {move || output_schema_error.get().map(|e| view! {
+                                    <p class="text-red-500 text-xs mt-1">{e}</p>
+                                })}
+                            </div>
+                        </div>
+                    </div>
+
                     // Save button
                     <div class="border-t border-gray-200 dark:border-gray-700 pt-6 flex justify-end space-x-4">
                         <a
@@ -1915,6 +2005,12 @@ pub fn AgentEditForm() -> impl IntoView {
     let (selected_tools, set_selected_tools) = signal(Vec::<String>::new());
     let (selected_mcp_tools, set_selected_mcp_tools) = signal(Vec::<String>::new());
     let (tools_loading, set_tools_loading) = signal(false);
+
+    // Schema configuration
+    let (input_schema_str, set_input_schema_str) = signal(String::new());
+    let (output_schema_str, set_output_schema_str) = signal(String::new());
+    let (input_schema_error, set_input_schema_error) = signal(Option::<String>::None);
+    let (output_schema_error, set_output_schema_error) = signal(Option::<String>::None);
 
     // Fetch models function
     let fetch_models = move |prov: AgentLlmProvider, base: Option<String>, api_env: Option<String>| {
@@ -1976,6 +2072,13 @@ pub fn AgentEditForm() -> impl IntoView {
                     set_system_prompt.set(agent.system_prompt.clone());
                     set_selected_tools.set(agent.available_tools.clone());
                     set_selected_mcp_tools.set(agent.mcp_tools.clone());
+                    // Load schema fields
+                    if !agent.input_schema.is_null() && agent.input_schema != serde_json::json!({}) {
+                        set_input_schema_str.set(serde_json::to_string_pretty(&agent.input_schema).unwrap_or_default());
+                    }
+                    if let Some(output_schema) = agent.output_schema {
+                        set_output_schema_str.set(serde_json::to_string_pretty(&output_schema).unwrap_or_default());
+                    }
                     set_loading.set(false);
 
                     // Fetch models for the loaded provider
@@ -1994,7 +2097,37 @@ pub fn AgentEditForm() -> impl IntoView {
     let on_save = move |_| {
         set_saving.set(true);
         set_error.set(None);
+        set_input_schema_error.set(None);
+        set_output_schema_error.set(None);
         let orig_name = original_name.get();
+
+        // Parse input schema
+        let input_schema = if input_schema_str.get().trim().is_empty() {
+            serde_json::json!({})
+        } else {
+            match serde_json::from_str(&input_schema_str.get()) {
+                Ok(v) => v,
+                Err(e) => {
+                    set_input_schema_error.set(Some(format!("Invalid JSON: {}", e)));
+                    set_saving.set(false);
+                    return;
+                }
+            }
+        };
+
+        // Parse output schema
+        let output_schema = if output_schema_str.get().trim().is_empty() {
+            None
+        } else {
+            match serde_json::from_str(&output_schema_str.get()) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    set_output_schema_error.set(Some(format!("Invalid JSON: {}", e)));
+                    set_saving.set(false);
+                    return;
+                }
+            }
+        };
 
         let agent = Agent {
             name: name.get(),
@@ -2023,8 +2156,8 @@ pub fn AgentEditForm() -> impl IntoView {
             timeout_seconds: 300,
             temperature: None,
             max_tokens: None,
-            input_schema: serde_json::json!({}),
-            output_schema: None,
+            input_schema,
+            output_schema,
         };
 
         wasm_bindgen_futures::spawn_local(async move {
@@ -2389,6 +2522,60 @@ pub fn AgentEditForm() -> impl IntoView {
                                 prop:value=move || system_prompt.get()
                                 on:input=move |ev| set_system_prompt.set(event_target_value(&ev))
                             />
+                        </div>
+
+                        // Schema Configuration
+                        <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
+                            <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">"Schema Configuration"</h3>
+                            <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                                "Define JSON schemas for agent input and output. These are used when the agent is exposed as a tool."
+                            </p>
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                        "Input Schema"
+                                        <span class="text-gray-400 text-xs ml-1">"(JSON Schema, optional)"</span>
+                                    </label>
+                                    <textarea
+                                        rows="6"
+                                        class=move || format!(
+                                            "w-full px-3 py-2 border rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white font-mono text-sm {}",
+                                            if input_schema_error.get().is_some() { "border-red-500" } else { "border-gray-300 dark:border-gray-600" }
+                                        )
+                                        placeholder=r#"{"type": "object", "properties": {"prompt": {"type": "string"}}}"#
+                                        prop:value=move || input_schema_str.get()
+                                        on:input=move |ev| {
+                                            set_input_schema_str.set(event_target_value(&ev));
+                                            set_input_schema_error.set(None);
+                                        }
+                                    />
+                                    {move || input_schema_error.get().map(|e| view! {
+                                        <p class="text-red-500 text-xs mt-1">{e}</p>
+                                    })}
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                        "Output Schema"
+                                        <span class="text-gray-400 text-xs ml-1">"(JSON Schema, optional)"</span>
+                                    </label>
+                                    <textarea
+                                        rows="6"
+                                        class=move || format!(
+                                            "w-full px-3 py-2 border rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:text-white font-mono text-sm {}",
+                                            if output_schema_error.get().is_some() { "border-red-500" } else { "border-gray-300 dark:border-gray-600" }
+                                        )
+                                        placeholder=r#"{"type": "object", "properties": {"result": {"type": "string"}}}"#
+                                        prop:value=move || output_schema_str.get()
+                                        on:input=move |ev| {
+                                            set_output_schema_str.set(event_target_value(&ev));
+                                            set_output_schema_error.set(None);
+                                        }
+                                    />
+                                    {move || output_schema_error.get().map(|e| view! {
+                                        <p class="text-red-500 text-xs mt-1">{e}</p>
+                                    })}
+                                </div>
+                            </div>
                         </div>
 
                         // Save button
