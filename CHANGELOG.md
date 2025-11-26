@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.15.0 - 2025-11-26
+#### Features
+- **(agents)** add AI agents with MCP tool support and config import/export - (1b94453) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.14.0 - 2025-11-25
 #### Features
 - **(mcp)** add explicit ping support - (d7bbbf7) - Joan Marc Carbo Arnau
