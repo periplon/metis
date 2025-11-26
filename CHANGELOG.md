@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.16.0 - 2025-11-26
+#### Features
+- **(secrets)** add in-memory secrets store and AGE encryption - (3fa3cc9) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.15.0 - 2025-11-26
 #### Features
 - **(agents)** add AI agents with MCP tool support and config import/export - (1b94453) - Joan Marc Carbo Arnau
