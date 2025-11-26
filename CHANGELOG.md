@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.19.0 - 2025-11-26
+#### Features
+- **(ui)** add input/output schema editors for agents - (13e6e06) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.18.0 - 2025-11-26
 #### Features
 - **(mcp)** expose agents as tools externally via MCP server - (2204b45) - Joan Marc Carbo Arnau
