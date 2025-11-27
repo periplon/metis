@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.22.3 - 2025-11-27
+#### Bug Fixes
+- **(agents)** serialize structured input as JSON for schema-based agents - (b81a0ad) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.22.2 - 2025-11-27
 #### Bug Fixes
 - **(agents)** auto-generate prompt from structured input when no template - (a36613b) - Joan Marc Carbo Arnau
