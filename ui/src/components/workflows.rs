@@ -674,11 +674,21 @@ pub fn WorkflowForm() -> impl IntoView {
     let (error, set_error) = signal(Option::<String>::None);
     let (saving, set_saving) = signal(false);
 
-    // Load available tools for dropdown
+    // Load available tools for dropdown (includes regular tools and agents)
     let available_tools = LocalResource::new(move || async move {
-        api::list_tools().await.ok().map(|tools| {
-            tools.into_iter().map(|t| t.name).collect::<Vec<_>>()
-        }).unwrap_or_default()
+        let mut all_tools = Vec::new();
+
+        // Add regular tools
+        if let Ok(tools) = api::list_tools().await {
+            all_tools.extend(tools.into_iter().map(|t| t.name));
+        }
+
+        // Add agents as tools (with agent_ prefix)
+        if let Ok(agents) = api::list_agents().await {
+            all_tools.extend(agents.into_iter().map(|a| format!("agent_{}", a.name)));
+        }
+
+        all_tools
     });
 
     let on_submit = move |ev: web_sys::SubmitEvent| {
@@ -855,11 +865,21 @@ pub fn WorkflowEditForm() -> impl IntoView {
     let (loading, set_loading) = signal(true);
     let (original_name, set_original_name) = signal(String::new());
 
-    // Load available tools for dropdown
+    // Load available tools for dropdown (includes regular tools and agents)
     let available_tools = LocalResource::new(move || async move {
-        api::list_tools().await.ok().map(|tools| {
-            tools.into_iter().map(|t| t.name).collect::<Vec<_>>()
-        }).unwrap_or_default()
+        let mut all_tools = Vec::new();
+
+        // Add regular tools
+        if let Ok(tools) = api::list_tools().await {
+            all_tools.extend(tools.into_iter().map(|t| t.name));
+        }
+
+        // Add agents as tools (with agent_ prefix)
+        if let Ok(agents) = api::list_agents().await {
+            all_tools.extend(agents.into_iter().map(|a| format!("agent_{}", a.name)));
+        }
+
+        all_tools
     });
 
     // Load existing workflow
