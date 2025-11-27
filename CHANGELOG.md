@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.21.0 - 2025-11-27
+#### Features
+- **(ui)** include agent tools in workflow step tool selector - (db01464) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.20.0 - 2025-11-27
 #### Features
 - **(mcp)** add list change notifications and agent reinitialization - (ef3f2e5) - Joan Marc Carbo Arnau
