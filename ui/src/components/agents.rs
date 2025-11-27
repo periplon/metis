@@ -632,6 +632,7 @@ pub struct SelectableItem {
 pub enum SelectTheme {
     #[default]
     Blue,    // Regular tools
+    Orange,  // Workflows
     Purple,  // MCP tools
     Indigo,  // Agents
 }
@@ -640,6 +641,7 @@ impl SelectTheme {
     fn border_class(&self) -> &'static str {
         match self {
             Self::Blue => "border-blue-300 focus:border-blue-500 focus:ring-blue-500",
+            Self::Orange => "border-orange-300 focus:border-orange-500 focus:ring-orange-500",
             Self::Purple => "border-purple-300 focus:border-purple-500 focus:ring-purple-500",
             Self::Indigo => "border-indigo-300 focus:border-indigo-500 focus:ring-indigo-500",
         }
@@ -648,6 +650,7 @@ impl SelectTheme {
     fn chip_class(&self) -> &'static str {
         match self {
             Self::Blue => "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
+            Self::Orange => "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200",
             Self::Purple => "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
             Self::Indigo => "bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200",
         }
@@ -656,6 +659,7 @@ impl SelectTheme {
     fn chip_remove_class(&self) -> &'static str {
         match self {
             Self::Blue => "text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200",
+            Self::Orange => "text-orange-600 hover:text-orange-800 dark:text-orange-400 dark:hover:text-orange-200",
             Self::Purple => "text-purple-600 hover:text-purple-800 dark:text-purple-400 dark:hover:text-purple-200",
             Self::Indigo => "text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-200",
         }
@@ -664,6 +668,7 @@ impl SelectTheme {
     fn dropdown_item_hover(&self) -> &'static str {
         match self {
             Self::Blue => "hover:bg-blue-50 dark:hover:bg-blue-900/30",
+            Self::Orange => "hover:bg-orange-50 dark:hover:bg-orange-900/30",
             Self::Purple => "hover:bg-purple-50 dark:hover:bg-purple-900/30",
             Self::Indigo => "hover:bg-indigo-50 dark:hover:bg-indigo-900/30",
         }
@@ -672,6 +677,7 @@ impl SelectTheme {
     fn accent_text(&self) -> &'static str {
         match self {
             Self::Blue => "text-blue-600 dark:text-blue-400",
+            Self::Orange => "text-orange-600 dark:text-orange-400",
             Self::Purple => "text-purple-600 dark:text-purple-400",
             Self::Indigo => "text-indigo-600 dark:text-indigo-400",
         }
@@ -909,6 +915,7 @@ fn SearchableMultiSelect(
                                 let bg_class = if is_focused {
                                     match theme {
                                         SelectTheme::Blue => "bg-blue-50 dark:bg-blue-900/30",
+                                        SelectTheme::Orange => "bg-orange-50 dark:bg-orange-900/30",
                                         SelectTheme::Purple => "bg-purple-50 dark:bg-purple-900/30",
                                         SelectTheme::Indigo => "bg-indigo-50 dark:bg-indigo-900/30",
                                     }
@@ -1930,10 +1937,14 @@ pub fn AgentForm() -> impl IntoView {
     let (selected_tools, set_selected_tools) = signal(Vec::<String>::new());
     let (selected_mcp_tools, set_selected_mcp_tools) = signal(Vec::<String>::new());
     let (selected_agent_tools, set_selected_agent_tools) = signal(Vec::<String>::new());
+    let (selected_workflow_tools, set_selected_workflow_tools) = signal(Vec::<String>::new());
     let (tools_loading, set_tools_loading) = signal(false);
 
     // Available agents (for agent-as-tool selection)
     let (all_agents, set_all_agents) = signal(Vec::<Agent>::new());
+
+    // Available workflows (for workflow-as-tool selection)
+    let (all_workflows, set_all_workflows) = signal(Vec::<crate::types::Workflow>::new());
 
     // Dynamic model list from API
     let (available_models, set_available_models) = signal(Vec::<LlmModelInfo>::new());
@@ -1984,6 +1995,15 @@ pub fn AgentForm() -> impl IntoView {
         });
     });
 
+    // Fetch available workflows on mount (for workflow-as-tool selection)
+    Effect::new(move |_| {
+        wasm_bindgen_futures::spawn_local(async move {
+            if let Ok(workflows) = api::list_workflows().await {
+                set_all_workflows.set(workflows);
+            }
+        });
+    });
+
     // Initial fetch on mount
     Effect::new(move |_| {
         fetch_models(AgentLlmProvider::OpenAI, None, Some("OPENAI_API_KEY".to_string()));
@@ -2023,7 +2043,12 @@ pub fn AgentForm() -> impl IntoView {
             },
             system_prompt: system_prompt.get(),
             prompt_template: if prompt_template.get().is_empty() { None } else { Some(prompt_template.get()) },
-            available_tools: selected_tools.get(),
+            available_tools: {
+                let mut tools = selected_tools.get();
+                // Add workflow tools to available_tools
+                tools.extend(selected_workflow_tools.get());
+                tools
+            },
             mcp_tools: selected_mcp_tools.get(),
             agent_tools: selected_agent_tools.get(),
             memory: MemoryConfig {
@@ -2225,6 +2250,18 @@ pub fn AgentForm() -> impl IntoView {
                                     .collect::<Vec<_>>()
                             });
 
+                            let workflow_tools_items = Signal::derive(move || {
+                                all_workflows.get()
+                                    .into_iter()
+                                    .map(|w| SelectableItem {
+                                        id: w.name.clone(),
+                                        name: w.name.clone(),
+                                        description: w.description.clone(),
+                                        category: Some(format!("{} steps", w.steps.len())),
+                                    })
+                                    .collect::<Vec<_>>()
+                            });
+
                             view! {
                                 <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
                                     <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">"Tools Configuration"</h3>
@@ -2245,6 +2282,17 @@ pub fn AgentForm() -> impl IntoView {
                                                     theme=SelectTheme::Blue
                                                     label="Available Tools"
                                                     help_text="Select tools the agent can use"
+                                                />
+
+                                                // Workflow Tools
+                                                <SearchableMultiSelect
+                                                    items=workflow_tools_items
+                                                    selected=selected_workflow_tools.into()
+                                                    on_change=Callback::new(move |new_selected| set_selected_workflow_tools.set(new_selected))
+                                                    placeholder="Search workflows..."
+                                                    theme=SelectTheme::Orange
+                                                    label="Workflow Tools"
+                                                    help_text="Workflows that can be called as tools"
                                                 />
 
                                                 // MCP Tools
@@ -2656,10 +2704,14 @@ pub fn AgentEditForm() -> impl IntoView {
     let (selected_tools, set_selected_tools) = signal(Vec::<String>::new());
     let (selected_mcp_tools, set_selected_mcp_tools) = signal(Vec::<String>::new());
     let (selected_agent_tools, set_selected_agent_tools) = signal(Vec::<String>::new());
+    let (selected_workflow_tools, set_selected_workflow_tools) = signal(Vec::<String>::new());
     let (tools_loading, set_tools_loading) = signal(false);
 
     // Available agents (for agent-as-tool selection)
     let (all_agents, set_all_agents) = signal(Vec::<Agent>::new());
+
+    // Available workflows (for workflow-as-tool selection)
+    let (all_workflows, set_all_workflows) = signal(Vec::<crate::types::Workflow>::new());
 
     // Schema configuration - using hierarchical editor like tools
     let (input_schema_properties, set_input_schema_properties) = signal(Vec::<SchemaProperty>::new());
@@ -2711,6 +2763,15 @@ pub fn AgentEditForm() -> impl IntoView {
         wasm_bindgen_futures::spawn_local(async move {
             if let Ok(agents) = api::list_agents().await {
                 set_all_agents.set(agents);
+            }
+        });
+    });
+
+    // Fetch available workflows on mount (for workflow-as-tool selection)
+    Effect::new(move |_| {
+        wasm_bindgen_futures::spawn_local(async move {
+            if let Ok(workflows) = api::list_workflows().await {
+                set_all_workflows.set(workflows);
             }
         });
     });
@@ -2797,7 +2858,12 @@ pub fn AgentEditForm() -> impl IntoView {
             },
             system_prompt: system_prompt.get(),
             prompt_template: if prompt_template.get().is_empty() { None } else { Some(prompt_template.get()) },
-            available_tools: selected_tools.get(),
+            available_tools: {
+                let mut tools = selected_tools.get();
+                // Add workflow tools to available_tools
+                tools.extend(selected_workflow_tools.get());
+                tools
+            },
             mcp_tools: selected_mcp_tools.get(),
             agent_tools: selected_agent_tools.get(),
             memory: MemoryConfig {
@@ -2996,6 +3062,18 @@ pub fn AgentEditForm() -> impl IntoView {
                                         .collect::<Vec<_>>()
                                 });
 
+                                let workflow_tools_items = Signal::derive(move || {
+                                    all_workflows.get()
+                                        .into_iter()
+                                        .map(|w| SelectableItem {
+                                            id: w.name.clone(),
+                                            name: w.name.clone(),
+                                            description: w.description.clone(),
+                                            category: Some(format!("{} steps", w.steps.len())),
+                                        })
+                                        .collect::<Vec<_>>()
+                                });
+
                                 view! {
                                     <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
                                         <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">"Tools Configuration"</h3>
@@ -3016,6 +3094,17 @@ pub fn AgentEditForm() -> impl IntoView {
                                                         theme=SelectTheme::Blue
                                                         label="Available Tools"
                                                         help_text="Select tools the agent can use"
+                                                    />
+
+                                                    // Workflow Tools
+                                                    <SearchableMultiSelect
+                                                        items=workflow_tools_items
+                                                        selected=selected_workflow_tools.into()
+                                                        on_change=Callback::new(move |new_selected| set_selected_workflow_tools.set(new_selected))
+                                                        placeholder="Search workflows..."
+                                                        theme=SelectTheme::Orange
+                                                        label="Workflow Tools"
+                                                        help_text="Workflows that can be called as tools"
                                                     />
 
                                                     // MCP Tools
