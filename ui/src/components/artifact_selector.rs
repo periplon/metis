@@ -73,6 +73,7 @@ impl ArtifactCategory {
     }
 
     /// Border color for focus states
+    #[allow(dead_code)]
     pub fn border_class(&self) -> &'static str {
         match self {
             Self::Tool => "border-blue-300 focus:border-blue-500 focus:ring-blue-500",
@@ -459,38 +460,69 @@ pub fn ArtifactSelector(
                 </div>
             })}
 
-            // Selected items as chips (for multi-select)
+            // Selected items as chips (for multi-select), grouped by category
             {move || {
                 let items = selected_items();
                 if items.is_empty() || mode == SelectionMode::Single {
                     view! { <span></span> }.into_any()
                 } else {
+                    // Group items by category
+                    let mut groups: std::collections::HashMap<ArtifactCategory, Vec<ArtifactItem>> = std::collections::HashMap::new();
+                    for item in items {
+                        groups.entry(item.category).or_default().push(item);
+                    }
+
+                    // Define category order
+                    let category_order = [
+                        ArtifactCategory::Tool,
+                        ArtifactCategory::McpTool,
+                        ArtifactCategory::Workflow,
+                        ArtifactCategory::Agent,
+                        ArtifactCategory::Resource,
+                        ArtifactCategory::ResourceTemplate,
+                    ];
+
                     view! {
-                        <div class="flex flex-wrap gap-1.5 mb-2">
-                            {items.into_iter().map(|item| {
-                                let item_id = item.id.clone();
-                                let item_id_for_remove = item_id.clone();
-                                view! {
-                                    <span class=format!(
-                                        "inline-flex items-center gap-1.5 pl-2 pr-1 py-0.5 rounded-md text-xs font-medium border {}",
-                                        item.category.chip_class()
-                                    )>
-                                        <CategoryIcon category=item.category class="w-3.5 h-3.5 opacity-70" />
-                                        <span class="truncate max-w-[120px]">{item.name.clone()}</span>
-                                        {item.server.clone().map(|s| view! {
-                                            <span class="text-[10px] opacity-60">{format!("@{}", s)}</span>
-                                        })}
-                                        <button
-                                            type="button"
-                                            class=format!("ml-0.5 p-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 {}", item.category.chip_remove_class())
-                                            on:click=move |_| remove_item.run(item_id_for_remove.clone())
-                                        >
-                                            <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                                                <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
-                                            </svg>
-                                        </button>
-                                    </span>
-                                }
+                        <div class="space-y-3 mb-4">
+                            {category_order.iter().filter_map(|cat| {
+                                groups.get(cat).map(|items| {
+                                    let category = *cat;
+                                    view! {
+                                        <div class=format!("rounded-lg p-2 {}", category.badge_bg())>
+                                            <div class=format!("flex items-center gap-1.5 mb-2 text-xs font-semibold {}", category.badge_text())>
+                                                <CategoryIcon category=category class="w-3.5 h-3.5" />
+                                                {category.label()}"s"
+                                                <span class="ml-1 opacity-70">"("{items.len()}")"</span>
+                                            </div>
+                                            <div class="flex flex-wrap gap-1.5">
+                                                {items.iter().map(|item| {
+                                                    let item_id = item.id.clone();
+                                                    let item_id_for_remove = item_id.clone();
+                                                    view! {
+                                                        <span class=format!(
+                                                            "inline-flex items-center gap-1.5 pl-2 pr-1 py-0.5 rounded-md text-xs font-medium border bg-white/50 dark:bg-gray-800/50 {}",
+                                                            item.category.chip_class()
+                                                        )>
+                                                            <span class="truncate max-w-[150px]">{item.name.clone()}</span>
+                                                            {item.server.clone().map(|s| view! {
+                                                                <span class="text-[10px] opacity-60">{format!("@{}", s)}</span>
+                                                            })}
+                                                            <button
+                                                                type="button"
+                                                                class=format!("ml-0.5 p-0.5 rounded hover:bg-black/10 dark:hover:bg-white/10 {}", item.category.chip_remove_class())
+                                                                on:click=move |_| remove_item.run(item_id_for_remove.clone())
+                                                            >
+                                                                <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                                                    <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                                                                </svg>
+                                                            </button>
+                                                        </span>
+                                                    }
+                                                }).collect::<Vec<_>>()}
+                                            </div>
+                                        </div>
+                                    }
+                                })
                             }).collect::<Vec<_>>()}
                         </div>
                     }.into_any()
