@@ -13,6 +13,7 @@ use crate::components::step_editor::{
     WorkflowStepsEditor, StepData,
     steps_data_to_workflow_steps, workflow_steps_to_steps_data,
 };
+use crate::components::artifact_selector::{ArtifactItem, ArtifactCategory};
 
 #[derive(Clone, Copy, PartialEq)]
 enum ViewMode {
@@ -674,28 +675,67 @@ pub fn WorkflowForm() -> impl IntoView {
     let (error, set_error) = signal(Option::<String>::None);
     let (saving, set_saving) = signal(false);
 
-    // Load available tools for dropdown (includes regular tools, workflows, and agents)
-    let available_tools = LocalResource::new(move || async move {
-        let mut all_tools = Vec::new();
+    // Load available artifacts for dropdown (tools, workflows, agents, resources)
+    let available_artifacts = LocalResource::new(move || async move {
+        let mut all_artifacts: Vec<ArtifactItem> = Vec::new();
 
         // Add regular tools
         if let Ok(tools) = api::list_tools().await {
-            all_tools.extend(tools.into_iter().map(|t| t.name));
+            all_artifacts.extend(tools.into_iter().map(|t| ArtifactItem::tool(
+                t.name.clone(),
+                t.description.clone(),
+            )));
         }
 
         // Add workflows as tools (workflows are exposed as tools on the backend)
         if let Ok(workflows) = api::list_workflows().await {
-            all_tools.extend(workflows.into_iter().map(|w| w.name));
+            // Use name directly (not workflow_ prefix) since that's how they're called
+            all_artifacts.extend(workflows.into_iter().map(|w| ArtifactItem {
+                id: w.name.clone(),
+                name: w.name.clone(),
+                description: w.description.clone(),
+                category: ArtifactCategory::Workflow,
+                server: None,
+            }));
         }
 
-        // Add agents as tools (with agent_ prefix)
+        // Add agents as tools (with agent_ prefix - this is how they're called)
         if let Ok(agents) = api::list_agents().await {
-            all_tools.extend(agents.into_iter().map(|a| format!("agent_{}", a.name)));
+            all_artifacts.extend(agents.into_iter().map(|a| ArtifactItem {
+                id: format!("agent_{}", a.name),
+                name: a.name.clone(),
+                description: a.description.clone(),
+                category: ArtifactCategory::Agent,
+                server: None,
+            }));
         }
 
-        // Sort alphabetically for easier finding
-        all_tools.sort();
-        all_tools
+        // Add resources
+        if let Ok(resources) = api::list_resources().await {
+            all_artifacts.extend(resources.into_iter().map(|r| ArtifactItem::resource(
+                r.uri.clone(),
+                r.name.clone(),
+                r.description.unwrap_or_default(),
+            )));
+        }
+
+        // Add resource templates
+        if let Ok(templates) = api::list_resource_templates().await {
+            all_artifacts.extend(templates.into_iter().map(|t| ArtifactItem::resource_template(
+                t.uri_template.clone(),
+                t.name.clone(),
+                t.description.unwrap_or_default(),
+            )));
+        }
+
+        // Sort by category then name
+        all_artifacts.sort_by(|a, b| {
+            match a.category.label().cmp(b.category.label()) {
+                std::cmp::Ordering::Equal => a.name.cmp(&b.name),
+                other => other,
+            }
+        });
+        all_artifacts
     });
 
     let on_submit = move |ev: web_sys::SubmitEvent| {
@@ -825,12 +865,12 @@ pub fn WorkflowForm() -> impl IntoView {
 
                     <div>
                         {move || {
-                            let tools = available_tools.get().unwrap_or_default();
+                            let artifacts = available_artifacts.get().unwrap_or_default();
                             view! {
                                 <WorkflowStepsEditor
                                     steps=steps_data
                                     set_steps=set_steps_data
-                                    available_tools=tools
+                                    available_artifacts=artifacts
                                 />
                             }
                         }}
@@ -872,28 +912,67 @@ pub fn WorkflowEditForm() -> impl IntoView {
     let (loading, set_loading) = signal(true);
     let (original_name, set_original_name) = signal(String::new());
 
-    // Load available tools for dropdown (includes regular tools, workflows, and agents)
-    let available_tools = LocalResource::new(move || async move {
-        let mut all_tools = Vec::new();
+    // Load available artifacts for dropdown (tools, workflows, agents, resources)
+    let available_artifacts = LocalResource::new(move || async move {
+        let mut all_artifacts: Vec<ArtifactItem> = Vec::new();
 
         // Add regular tools
         if let Ok(tools) = api::list_tools().await {
-            all_tools.extend(tools.into_iter().map(|t| t.name));
+            all_artifacts.extend(tools.into_iter().map(|t| ArtifactItem::tool(
+                t.name.clone(),
+                t.description.clone(),
+            )));
         }
 
         // Add workflows as tools (workflows are exposed as tools on the backend)
         if let Ok(workflows) = api::list_workflows().await {
-            all_tools.extend(workflows.into_iter().map(|w| w.name));
+            // Use name directly (not workflow_ prefix) since that's how they're called
+            all_artifacts.extend(workflows.into_iter().map(|w| ArtifactItem {
+                id: w.name.clone(),
+                name: w.name.clone(),
+                description: w.description.clone(),
+                category: ArtifactCategory::Workflow,
+                server: None,
+            }));
         }
 
-        // Add agents as tools (with agent_ prefix)
+        // Add agents as tools (with agent_ prefix - this is how they're called)
         if let Ok(agents) = api::list_agents().await {
-            all_tools.extend(agents.into_iter().map(|a| format!("agent_{}", a.name)));
+            all_artifacts.extend(agents.into_iter().map(|a| ArtifactItem {
+                id: format!("agent_{}", a.name),
+                name: a.name.clone(),
+                description: a.description.clone(),
+                category: ArtifactCategory::Agent,
+                server: None,
+            }));
         }
 
-        // Sort alphabetically for easier finding
-        all_tools.sort();
-        all_tools
+        // Add resources
+        if let Ok(resources) = api::list_resources().await {
+            all_artifacts.extend(resources.into_iter().map(|r| ArtifactItem::resource(
+                r.uri.clone(),
+                r.name.clone(),
+                r.description.unwrap_or_default(),
+            )));
+        }
+
+        // Add resource templates
+        if let Ok(templates) = api::list_resource_templates().await {
+            all_artifacts.extend(templates.into_iter().map(|t| ArtifactItem::resource_template(
+                t.uri_template.clone(),
+                t.name.clone(),
+                t.description.unwrap_or_default(),
+            )));
+        }
+
+        // Sort by category then name
+        all_artifacts.sort_by(|a, b| {
+            match a.category.label().cmp(b.category.label()) {
+                std::cmp::Ordering::Equal => a.name.cmp(&b.name),
+                other => other,
+            }
+        });
+        all_artifacts
     });
 
     // Load existing workflow
@@ -1063,12 +1142,12 @@ pub fn WorkflowEditForm() -> impl IntoView {
 
                             <div>
                                 {move || {
-                                    let tools = available_tools.get().unwrap_or_default();
+                                    let artifacts = available_artifacts.get().unwrap_or_default();
                                     view! {
                                         <WorkflowStepsEditor
                                             steps=steps_data
                                             set_steps=set_steps_data
-                                            available_tools=tools
+                                            available_artifacts=artifacts
                                         />
                                     }
                                 }}

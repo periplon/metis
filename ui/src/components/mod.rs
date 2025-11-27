@@ -1,4 +1,5 @@
 pub mod agents;
+pub mod artifact_selector;
 pub mod dashboard;
 pub mod config;
 pub mod logs;

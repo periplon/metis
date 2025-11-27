@@ -421,6 +421,12 @@ pub struct Agent {
     /// Other agents that can be called as tools (agent names, without "agent_" prefix)
     #[serde(default)]
     pub agent_tools: Vec<String>,
+    /// Available resources (resource URIs the agent can access)
+    #[serde(default)]
+    pub available_resources: Vec<String>,
+    /// Available resource templates (template URIs the agent can access)
+    #[serde(default)]
+    pub available_resource_templates: Vec<String>,
     #[serde(default)]
     pub memory: MemoryConfig,
     #[serde(default = "default_max_iterations")]

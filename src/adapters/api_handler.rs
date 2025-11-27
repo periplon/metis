@@ -2115,6 +2115,12 @@ pub struct AgentDto {
     /// Other agents that can be called as tools (agent names, without "agent_" prefix)
     #[serde(default)]
     pub agent_tools: Vec<String>,
+    /// Available resources (resource URIs the agent can access)
+    #[serde(default)]
+    pub available_resources: Vec<String>,
+    /// Available resource templates (template URIs the agent can access)
+    #[serde(default)]
+    pub available_resource_templates: Vec<String>,
     #[serde(default)]
     pub memory: MemoryConfigDto,
     #[serde(default = "default_max_iterations")]
@@ -2195,6 +2201,8 @@ impl From<&AgentConfig> for AgentDto {
             available_tools: a.available_tools.clone(),
             mcp_tools: a.mcp_tools.clone(),
             agent_tools: a.agent_tools.clone(),
+            available_resources: a.available_resources.clone(),
+            available_resource_templates: a.available_resource_templates.clone(),
             memory: MemoryConfigDto {
                 backend: a.memory.backend,
                 strategy: a.memory.strategy.clone(),
@@ -2232,6 +2240,8 @@ impl From<AgentDto> for AgentConfig {
             available_tools: dto.available_tools,
             mcp_tools: dto.mcp_tools,
             agent_tools: dto.agent_tools,
+            available_resources: dto.available_resources,
+            available_resource_templates: dto.available_resource_templates,
             memory: MemoryConfig {
                 backend: dto.memory.backend,
                 strategy: dto.memory.strategy,

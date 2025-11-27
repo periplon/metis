@@ -13,6 +13,9 @@ use crate::components::schema_editor::{
     JsonSchemaEditor, SchemaPreview, SchemaProperty,
     properties_to_schema, schema_to_properties,
 };
+use crate::components::artifact_selector::{
+    ArtifactSelector, ArtifactItem, SelectionMode,
+};
 
 /// Convert provider enum to API string
 fn provider_to_string(provider: &AgentLlmProvider) -> &'static str {
@@ -1932,19 +1935,14 @@ pub fn AgentForm() -> impl IntoView {
     // Help popup for agent type
     let (show_type_help, set_show_type_help) = signal(false);
 
-    // Tools configuration (for ReAct agents)
+    // Artifacts configuration (tools, agents, workflows, resources for ReAct agents)
     let (all_tools, set_all_tools) = signal(Vec::<crate::types::Tool>::new());
-    let (selected_tools, set_selected_tools) = signal(Vec::<String>::new());
-    let (selected_mcp_tools, set_selected_mcp_tools) = signal(Vec::<String>::new());
-    let (selected_agent_tools, set_selected_agent_tools) = signal(Vec::<String>::new());
-    let (selected_workflow_tools, set_selected_workflow_tools) = signal(Vec::<String>::new());
-    let (tools_loading, set_tools_loading) = signal(false);
-
-    // Available agents (for agent-as-tool selection)
     let (all_agents, set_all_agents) = signal(Vec::<Agent>::new());
-
-    // Available workflows (for workflow-as-tool selection)
     let (all_workflows, set_all_workflows) = signal(Vec::<crate::types::Workflow>::new());
+    let (all_resources, set_all_resources) = signal(Vec::<crate::types::Resource>::new());
+    let (all_resource_templates, set_all_resource_templates) = signal(Vec::<crate::types::ResourceTemplate>::new());
+    let (selected_artifacts, set_selected_artifacts) = signal(Vec::<String>::new());
+    let (artifacts_loading, set_artifacts_loading) = signal(false);
 
     // Dynamic model list from API
     let (available_models, set_available_models) = signal(Vec::<LlmModelInfo>::new());
@@ -1970,37 +1968,27 @@ pub fn AgentForm() -> impl IntoView {
         });
     };
 
-    // Fetch available tools on mount
+    // Fetch all available artifacts on mount
     Effect::new(move |_| {
-        set_tools_loading.set(true);
+        set_artifacts_loading.set(true);
         wasm_bindgen_futures::spawn_local(async move {
-            match api::list_tools().await {
-                Ok(tools) => {
-                    set_all_tools.set(tools);
-                    set_tools_loading.set(false);
-                }
-                Err(_) => {
-                    set_tools_loading.set(false);
-                }
+            // Fetch all artifacts sequentially
+            if let Ok(tools) = api::list_tools().await {
+                set_all_tools.set(tools);
             }
-        });
-    });
-
-    // Fetch available agents on mount (for agent-as-tool selection)
-    Effect::new(move |_| {
-        wasm_bindgen_futures::spawn_local(async move {
             if let Ok(agents) = api::list_agents().await {
                 set_all_agents.set(agents);
             }
-        });
-    });
-
-    // Fetch available workflows on mount (for workflow-as-tool selection)
-    Effect::new(move |_| {
-        wasm_bindgen_futures::spawn_local(async move {
             if let Ok(workflows) = api::list_workflows().await {
                 set_all_workflows.set(workflows);
             }
+            if let Ok(resources) = api::list_resources().await {
+                set_all_resources.set(resources);
+            }
+            if let Ok(templates) = api::list_resource_templates().await {
+                set_all_resource_templates.set(templates);
+            }
+            set_artifacts_loading.set(false);
         });
     });
 
@@ -2028,6 +2016,41 @@ pub fn AgentForm() -> impl IntoView {
             Some(properties_to_schema(&output_props))
         };
 
+        // Extract artifacts by category
+        let artifacts = selected_artifacts.get();
+        let tools_list = all_tools.get();
+        let workflows_list = all_workflows.get();
+        let agents_list = all_agents.get();
+        let resources_list = all_resources.get();
+        let templates_list = all_resource_templates.get();
+
+        let tool_names: std::collections::HashSet<_> = tools_list.iter().map(|t| t.name.clone()).collect();
+        let workflow_ids: std::collections::HashSet<_> = workflows_list.iter().map(|w| format!("workflow_{}", w.name)).collect();
+        let agent_names: std::collections::HashSet<_> = agents_list.iter().map(|a| a.name.clone()).collect();
+        let resource_uris: std::collections::HashSet<_> = resources_list.iter().map(|r| r.uri.clone()).collect();
+        let template_uris: std::collections::HashSet<_> = templates_list.iter().map(|t| t.uri_template.clone()).collect();
+
+        let available_tools: Vec<String> = artifacts.iter()
+            .filter(|id| tool_names.contains(*id) || workflow_ids.contains(*id))
+            .cloned()
+            .collect();
+        let mcp_tools: Vec<String> = artifacts.iter()
+            .filter(|id| id.contains(':') && !resource_uris.contains(*id) && !template_uris.contains(*id))
+            .cloned()
+            .collect();
+        let agent_tools: Vec<String> = artifacts.iter()
+            .filter(|id| agent_names.contains(*id))
+            .cloned()
+            .collect();
+        let available_resources: Vec<String> = artifacts.iter()
+            .filter(|id| resource_uris.contains(*id))
+            .cloned()
+            .collect();
+        let available_resource_templates: Vec<String> = artifacts.iter()
+            .filter(|id| template_uris.contains(*id))
+            .cloned()
+            .collect();
+
         let agent = Agent {
             name: name.get(),
             description: description.get(),
@@ -2043,14 +2066,11 @@ pub fn AgentForm() -> impl IntoView {
             },
             system_prompt: system_prompt.get(),
             prompt_template: if prompt_template.get().is_empty() { None } else { Some(prompt_template.get()) },
-            available_tools: {
-                let mut tools = selected_tools.get();
-                // Add workflow tools to available_tools
-                tools.extend(selected_workflow_tools.get());
-                tools
-            },
-            mcp_tools: selected_mcp_tools.get(),
-            agent_tools: selected_agent_tools.get(),
+            available_tools,
+            mcp_tools,
+            agent_tools,
+            available_resources,
+            available_resource_templates,
             memory: MemoryConfig {
                 backend: memory_backend.get(),
                 strategy: match memory_strategy.get().as_str() {
@@ -2197,126 +2217,90 @@ pub fn AgentForm() -> impl IntoView {
                         />
                     </div>
 
-                    // Tools Configuration (for ReAct agents)
+                    // Artifacts Configuration (for ReAct agents)
                     {move || {
                         if agent_type.get() == AgentType::ReAct {
-                            // Convert tools to SelectableItems
-                            let regular_tools_items = Signal::derive(move || {
-                                all_tools.get()
-                                    .into_iter()
-                                    .filter(|t| !t.name.starts_with("mcp__"))
-                                    .map(|t| SelectableItem {
-                                        id: t.name.clone(),
-                                        name: t.name.clone(),
-                                        description: t.description.clone(),
-                                        category: None,
-                                    })
-                                    .collect::<Vec<_>>()
-                            });
-
-                            let mcp_tools_items = Signal::derive(move || {
-                                all_tools.get()
-                                    .into_iter()
-                                    .filter(|t| t.name.starts_with("mcp__"))
-                                    .map(|t| {
-                                        // Extract server name from mcp__{server}_{tool}
-                                        let display_name = t.name.strip_prefix("mcp__")
-                                            .map(|s| s.replacen('_', ":", 1))
-                                            .unwrap_or_else(|| t.name.clone());
-                                        let server = t.name.strip_prefix("mcp__")
-                                            .and_then(|s| s.split('_').next())
-                                            .map(String::from);
-                                        SelectableItem {
-                                            id: t.name.clone(),
-                                            name: display_name,
-                                            description: t.description.clone(),
-                                            category: server,
-                                        }
-                                    })
-                                    .collect::<Vec<_>>()
-                            });
-
-                            let agent_tools_items = Signal::derive(move || {
+                            // Build unified artifacts list
+                            let all_artifacts = Signal::derive(move || {
                                 let current_name = name.get();
-                                all_agents.get()
-                                    .into_iter()
-                                    .filter(|a| a.name != current_name)
-                                    .map(|a| SelectableItem {
-                                        id: a.name.clone(),
-                                        name: a.name.clone(),
-                                        description: a.description.clone(),
-                                        category: Some(format!("{:?}", a.agent_type)),
-                                    })
-                                    .collect::<Vec<_>>()
-                            });
+                                let mut items = Vec::new();
 
-                            let workflow_tools_items = Signal::derive(move || {
-                                all_workflows.get()
-                                    .into_iter()
-                                    .map(|w| SelectableItem {
-                                        id: w.name.clone(),
-                                        name: w.name.clone(),
-                                        description: w.description.clone(),
-                                        category: Some(format!("{} steps", w.steps.len())),
-                                    })
-                                    .collect::<Vec<_>>()
+                                // Add regular tools
+                                for tool in all_tools.get().into_iter().filter(|t| !t.name.starts_with("mcp__")) {
+                                    items.push(ArtifactItem::tool(tool.name, tool.description));
+                                }
+
+                                // Add MCP tools
+                                for tool in all_tools.get().into_iter().filter(|t| t.name.starts_with("mcp__")) {
+                                    let parts: Vec<&str> = tool.name.strip_prefix("mcp__")
+                                        .unwrap_or(&tool.name)
+                                        .splitn(2, '_')
+                                        .collect();
+                                    if parts.len() == 2 {
+                                        items.push(ArtifactItem::mcp_tool(parts[0], parts[1], tool.description));
+                                    }
+                                }
+
+                                // Add workflows
+                                for workflow in all_workflows.get() {
+                                    items.push(ArtifactItem::workflow(workflow.name, workflow.description));
+                                }
+
+                                // Add other agents (not self)
+                                for agent in all_agents.get().into_iter().filter(|a| a.name != current_name) {
+                                    items.push(ArtifactItem::agent(agent.name, agent.description));
+                                }
+
+                                // Add resources
+                                for resource in all_resources.get() {
+                                    items.push(ArtifactItem::resource(
+                                        resource.uri,
+                                        resource.name,
+                                        resource.description.unwrap_or_default()
+                                    ));
+                                }
+
+                                // Add resource templates
+                                for template in all_resource_templates.get() {
+                                    items.push(ArtifactItem::resource_template(
+                                        template.uri_template,
+                                        template.name,
+                                        template.description.unwrap_or_default()
+                                    ));
+                                }
+
+                                items
                             });
 
                             view! {
                                 <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
-                                    <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">"Tools Configuration"</h3>
+                                    <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">"Artifacts Configuration"</h3>
+                                    <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                                        "Select tools, workflows, agents, and resources the agent can use"
+                                    </p>
 
-                                    {if tools_loading.get() {
+                                    {if artifacts_loading.get() {
                                         view! {
-                                            <div class="text-sm text-gray-500 dark:text-gray-400">"Loading tools..."</div>
+                                            <div class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+                                                <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                </svg>
+                                                "Loading artifacts..."
+                                            </div>
                                         }.into_any()
                                     } else {
                                         view! {
-                                            <div class="space-y-4">
-                                                // Regular Tools
-                                                <SearchableMultiSelect
-                                                    items=regular_tools_items
-                                                    selected=selected_tools.into()
-                                                    on_change=Callback::new(move |new_selected| set_selected_tools.set(new_selected))
-                                                    placeholder="Search tools..."
-                                                    theme=SelectTheme::Blue
-                                                    label="Available Tools"
-                                                    help_text="Select tools the agent can use"
-                                                />
-
-                                                // Workflow Tools
-                                                <SearchableMultiSelect
-                                                    items=workflow_tools_items
-                                                    selected=selected_workflow_tools.into()
-                                                    on_change=Callback::new(move |new_selected| set_selected_workflow_tools.set(new_selected))
-                                                    placeholder="Search workflows..."
-                                                    theme=SelectTheme::Orange
-                                                    label="Workflow Tools"
-                                                    help_text="Workflows that can be called as tools"
-                                                />
-
-                                                // MCP Tools
-                                                <SearchableMultiSelect
-                                                    items=mcp_tools_items
-                                                    selected=selected_mcp_tools.into()
-                                                    on_change=Callback::new(move |new_selected| set_selected_mcp_tools.set(new_selected))
-                                                    placeholder="Search MCP tools..."
-                                                    theme=SelectTheme::Purple
-                                                    label="MCP Tools"
-                                                    help_text="Tools from external MCP servers"
-                                                />
-
-                                                // Agent Tools
-                                                <SearchableMultiSelect
-                                                    items=agent_tools_items
-                                                    selected=selected_agent_tools.into()
-                                                    on_change=Callback::new(move |new_selected| set_selected_agent_tools.set(new_selected))
-                                                    placeholder="Search agents..."
-                                                    theme=SelectTheme::Indigo
-                                                    label="Agent Tools"
-                                                    help_text="Other agents that can be called as tools"
-                                                />
-                                            </div>
+                                            <ArtifactSelector
+                                                items=all_artifacts
+                                                selected=selected_artifacts.into()
+                                                on_change=Callback::new(move |new_selected| set_selected_artifacts.set(new_selected))
+                                                mode=SelectionMode::Multi
+                                                placeholder="Search tools, workflows, agents, resources..."
+                                                label="Available Artifacts"
+                                                help_text="Search and select from tools, workflows, agents, resources, and MCP tools"
+                                                group_by_category=true
+                                            />
                                         }.into_any()
                                     }}
                                 </div>
@@ -2866,6 +2850,8 @@ pub fn AgentEditForm() -> impl IntoView {
             },
             mcp_tools: selected_mcp_tools.get(),
             agent_tools: selected_agent_tools.get(),
+            available_resources: Vec::new(),
+            available_resource_templates: Vec::new(),
             memory: MemoryConfig {
                 backend: MemoryBackend::InMemory,
                 strategy: MemoryStrategy::Full,

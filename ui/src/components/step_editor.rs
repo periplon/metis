@@ -6,6 +6,7 @@ use leptos::prelude::*;
 use leptos::web_sys;
 use wasm_bindgen::JsCast;
 use crate::types::{WorkflowStep, ErrorStrategy};
+use crate::components::artifact_selector::{ArtifactSelector, ArtifactItem, SelectionMode};
 
 /// UI representation of a workflow step for editing
 #[derive(Clone, Debug, Default)]
@@ -155,9 +156,10 @@ pub fn workflow_steps_to_steps_data(steps: &[WorkflowStep]) -> Vec<StepData> {
 pub fn WorkflowStepsEditor(
     steps: ReadSignal<Vec<StepData>>,
     set_steps: WriteSignal<Vec<StepData>>,
-    #[prop(default = Vec::new())] available_tools: Vec<String>,
+    /// Available artifacts (tools, resources, agents, workflows) for step tool selection
+    #[prop(default = Vec::new())] available_artifacts: Vec<ArtifactItem>,
 ) -> impl IntoView {
-    let tools = StoredValue::new(available_tools);
+    let artifacts = StoredValue::new(available_artifacts);
 
     let add_step = move |_| {
         set_steps.update(|s| {
@@ -207,7 +209,7 @@ pub fn WorkflowStepsEditor(
                                     index=idx
                                     steps=steps
                                     set_steps=set_steps
-                                    available_tools=tools.get_value()
+                                    available_artifacts=artifacts.get_value()
                                 />
                             }
                         }
@@ -320,7 +322,7 @@ fn StepCard(
     index: usize,
     steps: ReadSignal<Vec<StepData>>,
     set_steps: WriteSignal<Vec<StepData>>,
-    available_tools: Vec<String>,
+    available_artifacts: Vec<ArtifactItem>,
 ) -> impl IntoView {
     let (expanded, set_expanded) = signal(true);
 
@@ -511,53 +513,35 @@ fn StepCard(
                             <p class="mt-1 text-xs text-gray-500">"Unique identifier for this step"</p>
                         </div>
 
-                        // Tool selection
+                        // Tool selection with unified ArtifactSelector
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">"Tool *"</label>
-                            {if available_tools.is_empty() {
-                                view! {
-                                    <input
-                                        type="text"
-                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm font-mono"
-                                        placeholder="tool-name"
-                                        prop:value=step_tool
-                                        on:input=move |ev| {
-                                            let target = ev.target().unwrap();
-                                            let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
-                                            set_steps.update(|s| {
-                                                if let Some(st) = s.get_mut(index) {
-                                                    st.tool = input.value();
-                                                }
-                                            });
+                            {
+                                let artifacts_stored = StoredValue::new(available_artifacts.clone());
+                                let items_signal = Signal::derive(move || artifacts_stored.get_value());
+                                let selected_signal = Signal::derive(move || {
+                                    let tool = step_tool();
+                                    if tool.is_empty() { vec![] } else { vec![tool] }
+                                });
+                                let on_change = Callback::new(move |selected: Vec<String>| {
+                                    let tool = selected.first().cloned().unwrap_or_default();
+                                    set_steps.update(|s| {
+                                        if let Some(st) = s.get_mut(index) {
+                                            st.tool = tool;
                                         }
+                                    });
+                                });
+                                view! {
+                                    <ArtifactSelector
+                                        items=items_signal
+                                        selected=selected_signal
+                                        on_change=on_change
+                                        mode=SelectionMode::Single
+                                        placeholder="Search for tool, workflow, or agent..."
+                                        label="Tool *"
+                                        help_text="Select the tool, workflow, or agent to execute in this step"
                                     />
-                                }.into_any()
-                            } else {
-                                let tools_list = available_tools.clone();
-                                view! {
-                                    <select
-                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm"
-                                        prop:value=step_tool
-                                        on:change=move |ev| {
-                                            let target = ev.target().unwrap();
-                                            let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
-                                            set_steps.update(|s| {
-                                                if let Some(st) = s.get_mut(index) {
-                                                    st.tool = select.value();
-                                                }
-                                            });
-                                        }
-                                    >
-                                        <option value="">"-- Select Tool --"</option>
-                                        {tools_list.iter().map(|t| {
-                                            view! {
-                                                <option value=t.clone()>{t.clone()}</option>
-                                            }
-                                        }).collect::<Vec<_>>()}
-                                    </select>
-                                }.into_any()
-                            }}
-                            <p class="mt-1 text-xs text-gray-500">"Tool to execute in this step"</p>
+                                }
+                            }
                         </div>
                     </div>
 
