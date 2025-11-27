@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.22.0 - 2025-11-27
+#### Features
+- **(ui)** expose workflows as tools in agent and workflow editors - (cd9ccea) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.21.2 - 2025-11-27
 #### Bug Fixes
 - **(ui)** fix workflow step editor disabled attribute rendering - (06cadc8) - Joan Marc Carbo Arnau
