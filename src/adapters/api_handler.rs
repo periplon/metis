@@ -1103,6 +1103,7 @@ pub async fn update_workflow(
     let mut settings = state.settings.write().await;
 
     if let Some(workflow) = settings.workflows.iter_mut().find(|w| w.name == name) {
+        workflow.name = dto.name.clone();
         workflow.description = dto.description.clone();
         workflow.input_schema = dto.input_schema.clone();
         workflow.steps = dto.steps.clone().into_iter().map(WorkflowStep::from).collect();
