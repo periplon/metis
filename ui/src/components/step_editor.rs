@@ -415,35 +415,41 @@ fn StepCard(
                 </div>
                 <div class="flex items-center gap-1">
                     // Reorder buttons
-                    <button
-                        type="button"
-                        class="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-30 disabled:cursor-not-allowed"
-                        disabled=move || index == 0
-                        on:click=move |_| {
-                            if index > 0 {
-                                set_steps.update(|s| s.swap(index, index - 1));
-                            }
+                    {
+                        let is_first = move || index == 0;
+                        let is_last = move || index + 1 >= total_steps();
+                        view! {
+                            <button
+                                type="button"
+                                class="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-30 disabled:cursor-not-allowed"
+                                disabled=is_first
+                                on:click=move |_| {
+                                    if index > 0 {
+                                        set_steps.update(|s| s.swap(index, index - 1));
+                                    }
+                                }
+                            >
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/>
+                                </svg>
+                            </button>
+                            <button
+                                type="button"
+                                class="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-30 disabled:cursor-not-allowed"
+                                disabled=is_last
+                                on:click=move |_| {
+                                    let ts = total_steps();
+                                    if index < ts - 1 {
+                                        set_steps.update(|s| s.swap(index, index + 1));
+                                    }
+                                }
+                            >
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                                </svg>
+                            </button>
                         }
-                    >
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/>
-                        </svg>
-                    </button>
-                    <button
-                        type="button"
-                        class="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-30 disabled:cursor-not-allowed"
-                        disabled=move || index >= total_steps() - 1
-                        on:click=move |_| {
-                            let ts = total_steps();
-                            if index < ts - 1 {
-                                set_steps.update(|s| s.swap(index, index + 1));
-                            }
-                        }
-                    >
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-                        </svg>
-                    </button>
+                    }
                     // Expand/collapse
                     <button
                         type="button"

@@ -688,6 +688,8 @@ pub fn WorkflowForm() -> impl IntoView {
             all_tools.extend(agents.into_iter().map(|a| format!("agent_{}", a.name)));
         }
 
+        // Sort alphabetically for easier finding
+        all_tools.sort();
         all_tools
     });
 
@@ -879,6 +881,8 @@ pub fn WorkflowEditForm() -> impl IntoView {
             all_tools.extend(agents.into_iter().map(|a| format!("agent_{}", a.name)));
         }
 
+        // Sort alphabetically for easier finding
+        all_tools.sort();
         all_tools
     });
 
