@@ -2,6 +2,14 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.22.7 - 2025-11-27
+#### Bug Fixes
+- **(ui)** auto-save settings before Save to Disk/S3 - (e367187) - Joan Marc Carbo Arnau
+#### Tests
+- **(s3)** add TOML serialization tests and fix e2e test - (7934181) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.22.6 - 2025-11-27
 #### Bug Fixes
 - **(api)** improve S3 save error messages with specific guidance - (b4dc6be) - Joan Marc Carbo Arnau
