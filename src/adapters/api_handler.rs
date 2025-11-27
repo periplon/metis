@@ -1561,8 +1561,8 @@ pub async fn save_config_to_s3(
     // Drop the read lock before async S3 operations
     drop(settings);
 
-    // Build S3 client
-    let sdk_config = match build_s3_config(&s3_config).await {
+    // Build S3 client (uses credentials from UI secrets store with env var fallback)
+    let sdk_config = match build_s3_config(&s3_config, &state.secrets).await {
         Ok(cfg) => cfg,
         Err(e) => {
             return (
@@ -1606,7 +1606,7 @@ pub async fn save_config_to_s3(
             let full_error = format!("{}{}", error_msg, service_error_details);
             let helpful_msg = if full_error.contains("credentials") || full_error.contains("Credentials") || full_error.contains("NoCredentialsError") {
                 format!(
-                    "S3 credentials error: {}. Make sure AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables are set.",
+                    "S3 credentials error: {}. Set AWS credentials in the UI Secrets section (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY) or as environment variables.",
                     error_msg
                 )
             } else if full_error.contains("NoSuchBucket") {
@@ -1620,9 +1620,9 @@ pub async fn save_config_to_s3(
                     bucket
                 )
             } else if full_error.contains("InvalidAccessKeyId") {
-                "Invalid AWS access key. Check your AWS_ACCESS_KEY_ID.".to_string()
+                "Invalid AWS access key. Check your AWS_ACCESS_KEY_ID in UI Secrets or environment.".to_string()
             } else if full_error.contains("SignatureDoesNotMatch") {
-                "AWS signature mismatch. Check your AWS_SECRET_ACCESS_KEY.".to_string()
+                "AWS signature mismatch. Check your AWS_SECRET_ACCESS_KEY in UI Secrets or environment.".to_string()
             } else if s3_config.region.is_none() && s3_config.endpoint.is_some() {
                 format!(
                     "S3 error: {}. Note: You're using a custom endpoint but no region is set. For S3-compatible services like Wasabi or MinIO, you may need to specify a region (e.g., 'us-east-1').",
@@ -1774,8 +1774,13 @@ pub async fn merge_config(
 }
 
 /// Build AWS SDK configuration for S3 operations
-async fn build_s3_config(config: &crate::config::s3::S3Config) -> anyhow::Result<aws_config::SdkConfig> {
+/// Uses credentials from secrets store (UI) with fallback to environment variables
+async fn build_s3_config(
+    config: &crate::config::s3::S3Config,
+    secrets: &SharedSecretsStore,
+) -> anyhow::Result<aws_config::SdkConfig> {
     use aws_config::BehaviorVersion;
+    use crate::adapters::secrets::keys;
 
     let mut loader = aws_config::defaults(BehaviorVersion::latest());
 
@@ -1785,6 +1790,25 @@ async fn build_s3_config(config: &crate::config::s3::S3Config) -> anyhow::Result
 
     if let Some(endpoint) = &config.endpoint {
         loader = loader.endpoint_url(endpoint);
+    }
+
+    // Check for credentials in secrets store (UI) first, then environment
+    let access_key = secrets.get_or_env(keys::AWS_ACCESS_KEY_ID).await;
+    let secret_key = secrets.get_or_env(keys::AWS_SECRET_ACCESS_KEY).await;
+
+    // If we have credentials from secrets store or env, use them explicitly
+    if let (Some(access_key), Some(secret_key)) = (access_key, secret_key) {
+        let credentials = aws_sdk_s3::config::Credentials::new(
+            access_key,
+            secret_key,
+            None, // session token
+            None, // expiry
+            "metis-secrets-store",
+        );
+        loader = loader.credentials_provider(credentials);
+        tracing::debug!("Using AWS credentials from secrets store/environment");
+    } else {
+        tracing::debug!("No explicit AWS credentials found, using default credential chain");
     }
 
     Ok(loader.load().await)
