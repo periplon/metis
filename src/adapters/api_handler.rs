@@ -1588,36 +1588,52 @@ pub async fn save_config_to_s3(
     {
         Ok(_) => (StatusCode::OK, Json(ApiResponse::<()>::ok())),
         Err(e) => {
-            // Provide more helpful error messages for common S3 issues
+            // Extract full error chain for better diagnostics
             let error_msg = format!("{}", e);
-            let helpful_msg = if error_msg.contains("credentials") || error_msg.contains("Credentials") {
+            let debug_msg = format!("{:?}", e);
+
+            // Try to get the underlying service error for more details
+            let service_error_details = if let Some(service_err) = e.as_service_error() {
+                format!(" Service error: {:?}", service_err)
+            } else {
+                String::new()
+            };
+
+            // Log the full error for debugging
+            tracing::error!("S3 upload error: {} | Debug: {} | Service: {}", error_msg, debug_msg, service_error_details);
+
+            // Provide more helpful error messages for common S3 issues
+            let full_error = format!("{}{}", error_msg, service_error_details);
+            let helpful_msg = if full_error.contains("credentials") || full_error.contains("Credentials") || full_error.contains("NoCredentialsError") {
                 format!(
                     "S3 credentials error: {}. Make sure AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables are set.",
                     error_msg
                 )
-            } else if error_msg.contains("NoSuchBucket") {
+            } else if full_error.contains("NoSuchBucket") {
                 format!(
                     "S3 bucket '{}' does not exist or you don't have access to it.",
                     bucket
                 )
-            } else if error_msg.contains("AccessDenied") || error_msg.contains("Forbidden") {
+            } else if full_error.contains("AccessDenied") || full_error.contains("Forbidden") {
                 format!(
                     "S3 access denied to bucket '{}'. Check your credentials and bucket permissions.",
                     bucket
                 )
-            } else if error_msg.contains("InvalidAccessKeyId") {
+            } else if full_error.contains("InvalidAccessKeyId") {
                 "Invalid AWS access key. Check your AWS_ACCESS_KEY_ID.".to_string()
-            } else if error_msg.contains("SignatureDoesNotMatch") {
+            } else if full_error.contains("SignatureDoesNotMatch") {
                 "AWS signature mismatch. Check your AWS_SECRET_ACCESS_KEY.".to_string()
             } else if s3_config.region.is_none() && s3_config.endpoint.is_some() {
                 format!(
                     "S3 error: {}. Note: You're using a custom endpoint but no region is set. For S3-compatible services like Wasabi or MinIO, you may need to specify a region (e.g., 'us-east-1').",
-                    error_msg
+                    full_error
                 )
             } else {
+                // Include debug info for unknown errors
                 format!(
-                    "S3 upload failed: {}. Config: bucket='{}', region={:?}, endpoint={:?}",
+                    "S3 upload failed: {}.{} Config: bucket='{}', region={:?}, endpoint={:?}. Check server logs for more details.",
                     error_msg,
+                    service_error_details,
                     bucket,
                     s3_config.region,
                     s3_config.endpoint
