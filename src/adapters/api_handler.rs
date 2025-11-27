@@ -1519,11 +1519,29 @@ pub async fn save_config_to_s3(
     // Check if S3 is configured
     let s3_config = match &settings.s3 {
         Some(cfg) if cfg.is_active() => cfg.clone(),
-        _ => {
+        Some(cfg) => {
+            // S3 exists but not active - provide specific feedback
+            let mut issues = Vec::new();
+            if !cfg.enabled {
+                issues.push("S3 is not enabled");
+            }
+            if cfg.bucket.is_none() || cfg.bucket.as_ref().map(|b| b.is_empty()).unwrap_or(true) {
+                issues.push("bucket name is required");
+            }
+            let msg = format!(
+                "S3 configuration incomplete: {}. Please update S3 settings and save to disk first.",
+                issues.join(", ")
+            );
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ApiResponse::<()>::error(msg))
+            );
+        }
+        None => {
             return (
                 StatusCode::BAD_REQUEST,
                 Json(ApiResponse::<()>::error(
-                    "S3 is not configured or enabled. Please configure S3 settings first."
+                    "S3 is not configured. Please configure S3 settings (enable S3, set bucket name, region) and save to disk first."
                 ))
             );
         }
