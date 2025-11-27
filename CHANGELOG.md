@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.22.6 - 2025-11-27
+#### Bug Fixes
+- **(api)** improve S3 save error messages with specific guidance - (b4dc6be) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.22.5 - 2025-11-27
 #### Bug Fixes
 - **(api)** always return S3 config with defaults in settings endpoint - (6332363) - Joan Marc Carbo Arnau
