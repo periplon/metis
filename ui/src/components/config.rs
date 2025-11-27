@@ -316,7 +316,71 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
     let (saving_disk, set_saving_disk) = signal(false);
     let on_save_disk = move |_| {
         set_saving_disk.set(true);
+        set_message.set(None);
+
+        // First save current settings to memory (like on_save does)
+        let bucket_val = s3_bucket.get();
+        let prefix_val = s3_prefix.get();
+        let region_val = s3_region.get();
+        let endpoint_val = s3_endpoint.get();
+
+        let api_keys_val = api_keys.get();
+        let api_keys_vec: Option<Vec<String>> = if api_keys_val.is_empty() {
+            None
+        } else {
+            Some(api_keys_val.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+        };
+
+        let jwt_secret_val = jwt_secret.get();
+        let jwt_algorithm_val = jwt_algorithm.get();
+        let jwks_url_val = jwks_url.get();
+        let current_mode = auth_mode.get();
+
+        let basic_users_map: Option<HashMap<String, String>> = if current_mode == "BasicAuth" {
+            let users = basic_users.get();
+            if users.is_empty() {
+                None
+            } else {
+                Some(users.into_iter().collect())
+            }
+        } else {
+            None
+        };
+
+        let settings = ServerSettings {
+            auth: AuthConfig {
+                enabled: auth_enabled.get(),
+                mode: current_mode.clone(),
+                api_keys: if current_mode == "ApiKey" { api_keys_vec } else { None },
+                jwt_secret: if current_mode == "BearerToken" && !jwt_secret_val.is_empty() { Some(jwt_secret_val) } else { None },
+                jwt_algorithm: if current_mode == "BearerToken" { Some(jwt_algorithm_val) } else { None },
+                basic_users: basic_users_map,
+                jwks_url: if current_mode == "OAuth2" && !jwks_url_val.is_empty() { Some(jwks_url_val) } else { None },
+            },
+            rate_limit: Some(RateLimitConfig {
+                enabled: rate_limit_enabled.get(),
+                requests_per_second: requests_per_second.get(),
+                burst_size: burst_size.get(),
+            }),
+            s3: Some(S3Config {
+                enabled: s3_enabled.get(),
+                bucket: if bucket_val.is_empty() { None } else { Some(bucket_val) },
+                prefix: if prefix_val.is_empty() { None } else { Some(prefix_val) },
+                region: if region_val.is_empty() { None } else { Some(region_val) },
+                endpoint: if endpoint_val.is_empty() { None } else { Some(endpoint_val) },
+                poll_interval_secs: s3_poll_interval.get(),
+            }),
+        };
+
         wasm_bindgen_futures::spawn_local(async move {
+            // First update settings in memory
+            if let Err(e) = api::update_server_settings(&settings).await {
+                set_message.set(Some((format!("Failed to save settings: {}", e), false)));
+                set_saving_disk.set(false);
+                return;
+            }
+
+            // Then save to disk
             match api::save_config_to_disk().await {
                 Ok(_) => {
                     set_message.set(Some(("Configuration saved to metis.toml successfully!".to_string(), true)));
@@ -332,7 +396,71 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
     let (saving_s3, set_saving_s3) = signal(false);
     let on_save_s3 = move |_| {
         set_saving_s3.set(true);
+        set_message.set(None);
+
+        // First save current settings to memory (like on_save does)
+        let bucket_val = s3_bucket.get();
+        let prefix_val = s3_prefix.get();
+        let region_val = s3_region.get();
+        let endpoint_val = s3_endpoint.get();
+
+        let api_keys_val = api_keys.get();
+        let api_keys_vec: Option<Vec<String>> = if api_keys_val.is_empty() {
+            None
+        } else {
+            Some(api_keys_val.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+        };
+
+        let jwt_secret_val = jwt_secret.get();
+        let jwt_algorithm_val = jwt_algorithm.get();
+        let jwks_url_val = jwks_url.get();
+        let current_mode = auth_mode.get();
+
+        let basic_users_map: Option<HashMap<String, String>> = if current_mode == "BasicAuth" {
+            let users = basic_users.get();
+            if users.is_empty() {
+                None
+            } else {
+                Some(users.into_iter().collect())
+            }
+        } else {
+            None
+        };
+
+        let settings = ServerSettings {
+            auth: AuthConfig {
+                enabled: auth_enabled.get(),
+                mode: current_mode.clone(),
+                api_keys: if current_mode == "ApiKey" { api_keys_vec } else { None },
+                jwt_secret: if current_mode == "BearerToken" && !jwt_secret_val.is_empty() { Some(jwt_secret_val) } else { None },
+                jwt_algorithm: if current_mode == "BearerToken" { Some(jwt_algorithm_val) } else { None },
+                basic_users: basic_users_map,
+                jwks_url: if current_mode == "OAuth2" && !jwks_url_val.is_empty() { Some(jwks_url_val) } else { None },
+            },
+            rate_limit: Some(RateLimitConfig {
+                enabled: rate_limit_enabled.get(),
+                requests_per_second: requests_per_second.get(),
+                burst_size: burst_size.get(),
+            }),
+            s3: Some(S3Config {
+                enabled: s3_enabled.get(),
+                bucket: if bucket_val.is_empty() { None } else { Some(bucket_val) },
+                prefix: if prefix_val.is_empty() { None } else { Some(prefix_val) },
+                region: if region_val.is_empty() { None } else { Some(region_val) },
+                endpoint: if endpoint_val.is_empty() { None } else { Some(endpoint_val) },
+                poll_interval_secs: s3_poll_interval.get(),
+            }),
+        };
+
         wasm_bindgen_futures::spawn_local(async move {
+            // First update settings in memory
+            if let Err(e) = api::update_server_settings(&settings).await {
+                set_message.set(Some((format!("Failed to save settings: {}", e), false)));
+                set_saving_s3.set(false);
+                return;
+            }
+
+            // Then save to S3
             match api::save_config_to_s3().await {
                 Ok(_) => {
                     set_message.set(Some(("Configuration saved to S3 successfully!".to_string(), true)));
