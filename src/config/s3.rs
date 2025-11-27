@@ -218,4 +218,64 @@ mod tests {
         };
         assert!(config_active.is_active());
     }
+
+    #[test]
+    fn test_toml_serialization() {
+        // Test that S3Config serializes correctly to TOML
+        let config = S3Config {
+            enabled: true,
+            bucket: Some("my-bucket".to_string()),
+            prefix: Some("config/".to_string()),
+            region: Some("us-east-1".to_string()),
+            endpoint: None,
+            poll_interval_secs: 60,
+        };
+
+        let toml_str = toml::to_string_pretty(&config).unwrap();
+        println!("Serialized S3Config:\n{}", toml_str);
+
+        // Verify key fields are present
+        assert!(toml_str.contains("enabled = true"));
+        assert!(toml_str.contains("bucket = \"my-bucket\""));
+        assert!(toml_str.contains("region = \"us-east-1\""));
+        assert!(toml_str.contains("poll_interval_secs = 60"));
+
+        // Deserialize and verify roundtrip
+        let deserialized: S3Config = toml::from_str(&toml_str).unwrap();
+        assert_eq!(deserialized.enabled, true);
+        assert_eq!(deserialized.bucket, Some("my-bucket".to_string()));
+        assert_eq!(deserialized.region, Some("us-east-1".to_string()));
+    }
+
+    #[test]
+    fn test_option_s3_serialization() {
+        // Test that Option<S3Config> serializes correctly within a parent struct
+        #[derive(Debug, serde::Serialize, serde::Deserialize)]
+        struct TestSettings {
+            #[serde(default)]
+            s3: Option<S3Config>,
+        }
+
+        // With S3 config
+        let settings_with_s3 = TestSettings {
+            s3: Some(S3Config {
+                enabled: true,
+                bucket: Some("test-bucket".to_string()),
+                ..Default::default()
+            }),
+        };
+
+        let toml_str = toml::to_string_pretty(&settings_with_s3).unwrap();
+        println!("Settings with S3:\n{}", toml_str);
+        assert!(toml_str.contains("[s3]"));
+        assert!(toml_str.contains("enabled = true"));
+        assert!(toml_str.contains("bucket = \"test-bucket\""));
+
+        // Without S3 config
+        let settings_without_s3 = TestSettings { s3: None };
+        let toml_str_none = toml::to_string_pretty(&settings_without_s3).unwrap();
+        println!("Settings without S3:\n{}", toml_str_none);
+        // None should not produce [s3] section
+        assert!(!toml_str_none.contains("[s3]"));
+    }
 }

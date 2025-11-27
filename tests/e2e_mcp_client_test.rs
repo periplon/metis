@@ -77,13 +77,13 @@ impl TestServer {
         let metrics_handler = Arc::new(MetricsHandler::new(metrics_collector));
 
         // Create MetisServer using rmcp SDK
-        let metis_server = MetisServer::new(resource_handler, tool_handler, prompt_handler);
+        let metis_server = MetisServer::new(resource_handler, tool_handler.clone(), prompt_handler);
 
         // Create test secrets store
         let secrets_store = metis::adapters::secrets::create_secrets_store();
 
         let app =
-            metis::create_app(metis_server, health_handler, metrics_handler, settings, state_manager, secrets_store).await;
+            metis::create_app(metis_server, health_handler, metrics_handler, settings, state_manager, secrets_store, tool_handler).await;
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
