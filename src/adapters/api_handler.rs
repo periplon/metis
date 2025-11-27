@@ -17,6 +17,7 @@ use crate::adapters::mock_strategy::MockStrategyHandler;
 use crate::adapters::rmcp_server::SharedNotificationBroadcaster;
 use crate::adapters::secrets::SharedSecretsStore;
 use crate::adapters::state_manager::StateManager;
+use crate::adapters::tool_handler::AGENT_TOOL_PREFIX;
 use crate::adapters::workflow_engine::WorkflowEngine;
 use crate::agents::config::{
     AgentConfig, AgentReference, LlmProviderConfig, LlmProviderType, MemoryConfig,
@@ -48,13 +49,20 @@ pub struct ApiState {
 struct TestToolHandler {
     settings: Arc<RwLock<Settings>>,
     mock_strategy: Arc<MockStrategyHandler>,
+    /// Optional agent handler for testing workflows with agent tools
+    agent_handler: Option<Arc<dyn AgentPort>>,
 }
 
 impl TestToolHandler {
-    fn new(settings: Arc<RwLock<Settings>>, mock_strategy: Arc<MockStrategyHandler>) -> Self {
+    fn new(
+        settings: Arc<RwLock<Settings>>,
+        mock_strategy: Arc<MockStrategyHandler>,
+        agent_handler: Option<Arc<dyn AgentPort>>,
+    ) -> Self {
         Self {
             settings,
             mock_strategy,
+            agent_handler,
         }
     }
 }
@@ -77,6 +85,34 @@ impl ToolPort for TestToolHandler {
     }
 
     async fn execute_tool(&self, name: &str, args: Value) -> anyhow::Result<Value> {
+        // Check if this is an agent tool
+        if let Some(agent_name) = name.strip_prefix(AGENT_TOOL_PREFIX) {
+            if let Some(agent_handler) = &self.agent_handler {
+                // Extract session_id if provided
+                let session_id = args
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                // Execute the agent
+                let response = agent_handler
+                    .execute(agent_name, args.clone(), session_id)
+                    .await?;
+
+                // Return agent response as tool result
+                return Ok(json!({
+                    "content": response.output.get("content").cloned().unwrap_or(Value::Null),
+                    "tool_calls": response.tool_calls,
+                    "iterations": response.iterations,
+                    "execution_time_ms": response.execution_time_ms
+                }));
+            } else {
+                return Err(anyhow::anyhow!(
+                    "Agent handler not available. To test workflows with agent tools, ensure agents are configured and the server is running."
+                ));
+            }
+        }
+
         let settings = self.settings.read().await;
         if let Some(config) = settings.tools.iter().find(|t| t.name == name) {
             let config = config.clone();
@@ -1901,10 +1937,17 @@ pub async fn test_workflow(
     };
     drop(settings);
 
-    // Create a tool handler for testing (uses mock strategies)
+    // Get agent handler (prefer test_agent_handler if available, fallback to regular agent_handler)
+    let agent_handler = {
+        let test_handler = state.test_agent_handler.read().await;
+        test_handler.clone().or_else(|| state.agent_handler.clone())
+    };
+
+    // Create a tool handler for testing (uses mock strategies and optionally agents)
     let tool_handler = Arc::new(TestToolHandler::new(
         state.settings.clone(),
         state.mock_strategy.clone(),
+        agent_handler,
     ));
 
     // Create workflow engine

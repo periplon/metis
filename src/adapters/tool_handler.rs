@@ -13,18 +13,25 @@ use tokio::sync::RwLock;
 /// Prefix for agent tools
 pub const AGENT_TOOL_PREFIX: &str = "agent_";
 
-/// Inner tool handler that only handles regular (non-workflow) tools.
+/// Inner tool handler that handles regular tools and agents (but NOT workflows).
 /// This prevents circular dependency when WorkflowEngine needs to call tools.
 struct InnerToolHandler {
     settings: Arc<RwLock<Settings>>,
     mock_strategy: Arc<MockStrategyHandler>,
+    /// Shared agent handler for calling agents from workflow steps
+    agent_handler: Arc<RwLock<Option<Arc<dyn AgentPort>>>>,
 }
 
 impl InnerToolHandler {
-    fn new(settings: Arc<RwLock<Settings>>, mock_strategy: Arc<MockStrategyHandler>) -> Self {
+    fn new(
+        settings: Arc<RwLock<Settings>>,
+        mock_strategy: Arc<MockStrategyHandler>,
+        agent_handler: Arc<RwLock<Option<Arc<dyn AgentPort>>>>,
+    ) -> Self {
         Self {
             settings,
             mock_strategy,
+            agent_handler,
         }
     }
 
@@ -52,6 +59,37 @@ impl ToolPort for InnerToolHandler {
     }
 
     async fn execute_tool(&self, name: &str, args: Value) -> Result<Value> {
+        // Check if this is an agent tool
+        if let Some(agent_name) = name.strip_prefix(AGENT_TOOL_PREFIX) {
+            if let Some(agent_handler) = self.agent_handler.read().await.as_ref() {
+                // Extract session_id if provided
+                let session_id = args
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                // Execute the agent
+                let response = agent_handler
+                    .execute(agent_name, args.clone(), session_id)
+                    .await?;
+
+                // Return agent response as tool result
+                return Ok(json!({
+                    "content": response.output.get("content").cloned().unwrap_or(Value::Null),
+                    "output": response.output,
+                    "tool_calls": response.tool_calls,
+                    "iterations": response.iterations,
+                    "execution_time_ms": response.execution_time_ms
+                }));
+            } else {
+                return Err(anyhow::anyhow!(
+                    "Agent handler not available for agent: {}",
+                    agent_name
+                ));
+            }
+        }
+
+        // Handle regular tools
         if let Some(config) = self.find_tool_config(name).await {
             if let Some(mock_config) = &config.mock {
                 self.mock_strategy.generate(mock_config, Some(&args)).await
@@ -79,13 +117,19 @@ pub struct BasicToolHandler {
 
 impl BasicToolHandler {
     pub fn new(settings: Arc<RwLock<Settings>>, mock_strategy: Arc<MockStrategyHandler>) -> Self {
-        let inner_handler = Arc::new(InnerToolHandler::new(settings.clone(), mock_strategy));
+        // Create shared agent handler that will be used by both BasicToolHandler and InnerToolHandler
+        let agent_handler = Arc::new(RwLock::new(None));
+        let inner_handler = Arc::new(InnerToolHandler::new(
+            settings.clone(),
+            mock_strategy,
+            agent_handler.clone(),
+        ));
         Self {
             settings,
             inner_handler,
             workflow_engine: OnceLock::new(),
             mcp_client: Arc::new(McpClientManager::new()),
-            agent_handler: Arc::new(RwLock::new(None)),
+            agent_handler,
         }
     }
 
@@ -95,13 +139,19 @@ impl BasicToolHandler {
         mock_strategy: Arc<MockStrategyHandler>,
         mcp_client: Arc<McpClientManager>,
     ) -> Self {
-        let inner_handler = Arc::new(InnerToolHandler::new(settings.clone(), mock_strategy));
+        // Create shared agent handler that will be used by both BasicToolHandler and InnerToolHandler
+        let agent_handler = Arc::new(RwLock::new(None));
+        let inner_handler = Arc::new(InnerToolHandler::new(
+            settings.clone(),
+            mock_strategy,
+            agent_handler.clone(),
+        ));
         Self {
             settings,
             inner_handler,
             workflow_engine: OnceLock::new(),
             mcp_client,
-            agent_handler: Arc::new(RwLock::new(None)),
+            agent_handler,
         }
     }
 

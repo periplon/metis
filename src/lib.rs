@@ -148,7 +148,14 @@ pub async fn create_app(
             ));
 
             let handler = AgentHandler::new_with_secrets(settings.clone(), tool_handler, secrets_store.clone());
-            tracing::info!("AgentHandler initialized with {} agents", settings_read.agents.len());
+
+            // Initialize agents - this loads them into memory
+            if let Err(e) = handler.initialize().await {
+                tracing::warn!("Failed to initialize agents: {}", e);
+            } else {
+                tracing::info!("AgentHandler initialized with {} agents", settings_read.agents.len());
+            }
+
             Some(Arc::new(handler) as Arc<dyn AgentPort>)
         } else {
             None
