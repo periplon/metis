@@ -1587,10 +1587,47 @@ pub async fn save_config_to_s3(
         .await
     {
         Ok(_) => (StatusCode::OK, Json(ApiResponse::<()>::ok())),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiResponse::<()>::error(format!("Failed to upload to S3: {}", e)))
-        ),
+        Err(e) => {
+            // Provide more helpful error messages for common S3 issues
+            let error_msg = format!("{}", e);
+            let helpful_msg = if error_msg.contains("credentials") || error_msg.contains("Credentials") {
+                format!(
+                    "S3 credentials error: {}. Make sure AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables are set.",
+                    error_msg
+                )
+            } else if error_msg.contains("NoSuchBucket") {
+                format!(
+                    "S3 bucket '{}' does not exist or you don't have access to it.",
+                    bucket
+                )
+            } else if error_msg.contains("AccessDenied") || error_msg.contains("Forbidden") {
+                format!(
+                    "S3 access denied to bucket '{}'. Check your credentials and bucket permissions.",
+                    bucket
+                )
+            } else if error_msg.contains("InvalidAccessKeyId") {
+                "Invalid AWS access key. Check your AWS_ACCESS_KEY_ID.".to_string()
+            } else if error_msg.contains("SignatureDoesNotMatch") {
+                "AWS signature mismatch. Check your AWS_SECRET_ACCESS_KEY.".to_string()
+            } else if s3_config.region.is_none() && s3_config.endpoint.is_some() {
+                format!(
+                    "S3 error: {}. Note: You're using a custom endpoint but no region is set. For S3-compatible services like Wasabi or MinIO, you may need to specify a region (e.g., 'us-east-1').",
+                    error_msg
+                )
+            } else {
+                format!(
+                    "S3 upload failed: {}. Config: bucket='{}', region={:?}, endpoint={:?}",
+                    error_msg,
+                    bucket,
+                    s3_config.region,
+                    s3_config.endpoint
+                )
+            };
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::<()>::error(helpful_msg))
+            )
+        },
     }
 }
 
