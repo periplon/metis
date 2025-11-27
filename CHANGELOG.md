@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.24.0 - 2025-11-27
+#### Features
+- **(ui)** unified artifact selector for agents and workflows - (3fee12d) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.23.0 - 2025-11-27
 #### Features
 - **(s3)** use credentials from UI secrets store with env var fallback - (542a980) - Joan Marc Carbo Arnau
