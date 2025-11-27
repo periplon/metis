@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use serde_json::{json, Value};
 
-use super::Agent;
+use super::{render_system_prompt, render_user_prompt, Agent};
 use crate::agents::config::AgentConfig;
 use crate::agents::domain::{
     AgentChunk, AgentResponse, AgentStatus, AgentStream, AgentStreamSender, Message,
@@ -38,15 +38,15 @@ impl SingleTurnAgent {
             return;
         }
 
-        // Build messages
-        let prompt = input
-            .get("prompt")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        // Render system prompt with input values (Tera templating)
+        let rendered_system_prompt = render_system_prompt(&config.system_prompt, &input);
+
+        // Render user prompt from template or use raw prompt field
+        let prompt = render_user_prompt(config.prompt_template.as_deref(), &input);
 
         let messages = vec![
-            Message::system(&config.system_prompt),
-            Message::user(prompt),
+            Message::system(&rendered_system_prompt),
+            Message::user(&prompt),
         ];
 
         // Build completion request

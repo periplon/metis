@@ -292,4 +292,12 @@ impl AgentPort for AgentHandler {
     async fn delete_session(&self, session_id: &str) -> anyhow::Result<()> {
         self.default_store.delete(session_id).await.map_err(|e| anyhow::anyhow!("{}", e))
     }
+
+    async fn reinitialize(&self) -> anyhow::Result<()> {
+        // Clear provider cache so API keys are re-fetched
+        self.providers.write().await.clear();
+
+        // Re-initialize agents (this will recreate agents that may now have API keys)
+        self.initialize().await.map_err(|e| anyhow::anyhow!("{}", e))
+    }
 }

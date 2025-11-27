@@ -18,9 +18,13 @@ pub struct ApiResponse<T> {
 pub struct ConfigOverview {
     pub server: ServerInfo,
     pub resources_count: usize,
+    #[serde(default)]
+    pub resource_templates_count: usize,
     pub tools_count: usize,
     pub prompts_count: usize,
     pub workflows_count: usize,
+    #[serde(default)]
+    pub agents_count: usize,
     pub auth_enabled: bool,
     pub rate_limit_enabled: bool,
     pub s3_enabled: bool,
@@ -406,11 +410,17 @@ pub struct Agent {
     pub output_schema: Option<Value>,
     pub llm: AgentLlmConfig,
     pub system_prompt: String,
+    /// Prompt template for generating user messages from input schema values
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_template: Option<String>,
     #[serde(default)]
     pub available_tools: Vec<String>,
     /// MCP tools from external servers (format: "server_name:tool_name" or "server_name:*")
     #[serde(default)]
     pub mcp_tools: Vec<String>,
+    /// Other agents that can be called as tools (agent names, without "agent_" prefix)
+    #[serde(default)]
+    pub agent_tools: Vec<String>,
     #[serde(default)]
     pub memory: MemoryConfig,
     #[serde(default = "default_max_iterations")]

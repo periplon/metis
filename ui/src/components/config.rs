@@ -1083,12 +1083,15 @@ fn QuickLinksCard(overview: ConfigOverview) -> impl IntoView {
                 <h3 class="text-lg font-semibold text-gray-800">"Configured Items"</h3>
             </div>
             <div class="p-6">
-                <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
                     <QuickLinkItem
                         href="/resources"
                         label="Resources"
                         count=overview.resources_count
                         color="blue"
+                        secondary_count=overview.resource_templates_count
+                        secondary_label="templates"
+                        secondary_href="/resource-templates"
                     />
                     <QuickLinkItem
                         href="/tools"
@@ -1107,6 +1110,12 @@ fn QuickLinksCard(overview: ConfigOverview) -> impl IntoView {
                         label="Workflows"
                         count=overview.workflows_count
                         color="orange"
+                    />
+                    <QuickLinkItem
+                        href="/agents"
+                        label="Agents"
+                        count=overview.agents_count
+                        color="indigo"
                     />
                 </div>
             </div>
@@ -1177,22 +1186,34 @@ fn QuickLinkItem(
     label: &'static str,
     count: usize,
     color: &'static str,
+    #[prop(optional)] secondary_count: Option<usize>,
+    #[prop(optional)] secondary_label: Option<&'static str>,
+    #[prop(optional)] secondary_href: Option<&'static str>,
 ) -> impl IntoView {
     let (bg, text) = match color {
         "blue" => ("bg-blue-50 hover:bg-blue-100 border-blue-200", "text-blue-600"),
         "green" => ("bg-green-50 hover:bg-green-100 border-green-200", "text-green-600"),
         "purple" => ("bg-purple-50 hover:bg-purple-100 border-purple-200", "text-purple-600"),
         "orange" => ("bg-orange-50 hover:bg-orange-100 border-orange-200", "text-orange-600"),
+        "indigo" => ("bg-indigo-50 hover:bg-indigo-100 border-indigo-200", "text-indigo-600"),
         _ => ("bg-gray-50 hover:bg-gray-100 border-gray-200", "text-gray-600"),
     };
 
     view! {
-        <a
-            href=href
-            class=format!("block p-4 rounded-lg border {} transition-colors", bg)
-        >
-            <div class="text-sm text-gray-500 mb-1">{label}</div>
-            <div class=format!("text-2xl font-bold {}", text)>{count}</div>
-        </a>
+        <div class=format!("p-4 rounded-lg border {} transition-colors", bg)>
+            <a href=href class="block">
+                <div class="text-sm text-gray-500 mb-1">{label}</div>
+                <div class=format!("text-2xl font-bold {}", text)>{count}</div>
+            </a>
+            {secondary_count.map(|sec_count| {
+                let label = secondary_label.unwrap_or("templates");
+                let link = secondary_href.unwrap_or(href);
+                view! {
+                    <a href=link class="text-xs text-gray-400 hover:text-gray-600 hover:underline">
+                        {format!("{} {}", sec_count, label)}
+                    </a>
+                }
+            })}
+        </div>
     }
 }

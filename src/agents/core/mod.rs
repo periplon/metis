@@ -15,12 +15,127 @@ pub use react::ReActAgent;
 
 use std::sync::Arc;
 
+use serde_json::Value;
+use tera::{Context, Tera};
+
 use crate::agents::config::AgentConfig;
 use crate::agents::domain::AgentType;
 use crate::agents::error::AgentResult;
 use crate::agents::llm::LlmProvider;
 use crate::agents::memory::ConversationStore;
 use crate::domain::ToolPort;
+
+/// Render the system prompt as a Tera template with the input values
+///
+/// This allows system prompts to use template variables like:
+/// ```text
+/// You are a {{role}} assistant helping with {{task_type}}.
+/// The user's name is {{user_name}}.
+/// ```
+///
+/// Input values are available as template variables. Falls back to
+/// the original system prompt if rendering fails.
+pub fn render_system_prompt(system_prompt: &str, input: &Value) -> String {
+    // If there's nothing that looks like a template, return as-is
+    if !system_prompt.contains("{{") {
+        return system_prompt.to_string();
+    }
+
+    // Build Tera context from input JSON
+    let mut context = Context::new();
+
+    if let Some(obj) = input.as_object() {
+        for (key, value) in obj {
+            // Insert values based on their type
+            match value {
+                Value::String(s) => {
+                    context.insert(key, s);
+                }
+                Value::Number(n) => {
+                    if let Some(i) = n.as_i64() {
+                        context.insert(key, &i);
+                    } else if let Some(f) = n.as_f64() {
+                        context.insert(key, &f);
+                    }
+                }
+                Value::Bool(b) => {
+                    context.insert(key, b);
+                }
+                Value::Array(_) | Value::Object(_) => {
+                    // For complex types, insert as JSON string
+                    context.insert(key, &value.to_string());
+                }
+                Value::Null => {
+                    context.insert(key, &"");
+                }
+            }
+        }
+    }
+
+    // Render the template
+    match Tera::one_off(system_prompt, &context, false) {
+        Ok(rendered) => rendered,
+        Err(e) => {
+            tracing::warn!("Failed to render system prompt template: {}", e);
+            system_prompt.to_string()
+        }
+    }
+}
+
+/// Render the user prompt from a template and input values
+///
+/// If `prompt_template` is provided, renders it with input values as template variables.
+/// Otherwise, extracts the "prompt" field from input.
+///
+/// Example template: "Analyze the topic '{{topic}}' for {{audience}} audience."
+pub fn render_user_prompt(prompt_template: Option<&str>, input: &Value) -> String {
+    match prompt_template {
+        Some(template) if !template.is_empty() => {
+            // Build Tera context from input JSON
+            let mut context = Context::new();
+
+            if let Some(obj) = input.as_object() {
+                for (key, value) in obj {
+                    match value {
+                        Value::String(s) => {
+                            context.insert(key, s);
+                        }
+                        Value::Number(n) => {
+                            if let Some(i) = n.as_i64() {
+                                context.insert(key, &i);
+                            } else if let Some(f) = n.as_f64() {
+                                context.insert(key, &f);
+                            }
+                        }
+                        Value::Bool(b) => {
+                            context.insert(key, b);
+                        }
+                        Value::Array(_) | Value::Object(_) => {
+                            context.insert(key, &value.to_string());
+                        }
+                        Value::Null => {
+                            context.insert(key, &"");
+                        }
+                    }
+                }
+            }
+
+            // Render the template
+            match Tera::one_off(template, &context, false) {
+                Ok(rendered) => rendered,
+                Err(e) => {
+                    tracing::warn!("Failed to render prompt template: {}", e);
+                    // Fallback to prompt field
+                    input.get("prompt").and_then(|v| v.as_str()).unwrap_or("").to_string()
+                }
+            }
+        }
+        _ => {
+            // No template, use raw prompt field
+            input.get("prompt").and_then(|v| v.as_str()).unwrap_or("").to_string()
+        }
+    }
+}
 
 /// Trait for executable agents
 pub trait Agent: Send + Sync {

@@ -14,6 +14,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::adapters::mock_strategy::MockStrategyHandler;
+use crate::adapters::rmcp_server::SharedNotificationBroadcaster;
 use crate::adapters::secrets::SharedSecretsStore;
 use crate::adapters::state_manager::StateManager;
 use crate::adapters::workflow_engine::WorkflowEngine;
@@ -36,9 +37,11 @@ pub struct ApiState {
     pub mock_strategy: Arc<MockStrategyHandler>,
     pub agent_handler: Option<Arc<dyn AgentPort>>,
     /// Shared agent handler for testing (persists memory across requests)
-    pub test_agent_handler: Arc<RwLock<Option<Arc<crate::agents::handler::AgentHandler>>>>,
+    pub test_agent_handler: Arc<RwLock<Option<Arc<dyn AgentPort>>>>,
     /// Secrets store for API keys (in-memory)
     pub secrets: SharedSecretsStore,
+    /// MCP notification broadcaster for list change notifications
+    pub broadcaster: Option<SharedNotificationBroadcaster>,
 }
 
 /// Tool handler for workflow testing that uses mock strategies
@@ -139,9 +142,11 @@ impl ApiResponse<()> {
 pub struct ConfigOverview {
     pub server: ServerInfo,
     pub resources_count: usize,
+    pub resource_templates_count: usize,
     pub tools_count: usize,
     pub prompts_count: usize,
     pub workflows_count: usize,
+    pub agents_count: usize,
     pub auth_enabled: bool,
     pub rate_limit_enabled: bool,
     pub s3_enabled: bool,
@@ -506,9 +511,11 @@ pub async fn get_config_overview(
             version: env!("CARGO_PKG_VERSION").to_string(),
         },
         resources_count: settings.resources.len(),
+        resource_templates_count: settings.resource_templates.len(),
         tools_count: settings.tools.len(),
         prompts_count: settings.prompts.len(),
         workflows_count: settings.workflows.len(),
+        agents_count: settings.agents.len(),
         auth_enabled: settings.auth.enabled,
         rate_limit_enabled: settings.rate_limit.as_ref().is_some_and(|r| r.enabled),
         s3_enabled: settings.s3.as_ref().is_some_and(|s| s.enabled),
@@ -747,6 +754,12 @@ pub async fn create_resource(
 
     let resource = ResourceConfig::from(dto.clone());
     settings.resources.push(resource);
+    drop(settings);
+
+    // Notify connected MCP clients about the resource list change
+    if let Some(broadcaster) = &state.broadcaster {
+        broadcaster.notify_resources_changed().await;
+    }
 
     (StatusCode::CREATED, Json(ApiResponse::success(dto)))
 }
@@ -767,6 +780,13 @@ pub async fn update_resource(
         resource.output_schema = dto.output_schema.clone();
         resource.content = dto.content.clone();
         resource.mock = dto.mock.clone();
+        drop(settings);
+
+        // Notify connected MCP clients about the resource list change
+        if let Some(broadcaster) = &state.broadcaster {
+            broadcaster.notify_resources_changed().await;
+        }
+
         (StatusCode::OK, Json(ApiResponse::success(dto)))
     } else {
         (StatusCode::NOT_FOUND, Json(ApiResponse::<ResourceDto>::error("Resource not found")))
@@ -785,6 +805,13 @@ pub async fn delete_resource(
     settings.resources.retain(|r| r.uri != decoded_uri);
 
     if settings.resources.len() < initial_len {
+        drop(settings);
+
+        // Notify connected MCP clients about the resource list change
+        if let Some(broadcaster) = &state.broadcaster {
+            broadcaster.notify_resources_changed().await;
+        }
+
         (StatusCode::OK, Json(ApiResponse::<()>::ok()))
     } else {
         (StatusCode::NOT_FOUND, Json(ApiResponse::<()>::error("Resource not found")))
@@ -835,6 +862,12 @@ pub async fn create_tool(
 
     let tool = ToolConfig::from(dto.clone());
     settings.tools.push(tool);
+    drop(settings);
+
+    // Notify connected MCP clients about the tool list change
+    if let Some(broadcaster) = &state.broadcaster {
+        broadcaster.notify_tools_changed().await;
+    }
 
     (StatusCode::CREATED, Json(ApiResponse::success(dto)))
 }
@@ -852,6 +885,13 @@ pub async fn update_tool(
         tool.input_schema = dto.input_schema.clone();
         tool.static_response = dto.static_response.clone();
         tool.mock = dto.mock.clone();
+        drop(settings);
+
+        // Notify connected MCP clients about the tool list change
+        if let Some(broadcaster) = &state.broadcaster {
+            broadcaster.notify_tools_changed().await;
+        }
+
         (StatusCode::OK, Json(ApiResponse::success(dto)))
     } else {
         (StatusCode::NOT_FOUND, Json(ApiResponse::<ToolDto>::error("Tool not found")))
@@ -869,6 +909,13 @@ pub async fn delete_tool(
     settings.tools.retain(|t| t.name != name);
 
     if settings.tools.len() < initial_len {
+        drop(settings);
+
+        // Notify connected MCP clients about the tool list change
+        if let Some(broadcaster) = &state.broadcaster {
+            broadcaster.notify_tools_changed().await;
+        }
+
         (StatusCode::OK, Json(ApiResponse::<()>::ok()))
     } else {
         (StatusCode::NOT_FOUND, Json(ApiResponse::<()>::error("Tool not found")))
@@ -919,6 +966,12 @@ pub async fn create_prompt(
 
     let prompt = PromptConfig::from(dto.clone());
     settings.prompts.push(prompt);
+    drop(settings);
+
+    // Notify connected MCP clients about the prompt list change
+    if let Some(broadcaster) = &state.broadcaster {
+        broadcaster.notify_prompts_changed().await;
+    }
 
     (StatusCode::CREATED, Json(ApiResponse::success(dto)))
 }
@@ -950,6 +1003,13 @@ pub async fn update_prompt(
                 })
                 .collect()
         });
+        drop(settings);
+
+        // Notify connected MCP clients about the prompt list change
+        if let Some(broadcaster) = &state.broadcaster {
+            broadcaster.notify_prompts_changed().await;
+        }
+
         (StatusCode::OK, Json(ApiResponse::success(dto)))
     } else {
         (StatusCode::NOT_FOUND, Json(ApiResponse::<PromptDto>::error("Prompt not found")))
@@ -967,6 +1027,13 @@ pub async fn delete_prompt(
     settings.prompts.retain(|p| p.name != name);
 
     if settings.prompts.len() < initial_len {
+        drop(settings);
+
+        // Notify connected MCP clients about the prompt list change
+        if let Some(broadcaster) = &state.broadcaster {
+            broadcaster.notify_prompts_changed().await;
+        }
+
         (StatusCode::OK, Json(ApiResponse::<()>::ok()))
     } else {
         (StatusCode::NOT_FOUND, Json(ApiResponse::<()>::error("Prompt not found")))
@@ -1017,6 +1084,12 @@ pub async fn create_workflow(
 
     let workflow = WorkflowConfig::from(dto.clone());
     settings.workflows.push(workflow);
+    drop(settings);
+
+    // Workflows are exposed as tools, so notify about tool list change
+    if let Some(broadcaster) = &state.broadcaster {
+        broadcaster.notify_tools_changed().await;
+    }
 
     (StatusCode::CREATED, Json(ApiResponse::success(dto)))
 }
@@ -1034,6 +1107,13 @@ pub async fn update_workflow(
         workflow.input_schema = dto.input_schema.clone();
         workflow.steps = dto.steps.clone().into_iter().map(WorkflowStep::from).collect();
         workflow.on_error = dto.on_error.clone();
+        drop(settings);
+
+        // Workflows are exposed as tools, so notify about tool list change
+        if let Some(broadcaster) = &state.broadcaster {
+            broadcaster.notify_tools_changed().await;
+        }
+
         (StatusCode::OK, Json(ApiResponse::success(dto)))
     } else {
         (StatusCode::NOT_FOUND, Json(ApiResponse::<WorkflowDto>::error("Workflow not found")))
@@ -1051,6 +1131,13 @@ pub async fn delete_workflow(
     settings.workflows.retain(|w| w.name != name);
 
     if settings.workflows.len() < initial_len {
+        drop(settings);
+
+        // Workflows are exposed as tools, so notify about tool list change
+        if let Some(broadcaster) = &state.broadcaster {
+            broadcaster.notify_tools_changed().await;
+        }
+
         (StatusCode::OK, Json(ApiResponse::<()>::ok()))
     } else {
         (StatusCode::NOT_FOUND, Json(ApiResponse::<()>::error("Workflow not found")))
@@ -1124,6 +1211,12 @@ pub async fn create_resource_template(
 
     let template = ResourceTemplateConfig::from(dto.clone());
     settings.resource_templates.push(template);
+    drop(settings);
+
+    // Resource templates affect resource list
+    if let Some(broadcaster) = &state.broadcaster {
+        broadcaster.notify_resources_changed().await;
+    }
 
     (StatusCode::CREATED, Json(ApiResponse::success(dto)))
 }
@@ -1151,6 +1244,13 @@ pub async fn update_resource_template(
         template.output_schema = dto.output_schema.clone();
         template.content = dto.content.clone();
         template.mock = dto.mock.clone();
+        drop(settings);
+
+        // Resource templates affect resource list
+        if let Some(broadcaster) = &state.broadcaster {
+            broadcaster.notify_resources_changed().await;
+        }
+
         (StatusCode::OK, Json(ApiResponse::success(dto)))
     } else {
         (
@@ -1176,6 +1276,13 @@ pub async fn delete_resource_template(
         .retain(|r| r.uri_template != decoded_uri);
 
     if settings.resource_templates.len() < initial_len {
+        drop(settings);
+
+        // Resource templates affect resource list
+        if let Some(broadcaster) = &state.broadcaster {
+            broadcaster.notify_resources_changed().await;
+        }
+
         (StatusCode::OK, Json(ApiResponse::<()>::ok()))
     } else {
         (
@@ -1846,11 +1953,17 @@ pub struct AgentDto {
     pub output_schema: Option<Value>,
     pub llm: LlmProviderConfigDto,
     pub system_prompt: String,
+    /// Prompt template for generating user messages from input schema values
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_template: Option<String>,
     #[serde(default)]
     pub available_tools: Vec<String>,
     /// MCP tools from external servers (format: "server_name:tool_name" or "server_name:*")
     #[serde(default)]
     pub mcp_tools: Vec<String>,
+    /// Other agents that can be called as tools (agent names, without "agent_" prefix)
+    #[serde(default)]
+    pub agent_tools: Vec<String>,
     #[serde(default)]
     pub memory: MemoryConfigDto,
     #[serde(default = "default_max_iterations")]
@@ -1927,8 +2040,10 @@ impl From<&AgentConfig> for AgentDto {
                 stream: a.llm.stream,
             },
             system_prompt: a.system_prompt.clone(),
+            prompt_template: a.prompt_template.clone(),
             available_tools: a.available_tools.clone(),
             mcp_tools: a.mcp_tools.clone(),
+            agent_tools: a.agent_tools.clone(),
             memory: MemoryConfigDto {
                 backend: a.memory.backend,
                 strategy: a.memory.strategy.clone(),
@@ -1962,8 +2077,10 @@ impl From<AgentDto> for AgentConfig {
                 stream: dto.llm.stream,
             },
             system_prompt: dto.system_prompt,
+            prompt_template: dto.prompt_template,
             available_tools: dto.available_tools,
             mcp_tools: dto.mcp_tools,
+            agent_tools: dto.agent_tools,
             memory: MemoryConfig {
                 backend: dto.memory.backend,
                 strategy: dto.memory.strategy,
@@ -2099,6 +2216,16 @@ pub async fn create_agent(
 
     let agent: AgentConfig = dto.into();
     settings.agents.push(agent.clone());
+    drop(settings);
+
+    // Reset cached agent handler so it re-initializes with new agent
+    *state.test_agent_handler.write().await = None;
+
+    // Agents are exposed as tools, so notify about tool list change
+    if let Some(broadcaster) = &state.broadcaster {
+        broadcaster.notify_tools_changed().await;
+    }
+
     (StatusCode::CREATED, Json(ApiResponse::success(AgentDto::from(&agent))))
 }
 
@@ -2112,7 +2239,18 @@ pub async fn update_agent(
 
     if let Some(agent) = settings.agents.iter_mut().find(|a| a.name == name) {
         *agent = dto.into();
-        (StatusCode::OK, Json(ApiResponse::success(AgentDto::from(&*agent))))
+        let result = AgentDto::from(&*agent);
+        drop(settings);
+
+        // Reset cached agent handler so it re-initializes with updated agent
+        *state.test_agent_handler.write().await = None;
+
+        // Agents are exposed as tools, so notify about tool list change
+        if let Some(broadcaster) = &state.broadcaster {
+            broadcaster.notify_tools_changed().await;
+        }
+
+        (StatusCode::OK, Json(ApiResponse::success(result)))
     } else {
         (StatusCode::NOT_FOUND, Json(ApiResponse::<AgentDto>::error("Agent not found")))
     }
@@ -2129,6 +2267,16 @@ pub async fn delete_agent(
     settings.agents.retain(|a| a.name != name);
 
     if settings.agents.len() < initial_len {
+        drop(settings);
+
+        // Reset cached agent handler so it re-initializes without deleted agent
+        *state.test_agent_handler.write().await = None;
+
+        // Agents are exposed as tools, so notify about tool list change
+        if let Some(broadcaster) = &state.broadcaster {
+            broadcaster.notify_tools_changed().await;
+        }
+
         (StatusCode::OK, Json(ApiResponse::ok()))
     } else {
         (StatusCode::NOT_FOUND, Json(ApiResponse::<()>::error("Agent not found")))
@@ -2691,6 +2839,12 @@ fn get_default_gemini_models() -> Vec<LlmModelInfo> {
 #[derive(Clone)]
 pub struct SecretsApiState {
     pub secrets: SharedSecretsStore,
+    /// Reference to cached agent handler to reset when secrets change
+    pub test_agent_handler: Arc<RwLock<Option<Arc<dyn AgentPort>>>>,
+    /// MCP notification broadcaster for list change notifications
+    pub broadcaster: Option<SharedNotificationBroadcaster>,
+    /// Tool handler to reinitialize agents when API keys change
+    pub tool_handler: Option<Arc<crate::adapters::tool_handler::BasicToolHandler>>,
 }
 
 /// Request body for setting a secret
@@ -2782,6 +2936,21 @@ pub async fn set_secret(
     state.secrets.set(&key, &req.value).await;
     tracing::info!("Secret '{}' has been set", key);
 
+    // Reset cached agent handler so it re-initializes with new API key
+    *state.test_agent_handler.write().await = None;
+
+    // Reinitialize agents in the main tool handler (makes agents available that now have API keys)
+    if let Some(tool_handler) = &state.tool_handler {
+        if let Err(e) = tool_handler.reinitialize_agents().await {
+            tracing::warn!("Failed to reinitialize agents after setting secret: {}", e);
+        }
+    }
+
+    // API keys affect which agents are available (agents are exposed as tools)
+    if let Some(broadcaster) = &state.broadcaster {
+        broadcaster.notify_tools_changed().await;
+    }
+
     (StatusCode::OK, Json(ApiResponse::<()>::ok()))
 }
 
@@ -2792,6 +2961,22 @@ pub async fn delete_secret(
 ) -> impl IntoResponse {
     if state.secrets.delete(&key).await {
         tracing::info!("Secret '{}' has been deleted", key);
+
+        // Reset cached agent handler so it re-initializes without deleted API key
+        *state.test_agent_handler.write().await = None;
+
+        // Reinitialize agents in the main tool handler (removes agents that no longer have API keys)
+        if let Some(tool_handler) = &state.tool_handler {
+            if let Err(e) = tool_handler.reinitialize_agents().await {
+                tracing::warn!("Failed to reinitialize agents after deleting secret: {}", e);
+            }
+        }
+
+        // API keys affect which agents are available (agents are exposed as tools)
+        if let Some(broadcaster) = &state.broadcaster {
+            broadcaster.notify_tools_changed().await;
+        }
+
         (StatusCode::OK, Json(ApiResponse::<()>::ok()))
     } else {
         (
@@ -2807,5 +2992,21 @@ pub async fn clear_secrets(
 ) -> impl IntoResponse {
     state.secrets.clear().await;
     tracing::info!("All secrets have been cleared");
+
+    // Reset cached agent handler so it re-initializes without API keys
+    *state.test_agent_handler.write().await = None;
+
+    // Reinitialize agents in the main tool handler (removes all agents that needed API keys)
+    if let Some(tool_handler) = &state.tool_handler {
+        if let Err(e) = tool_handler.reinitialize_agents().await {
+            tracing::warn!("Failed to reinitialize agents after clearing secrets: {}", e);
+        }
+    }
+
+    // API keys affect which agents are available (agents are exposed as tools)
+    if let Some(broadcaster) = &state.broadcaster {
+        broadcaster.notify_tools_changed().await;
+    }
+
     (StatusCode::OK, Json(ApiResponse::<()>::ok()))
 }

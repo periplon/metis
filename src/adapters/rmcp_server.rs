@@ -6,12 +6,21 @@
 //!
 //! ## Agent Integration
 //!
-//! Agents are exposed as MCP tools with the prefix `agent_`. For example, an agent
-//! named "assistant" becomes the tool "agent_assistant". When called, the agent
-//! executes and returns its response as the tool result.
+//! Agents are exposed as MCP tools through the ToolPort. The tool handler includes
+//! agents with the prefix `agent_`. For example, an agent named "assistant" becomes
+//! the tool "agent_assistant". When called, the agent executes and returns its
+//! response as the tool result.
+//!
+//! ## List Change Notifications
+//!
+//! The server supports MCP list change notifications. When tools, resources, or prompts
+//! change, connected clients can be notified via:
+//! - `notifications/tools/list_changed`
+//! - `notifications/resources/list_changed`
+//! - `notifications/prompts/list_changed`
+//!
+//! Use `NotificationBroadcaster` to send these notifications to all connected peers.
 
-use crate::adapters::tool_handler::AGENT_TOOL_PREFIX;
-use crate::agents::domain::AgentPort;
 use crate::domain::{PromptPort, ResourcePort, ToolPort};
 use rmcp::{
     handler::server::ServerHandler,
@@ -19,28 +28,150 @@ use rmcp::{
         CallToolRequestParam, CallToolResult, Content, GetPromptRequestParam, GetPromptResult,
         Implementation, ListPromptsResult, ListResourceTemplatesResult, ListResourcesResult,
         ListToolsResult, PaginatedRequestParam, Prompt, PromptArgument, PromptMessage,
-        PromptMessageRole, RawResource, RawResourceTemplate, ReadResourceRequestParam,
-        ReadResourceResult, Resource, ResourceContents, ResourceTemplate, ServerCapabilities,
-        ServerInfo, Tool,
+        PromptMessageRole, PromptListChangedNotification, RawResource, RawResourceTemplate,
+        ReadResourceRequestParam, ReadResourceResult, Resource, ResourceContents,
+        ResourceListChangedNotification, ResourceTemplate, ServerCapabilities, ServerInfo,
+        ServerNotification, Tool, ToolListChangedNotification,
     },
-    service::RequestContext,
+    service::{Peer, RequestContext},
     ErrorData as McpError, RoleServer,
 };
-use serde_json::json;
-use tracing::info;
+use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::RwLock;
+use tracing::{debug, info, warn};
+
+/// Type alias for a unique peer identifier
+pub type PeerId = String;
+
+/// Shared notification broadcaster
+pub type SharedNotificationBroadcaster = Arc<NotificationBroadcaster>;
+
+/// Notification broadcaster for MCP list change notifications
+///
+/// This struct maintains a list of connected peers and can broadcast
+/// notifications when tools, resources, or prompts change.
+///
+/// # Example
+///
+/// ```ignore
+/// let broadcaster = NotificationBroadcaster::new();
+/// // ... after a tool is created via API ...
+/// broadcaster.notify_tools_changed().await;
+/// ```
+#[derive(Default)]
+pub struct NotificationBroadcaster {
+    /// Connected peers indexed by their unique ID
+    peers: RwLock<HashMap<PeerId, Peer<RoleServer>>>,
+    /// Counter for generating unique peer IDs
+    peer_counter: RwLock<u64>,
+}
+
+impl NotificationBroadcaster {
+    /// Create a new notification broadcaster
+    pub fn new() -> Self {
+        Self {
+            peers: RwLock::new(HashMap::new()),
+            peer_counter: RwLock::new(0),
+        }
+    }
+
+    /// Register a peer and return its ID
+    pub async fn register_peer(&self, peer: Peer<RoleServer>) -> PeerId {
+        let mut counter = self.peer_counter.write().await;
+        *counter += 1;
+        let id = format!("peer_{}", *counter);
+
+        let mut peers = self.peers.write().await;
+        peers.insert(id.clone(), peer);
+        debug!("Registered MCP peer: {} (total: {})", id, peers.len());
+        id
+    }
+
+    /// Unregister a peer by ID
+    pub async fn unregister_peer(&self, id: &str) {
+        let mut peers = self.peers.write().await;
+        if peers.remove(id).is_some() {
+            debug!("Unregistered MCP peer: {} (remaining: {})", id, peers.len());
+        }
+    }
+
+    /// Get the number of connected peers
+    pub async fn peer_count(&self) -> usize {
+        self.peers.read().await.len()
+    }
+
+    /// Notify all peers that the tool list has changed
+    pub async fn notify_tools_changed(&self) {
+        let notification = ServerNotification::ToolListChangedNotification(
+            ToolListChangedNotification::default(),
+        );
+        self.broadcast(notification, "tools").await;
+    }
+
+    /// Notify all peers that the resource list has changed
+    pub async fn notify_resources_changed(&self) {
+        let notification = ServerNotification::ResourceListChangedNotification(
+            ResourceListChangedNotification::default(),
+        );
+        self.broadcast(notification, "resources").await;
+    }
+
+    /// Notify all peers that the prompt list has changed
+    pub async fn notify_prompts_changed(&self) {
+        let notification = ServerNotification::PromptListChangedNotification(
+            PromptListChangedNotification::default(),
+        );
+        self.broadcast(notification, "prompts").await;
+    }
+
+    /// Broadcast a notification to all connected peers
+    async fn broadcast(&self, notification: ServerNotification, list_type: &str) {
+        let peers = self.peers.read().await;
+        if peers.is_empty() {
+            debug!("No peers connected to notify about {} list change", list_type);
+            return;
+        }
+
+        info!("Broadcasting {} list changed notification to {} peer(s)", list_type, peers.len());
+
+        let mut failed_peers = Vec::new();
+
+        for (id, peer) in peers.iter() {
+            if let Err(e) = peer.send_notification(notification.clone().into()).await {
+                warn!("Failed to send notification to peer {}: {}", id, e);
+                failed_peers.push(id.clone());
+            }
+        }
+
+        // Clean up failed peers
+        drop(peers);
+        if !failed_peers.is_empty() {
+            let mut peers = self.peers.write().await;
+            for id in failed_peers {
+                peers.remove(&id);
+                debug!("Removed disconnected peer: {}", id);
+            }
+        }
+    }
+}
 
 /// Metis MCP Server
 ///
 /// Implements the MCP ServerHandler trait using the existing handler infrastructure.
 /// This provides a standards-compliant MCP server implementation.
+///
+/// The tool_handler includes support for:
+/// - Regular tools
+/// - Workflow tools
+/// - Agent tools (with `agent_` prefix)
+/// - MCP tools from external servers
 #[derive(Clone)]
 pub struct MetisServer {
     resource_handler: Arc<dyn ResourcePort>,
     tool_handler: Arc<dyn ToolPort>,
     prompt_handler: Arc<dyn PromptPort>,
-    /// Optional agent handler - when present, agents are exposed as tools
-    agent_handler: Option<Arc<dyn AgentPort>>,
+    broadcaster: SharedNotificationBroadcaster,
 }
 
 impl MetisServer {
@@ -54,28 +185,28 @@ impl MetisServer {
             resource_handler,
             tool_handler,
             prompt_handler,
-            agent_handler: None,
+            broadcaster: Arc::new(NotificationBroadcaster::new()),
         }
     }
 
-    /// Create a new MetisServer with agent support
-    pub fn with_agents(
+    /// Create a new MetisServer with a shared notification broadcaster
+    pub fn with_broadcaster(
         resource_handler: Arc<dyn ResourcePort>,
         tool_handler: Arc<dyn ToolPort>,
         prompt_handler: Arc<dyn PromptPort>,
-        agent_handler: Arc<dyn AgentPort>,
+        broadcaster: SharedNotificationBroadcaster,
     ) -> Self {
         Self {
             resource_handler,
             tool_handler,
             prompt_handler,
-            agent_handler: Some(agent_handler),
+            broadcaster,
         }
     }
 
-    /// Set the agent handler
-    pub fn set_agent_handler(&mut self, agent_handler: Arc<dyn AgentPort>) {
-        self.agent_handler = Some(agent_handler);
+    /// Get the notification broadcaster
+    pub fn broadcaster(&self) -> &SharedNotificationBroadcaster {
+        &self.broadcaster
     }
 }
 
@@ -104,10 +235,14 @@ impl ServerHandler for MetisServer {
 
     fn ping(
         &self,
-        _context: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<(), McpError>> + Send + '_ {
+        let broadcaster = self.broadcaster.clone();
         async move {
             info!("MCP ping received");
+            // Register the peer for future notifications
+            let peer = context.peer.clone();
+            broadcaster.register_peer(peer).await;
             Ok(())
         }
     }
@@ -210,14 +345,18 @@ impl ServerHandler for MetisServer {
         _context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<ListToolsResult, McpError>> + Send + '_ {
         let handler = self.tool_handler.clone();
-        let agent_handler = self.agent_handler.clone();
         async move {
+            // tool_handler.list_tools() already includes:
+            // - Regular tools
+            // - Workflow tools
+            // - Agent tools (with agent_ prefix)
+            // - MCP tools from external servers
             let tools = handler
                 .list_tools()
                 .await
                 .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
-            let mut mcp_tools: Vec<Tool> = tools
+            let mcp_tools: Vec<Tool> = tools
                 .into_iter()
                 .map(|t| {
                     // Input schema should be a JSON object
@@ -228,50 +367,6 @@ impl ServerHandler for MetisServer {
                     Tool::new(t.name, t.description, schema)
                 })
                 .collect();
-
-            // Add agents as tools if agent handler is present
-            if let Some(agent_h) = agent_handler {
-                let agents = agent_h
-                    .list_agents()
-                    .await
-                    .map_err(|e| McpError::internal_error(e.to_string(), None))?;
-
-                for agent in agents {
-                    let tool_name = format!("{}{}", AGENT_TOOL_PREFIX, agent.name);
-                    let description = format!(
-                        "[AI Agent] {} (Type: {:?}, LLM: {}/{})",
-                        agent.description, agent.agent_type, agent.llm_provider, agent.llm_model
-                    );
-
-                    // Use the agent's input schema or default prompt schema
-                    // MCP requires schemas to have at least "type": "object"
-                    let schema = match &agent.input_schema {
-                        serde_json::Value::Object(obj) if obj.contains_key("type") => obj.clone(),
-                        _ => {
-                            // Default schema for agents without a proper input schema
-                            let mut default = serde_json::Map::new();
-                            default.insert("type".to_string(), json!("object"));
-                            default.insert(
-                                "properties".to_string(),
-                                json!({
-                                    "prompt": {
-                                        "type": "string",
-                                        "description": "The input prompt for the agent"
-                                    },
-                                    "session_id": {
-                                        "type": "string",
-                                        "description": "Optional session ID for multi-turn conversations"
-                                    }
-                                }),
-                            );
-                            default.insert("required".to_string(), json!(["prompt"]));
-                            default
-                        }
-                    };
-
-                    mcp_tools.push(Tool::new(tool_name, description, schema));
-                }
-            }
 
             Ok(ListToolsResult {
                 tools: mcp_tools,
@@ -286,7 +381,6 @@ impl ServerHandler for MetisServer {
         _context: RequestContext<RoleServer>,
     ) -> impl std::future::Future<Output = Result<CallToolResult, McpError>> + Send + '_ {
         let handler = self.tool_handler.clone();
-        let agent_handler = self.agent_handler.clone();
         async move {
             let name = request.name.as_ref();
             let args = request
@@ -294,41 +388,11 @@ impl ServerHandler for MetisServer {
                 .map(serde_json::Value::Object)
                 .unwrap_or(serde_json::Value::Null);
 
-            // Check if this is an agent call
-            if let Some(agent_name) = name.strip_prefix(AGENT_TOOL_PREFIX) {
-                if let Some(agent_h) = agent_handler {
-                    // Extract session_id if provided
-                    let session_id = args
-                        .get("session_id")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-
-                    // Execute the agent
-                    let response = agent_h
-                        .execute(agent_name, args, session_id)
-                        .await
-                        .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
-
-                    // Build the result with agent response details
-                    let result = json!({
-                        "output": response.output,
-                        "session_id": response.session_id,
-                        "iterations": response.iterations,
-                        "execution_time_ms": response.execution_time_ms,
-                        "tool_calls": response.tool_calls.len(),
-                        "reasoning_steps": response.reasoning_steps.len()
-                    });
-
-                    return Ok(CallToolResult::success(vec![Content::text(result.to_string())]));
-                } else {
-                    return Err(McpError::invalid_params(
-                        format!("Agent handler not available for agent: {}", agent_name),
-                        None,
-                    ));
-                }
-            }
-
-            // Regular tool call
+            // tool_handler.execute_tool() handles:
+            // - Agent tools (with agent_ prefix)
+            // - MCP tools from external servers
+            // - Workflow tools
+            // - Regular tools
             let result = handler
                 .execute_tool(name, args)
                 .await

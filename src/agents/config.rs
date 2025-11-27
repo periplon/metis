@@ -25,12 +25,19 @@ pub struct AgentConfig {
     pub llm: LlmProviderConfig,
     /// System prompt for the agent
     pub system_prompt: String,
+    /// Prompt template for generating user messages from input schema values
+    /// Uses Tera templating syntax (e.g., "Analyze {{topic}} for {{audience}}")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_template: Option<String>,
     /// Available tools (tool names from the tool registry)
     #[serde(default)]
     pub available_tools: Vec<String>,
     /// MCP tools from external MCP servers (format: "server_name:tool_name" or "server_name:*" for all)
     #[serde(default)]
     pub mcp_tools: Vec<String>,
+    /// Other agents that can be called as tools (agent names, without "agent_" prefix)
+    #[serde(default)]
+    pub agent_tools: Vec<String>,
     /// Memory/persistence configuration
     #[serde(default)]
     pub memory: MemoryConfig,

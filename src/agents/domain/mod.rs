@@ -53,4 +53,8 @@ pub trait AgentPort: Send + Sync {
 
     /// Delete a session
     async fn delete_session(&self, session_id: &str) -> anyhow::Result<()>;
+
+    /// Reinitialize agents (e.g., after API keys change)
+    /// This reloads agent configurations and recreates agents that may now be available
+    async fn reinitialize(&self) -> anyhow::Result<()>;
 }

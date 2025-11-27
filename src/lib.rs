@@ -70,6 +70,7 @@ use tokio::sync::RwLock;
 /// * `settings` - Application settings
 /// * `state_manager` - State manager for stateful mocks
 /// * `secrets_store` - In-memory secrets store for API keys
+/// * `tool_handler` - Tool handler for agents (used to reinitialize when API keys change)
 ///
 /// # Returns
 ///
@@ -81,7 +82,11 @@ pub async fn create_app(
     settings: Arc<RwLock<crate::config::Settings>>,
     state_manager: Arc<StateManager>,
     secrets_store: SharedSecretsStore,
+    tool_handler: Arc<crate::adapters::tool_handler::BasicToolHandler>,
 ) -> Router {
+    // Get the broadcaster before moving metis_server into the closure
+    let broadcaster = metis_server.broadcaster().clone();
+
     // Create rmcp HTTP transport service
     let session_manager = Arc::new(LocalSessionManager::default());
     let config = StreamableHttpServerConfig::default();
@@ -150,14 +155,19 @@ pub async fn create_app(
         }
     };
 
+    // Create shared test agent handler (shared between ApiState and SecretsApiState)
+    let test_agent_handler: Arc<tokio::sync::RwLock<Option<Arc<dyn AgentPort>>>> =
+        Arc::new(tokio::sync::RwLock::new(None));
+
     // Create API state for REST endpoints
     let api_state = ApiState {
         settings: settings.clone(),
         state_manager,
         mock_strategy,
         agent_handler,
-        test_agent_handler: Arc::new(tokio::sync::RwLock::new(None)),
+        test_agent_handler: test_agent_handler.clone(),
         secrets: secrets_store.clone(),
+        broadcaster: Some(broadcaster.clone()),
     };
 
     // API routes for Web UI
@@ -206,9 +216,12 @@ pub async fn create_app(
         .route("/llm/models/:provider", get(api_handler::fetch_llm_models))
         .with_state(api_state);
 
-    // Secrets API routes (separate state for secrets store)
+    // Secrets API routes (separate state for secrets store, but shares test_agent_handler and broadcaster)
     let secrets_state = SecretsApiState {
         secrets: secrets_store,
+        test_agent_handler,
+        broadcaster: Some(broadcaster),
+        tool_handler: Some(tool_handler),
     };
     let secrets_router = Router::new()
         .route("/secrets", get(api_handler::list_secrets).delete(api_handler::clear_secrets))

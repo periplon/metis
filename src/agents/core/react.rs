@@ -7,13 +7,13 @@ use futures::StreamExt;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use super::Agent;
+use super::{render_system_prompt, render_user_prompt, Agent};
 use crate::agents::config::AgentConfig;
 use crate::agents::domain::{
     AgentChunk, AgentResponse, AgentStatus, AgentStream, AgentStreamSender,
     Message, ToolCallResult, ToolDefinition,
 };
-use crate::agents::llm::{CompletionRequest, FinishReason, LlmProvider, ToolCallAccumulator};
+use crate::agents::llm::{CompletionRequest, LlmProvider, ToolCallAccumulator};
 use crate::agents::memory::{apply_strategy, ConversationStore};
 use crate::domain::ToolPort;
 
@@ -68,18 +68,18 @@ impl ReActAgent {
             }
         };
 
-        // Get user prompt
-        let prompt = input
-            .get("prompt")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        // Render system prompt with input values (Tera templating)
+        let rendered_system_prompt = render_system_prompt(&config.system_prompt, &input);
+
+        // Render user prompt from template or use raw prompt field
+        let prompt = render_user_prompt(config.prompt_template.as_deref(), &input);
 
         // Add user message to session
-        let user_message = Message::user(prompt);
+        let user_message = Message::user(&prompt);
         session.add_message(user_message.clone());
 
         // Build messages with system prompt + history
-        let mut messages = vec![Message::system(&config.system_prompt)];
+        let mut messages = vec![Message::system(&rendered_system_prompt)];
 
         // Apply memory strategy to get conversation history
         let history_messages = apply_strategy(
@@ -89,8 +89,13 @@ impl ReActAgent {
         );
         messages.extend(history_messages);
 
-        // Build tool definitions (includes both regular tools and MCP tools)
-        let tools = Self::build_tool_definitions(&tool_handler, &config.available_tools, &config.mcp_tools).await;
+        // Build tool definitions (includes regular tools, MCP tools, and agent tools)
+        let tools = Self::build_tool_definitions(
+            &tool_handler,
+            &config.available_tools,
+            &config.mcp_tools,
+            &config.agent_tools,
+        ).await;
 
         let mut all_tool_calls: Vec<ToolCallResult> = Vec::new();
         let mut reasoning_steps: Vec<String> = Vec::new();
@@ -118,7 +123,6 @@ impl ReActAgent {
             let mut stream = llm.complete_stream(request);
             let mut content = String::new();
             let mut tool_accumulator = ToolCallAccumulator::new();
-            let mut finish_reason = FinishReason::Stop;
 
             while let Some(result) = stream.next().await {
                 match result {
@@ -134,10 +138,6 @@ impl ReActAgent {
                         for delta in &chunk.tool_calls {
                             tool_accumulator.apply_delta(delta);
                         }
-
-                        if let Some(reason) = chunk.finish_reason {
-                            finish_reason = reason;
-                        }
                     }
                     Err(e) => {
                         let _ = sender.send(AgentChunk::error(e.to_string())).await;
@@ -149,8 +149,9 @@ impl ReActAgent {
             // Build complete tool calls
             let tool_calls = tool_accumulator.build();
 
-            // If no tool calls, we're done
-            if tool_calls.is_empty() || finish_reason == FinishReason::Stop {
+            // If no tool calls, we're done (prioritize tool calls over finish_reason)
+            // Some providers may return Stop even with tool calls
+            if tool_calls.is_empty() {
                 final_content = content;
                 break;
             }
@@ -246,7 +247,10 @@ impl ReActAgent {
         tool_handler: &Arc<dyn ToolPort>,
         available_tools: &[String],
         mcp_tools: &[String],
+        agent_tools: &[String],
     ) -> Vec<ToolDefinition> {
+        use crate::adapters::tool_handler::AGENT_TOOL_PREFIX;
+
         let all_tools = match tool_handler.list_tools().await {
             Ok(tools) => tools,
             Err(_) => return Vec::new(),
@@ -254,9 +258,8 @@ impl ReActAgent {
 
         let mut definitions = Vec::new();
 
-        // Handle regular tools
-        if available_tools.is_empty() && mcp_tools.is_empty() {
-            // Use all tools (including MCP tools)
+        // If no tools specified at all, use all available tools
+        if available_tools.is_empty() && mcp_tools.is_empty() && agent_tools.is_empty() {
             definitions = all_tools
                 .into_iter()
                 .map(|t| ToolDefinition {
@@ -266,7 +269,7 @@ impl ReActAgent {
                 })
                 .collect();
         } else {
-            // Filter to specified regular tools
+            // Filter to specified tools
             for tool in &all_tools {
                 // Check if it's in available_tools (regular tools)
                 if available_tools.contains(&tool.name) {
@@ -276,6 +279,18 @@ impl ReActAgent {
                         parameters: tool.input_schema.clone(),
                     });
                     continue;
+                }
+
+                // Check if it's an agent tool
+                if let Some(agent_name) = tool.name.strip_prefix(AGENT_TOOL_PREFIX) {
+                    if agent_tools.contains(&agent_name.to_string()) {
+                        definitions.push(ToolDefinition {
+                            name: tool.name.clone(),
+                            description: tool.description.clone(),
+                            parameters: tool.input_schema.clone(),
+                        });
+                        continue;
+                    }
                 }
 
                 // Check if it matches MCP tool patterns

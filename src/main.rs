@@ -147,18 +147,18 @@ async fn main() -> anyhow::Result<()> {
     let agent_handler: Arc<dyn metis::agents::domain::AgentPort> = Arc::new(agent_handler);
 
     // Wire up agent handler to tool handler so agents can call other agents
-    tool_handler.set_agent_handler(agent_handler.clone()).await;
+    // (tool_handler handles agent tools, MCP tools, workflows, and regular tools)
+    tool_handler.set_agent_handler(agent_handler).await;
 
-    // Create MetisServer with agent support
-    let metis_server = MetisServer::with_agents(
+    // Create MetisServer (tool_handler already includes agent support)
+    let metis_server = MetisServer::new(
         resource_handler,
-        tool_handler,
+        tool_handler.clone(),
         prompt_handler,
-        agent_handler,
     );
 
     // Create application using the library function
-    let app = metis::create_app(metis_server, health_handler, metrics_handler, settings, state_manager, secrets_store).await;
+    let app = metis::create_app(metis_server, health_handler, metrics_handler, settings, state_manager, secrets_store, tool_handler).await;
 
     // Start server
     let addr: SocketAddr = format!("{}:{}", host, port).parse()?;

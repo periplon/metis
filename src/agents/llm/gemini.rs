@@ -85,10 +85,18 @@ impl GeminiProvider {
         })
     }
 
+    /// Check if model requires thought_signature for function calls (Gemini 3 models)
+    fn requires_thought_signature(model: &str) -> bool {
+        model.contains("gemini-3") || model.contains("gemini-2.5")
+    }
+
     /// Build the request body for Gemini API
     fn build_request_body(&self, request: &CompletionRequest) -> Value {
+        let model = request.model.as_ref().unwrap_or(&self.model);
+        let needs_thought_sig = Self::requires_thought_signature(model);
+
         let mut body = json!({
-            "contents": self.convert_messages(&request.messages),
+            "contents": self.convert_messages(&request.messages, needs_thought_sig),
         });
 
         // Generation config
@@ -150,7 +158,7 @@ impl GeminiProvider {
     }
 
     /// Convert internal messages to Gemini format
-    fn convert_messages(&self, messages: &[Message]) -> Vec<Value> {
+    fn convert_messages(&self, messages: &[Message], needs_thought_sig: bool) -> Vec<Value> {
         let mut contents = Vec::new();
         let mut system_instruction: Option<String> = None;
 
@@ -182,14 +190,27 @@ impl GeminiProvider {
                     }
 
                     // Handle tool calls (function calls in Gemini)
+                    // Gemini 3/2.5 models require thought_signature as sibling to functionCall
                     if let Some(tool_calls) = &m.tool_calls {
-                        for tc in tool_calls {
-                            parts.push(json!({
-                                "functionCall": {
-                                    "name": tc.name,
-                                    "args": tc.arguments
-                                }
-                            }));
+                        for (i, tc) in tool_calls.iter().enumerate() {
+                            if needs_thought_sig && i == 0 {
+                                // Only the first function call needs the thought_signature
+                                // Note: thoughtSignature is a sibling to functionCall, not nested inside
+                                parts.push(json!({
+                                    "functionCall": {
+                                        "name": tc.name,
+                                        "args": tc.arguments
+                                    },
+                                    "thoughtSignature": "skip_thought_signature_validator"
+                                }));
+                            } else {
+                                parts.push(json!({
+                                    "functionCall": {
+                                        "name": tc.name,
+                                        "args": tc.arguments
+                                    }
+                                }));
+                            }
                         }
                     }
 
@@ -534,6 +555,9 @@ struct GeminiPart {
 struct GeminiFunctionCall {
     name: String,
     args: Option<Value>,
+    /// Thought signature required by Gemini 3/2.5 models for function calling
+    #[allow(dead_code)]
+    thought_signature: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

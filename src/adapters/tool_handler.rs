@@ -110,6 +110,16 @@ impl BasicToolHandler {
         *self.agent_handler.write().await = Some(handler);
     }
 
+    /// Reinitialize agents (e.g., after API keys change)
+    /// This causes agents to be recreated with updated credentials
+    pub async fn reinitialize_agents(&self) -> Result<()> {
+        if let Some(handler) = self.agent_handler.read().await.as_ref() {
+            handler.reinitialize().await?;
+            tracing::info!("Agents reinitialized successfully");
+        }
+        Ok(())
+    }
+
     /// Get the MCP client manager
     pub fn mcp_client(&self) -> &Arc<McpClientManager> {
         &self.mcp_client
@@ -234,20 +244,30 @@ impl ToolPort for BasicToolHandler {
         // Check if this is an agent tool
         if let Some(agent_name) = name.strip_prefix(AGENT_TOOL_PREFIX) {
             if let Some(agent_handler) = self.agent_handler.read().await.as_ref() {
+                // Get agent info to check schemas
+                let agent_info = agent_handler.get_agent(agent_name).await?;
+                let agent_info = agent_info.ok_or_else(|| anyhow::anyhow!("Agent not found: {}", agent_name))?;
+
                 // Extract session_id if provided
                 let session_id = args
                     .get("session_id")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
+                // Transform input: if custom input_schema, serialize structured input to prompt
+                let agent_input = transform_agent_input(&args, &agent_info.input_schema);
+
                 // Execute the agent
                 let response = agent_handler
-                    .execute(agent_name, args.clone(), session_id)
+                    .execute(agent_name, agent_input, session_id)
                     .await?;
+
+                // Transform output: if output_schema defined, try to match output to schema
+                let output = transform_agent_output(&response.output, &agent_info.output_schema);
 
                 // Return agent response as tool result
                 return Ok(json!({
-                    "output": response.output,
+                    "output": output,
                     "session_id": response.session_id,
                     "iterations": response.iterations,
                     "tool_calls": response.tool_calls.len(),
@@ -288,4 +308,92 @@ impl ToolPort for BasicToolHandler {
             Err(anyhow::anyhow!("Tool not found: {}", name))
         }
     }
+}
+
+/// Transform structured input to agent prompt format
+/// If input has custom schema fields (not just "prompt"), serialize them to a prompt string
+fn transform_agent_input(args: &Value, _input_schema: &Value) -> Value {
+    // Pass through the structured input as-is
+    // The agent's prompt_template (if defined) will be used by render_user_prompt()
+    // to transform structured fields into the actual prompt sent to the LLM
+    args.clone()
+}
+
+/// Transform agent output to match output schema if defined
+/// Returns the output content, attempting to parse as JSON if output_schema expects structured data
+fn transform_agent_output(output: &Value, output_schema: &Option<Value>) -> Value {
+    // Get the content from output
+    let content = output
+        .get("content")
+        .cloned()
+        .unwrap_or_else(|| output.clone());
+
+    // If no output schema, return as-is
+    let schema = match output_schema {
+        Some(s) => s,
+        None => return content,
+    };
+
+    // Check if schema expects an object type
+    let expects_object = schema
+        .get("type")
+        .and_then(|t| t.as_str())
+        .map(|t| t == "object")
+        .unwrap_or(false);
+
+    if !expects_object {
+        return content;
+    }
+
+    // Try to parse content as JSON if it's a string
+    if let Some(content_str) = content.as_str() {
+        // Try to extract JSON from the content (might be wrapped in markdown code blocks)
+        let json_str = extract_json_from_text(content_str);
+
+        if let Ok(parsed) = serde_json::from_str::<Value>(&json_str) {
+            // Successfully parsed as JSON - return structured output
+            return parsed;
+        }
+    }
+
+    // If content is already an object, return it
+    if content.is_object() {
+        return content;
+    }
+
+    // Could not parse as structured output - return raw content
+    content
+}
+
+/// Extract JSON from text that might contain markdown code blocks
+fn extract_json_from_text(text: &str) -> String {
+    let text = text.trim();
+
+    // Try to find JSON in code blocks
+    if let Some(start) = text.find("```json") {
+        if let Some(end) = text[start + 7..].find("```") {
+            return text[start + 7..start + 7 + end].trim().to_string();
+        }
+    }
+
+    // Try generic code block
+    if let Some(start) = text.find("```") {
+        let after_start = start + 3;
+        // Skip language identifier if present
+        let content_start = text[after_start..]
+            .find('\n')
+            .map(|i| after_start + i + 1)
+            .unwrap_or(after_start);
+        if let Some(end) = text[content_start..].find("```") {
+            return text[content_start..content_start + end].trim().to_string();
+        }
+    }
+
+    // Try to find raw JSON (starts with { or [)
+    if text.starts_with('{') || text.starts_with('[') {
+        return text.to_string();
+    }
+
+    // Return original text
+    text.to_string()
 }

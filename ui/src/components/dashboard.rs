@@ -92,12 +92,15 @@ fn ServerInfoCard(overview: ConfigOverview) -> impl IntoView {
 #[component]
 fn StatsGrid(overview: ConfigOverview) -> impl IntoView {
     view! {
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
             <StatCard
                 title="Resources"
                 count=overview.resources_count
                 color="blue"
                 href="/resources"
+                secondary_count=overview.resource_templates_count
+                secondary_label="templates"
+                secondary_href="/resource-templates"
             />
             <StatCard
                 title="Tools"
@@ -116,6 +119,12 @@ fn StatsGrid(overview: ConfigOverview) -> impl IntoView {
                 count=overview.workflows_count
                 color="orange"
                 href="/workflows"
+            />
+            <StatCard
+                title="Agents"
+                count=overview.agents_count
+                color="indigo"
+                href="/agents"
             />
         </div>
 
@@ -142,12 +151,16 @@ fn StatCard(
     count: usize,
     color: &'static str,
     href: &'static str,
+    #[prop(optional)] secondary_count: Option<usize>,
+    #[prop(optional)] secondary_label: Option<&'static str>,
+    #[prop(optional)] secondary_href: Option<&'static str>,
 ) -> impl IntoView {
     let bg_class = match color {
         "blue" => "bg-blue-50 border-blue-200",
         "green" => "bg-green-50 border-green-200",
         "purple" => "bg-purple-50 border-purple-200",
         "orange" => "bg-orange-50 border-orange-200",
+        "indigo" => "bg-indigo-50 border-indigo-200",
         _ => "bg-gray-50 border-gray-200",
     };
 
@@ -156,14 +169,26 @@ fn StatCard(
         "green" => "text-green-600",
         "purple" => "text-purple-600",
         "orange" => "text-orange-600",
+        "indigo" => "text-indigo-600",
         _ => "text-gray-600",
     };
 
     view! {
-        <a href=href class=format!("block p-4 rounded-lg border-2 {} hover:shadow-md transition-shadow", bg_class)>
-            <h3 class="font-bold text-gray-500 text-sm uppercase tracking-wide">{title}</h3>
-            <p class=format!("text-3xl font-bold {}", text_class)>{count}</p>
-        </a>
+        <div class=format!("p-4 rounded-lg border-2 {} hover:shadow-md transition-shadow", bg_class)>
+            <a href=href class="block">
+                <h3 class="font-bold text-gray-500 text-sm uppercase tracking-wide">{title}</h3>
+                <p class=format!("text-3xl font-bold {}", text_class)>{count}</p>
+            </a>
+            {secondary_count.map(|sec_count| {
+                let label = secondary_label.unwrap_or("templates");
+                let link = secondary_href.unwrap_or(href);
+                view! {
+                    <a href=link class="text-sm text-gray-500 hover:text-gray-700 hover:underline">
+                        {format!("{} {}", sec_count, label)}
+                    </a>
+                }
+            })}
+        </div>
     }
 }
 

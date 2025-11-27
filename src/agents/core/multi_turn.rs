@@ -6,7 +6,7 @@ use std::time::Instant;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use super::Agent;
+use super::{render_system_prompt, render_user_prompt, Agent};
 use crate::agents::config::AgentConfig;
 use crate::agents::domain::{
     AgentChunk, AgentResponse, AgentStatus, AgentStream, AgentStreamSender, Message,
@@ -58,18 +58,18 @@ impl MultiTurnAgent {
             }
         };
 
-        // Get user prompt
-        let prompt = input
-            .get("prompt")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        // Render system prompt with input values (Tera templating)
+        let rendered_system_prompt = render_system_prompt(&config.system_prompt, &input);
+
+        // Render user prompt from template or use raw prompt field
+        let prompt = render_user_prompt(config.prompt_template.as_deref(), &input);
 
         // Add user message to session
-        let user_message = Message::user(prompt);
+        let user_message = Message::user(&prompt);
         session.add_message(user_message.clone());
 
         // Build messages with system prompt + history
-        let mut messages = vec![Message::system(&config.system_prompt)];
+        let mut messages = vec![Message::system(&rendered_system_prompt)];
 
         // Apply memory strategy
         let history_messages = apply_strategy(

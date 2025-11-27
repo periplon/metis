@@ -106,6 +106,7 @@ available_tools = [
     "asdf",
 ]
 mcp_tools = []
+agent_tools = []
 max_iterations = 10
 timeout_seconds = 300
 
@@ -134,6 +135,7 @@ available_tools = [
     "asdf",
 ]
 mcp_tools = []
+agent_tools = []
 max_iterations = 10
 timeout_seconds = 300
 
@@ -156,19 +158,60 @@ type = "full"
 name = "test-g3"
 description = "Test"
 agent_type = "single_turn"
-system_prompt = "Be brief"
+system_prompt = "Be brief."
 available_tools = []
 mcp_tools = []
+agent_tools = []
 max_iterations = 10
-timeout_seconds = 60
+timeout_seconds = 300
 
 [agents.input_schema]
+
+[agents.output_schema]
+type = "object"
+
+[agents.output_schema.properties.country]
+type = "string"
+
+[agents.output_schema.properties.president]
+type = "string"
 
 [agents.llm]
 provider = "gemini"
 model = "gemini-3-pro-preview"
 api_key_env = "GEMINI_API_KEY"
-stream = false
+stream = true
+
+[agents.memory]
+backend = "in_memory"
+max_messages = 100
+
+[agents.memory.strategy]
+type = "full"
+
+[[agents]]
+name = "PresidentsOfTheWorld"
+description = "Find me the president of a Country."
+agent_type = "single_turn"
+system_prompt = "You are a knowledge service."
+prompt_template = "Find who is the current president is of {{country}} and the composition and names of his cabinet."
+available_tools = []
+mcp_tools = []
+agent_tools = []
+max_iterations = 10
+timeout_seconds = 300
+
+[agents.input_schema]
+type = "object"
+
+[agents.input_schema.properties.country]
+type = "string"
+
+[agents.llm]
+provider = "openai"
+model = "gpt-5-search-api"
+api_key_env = "OPENAI_API_KEY"
+stream = true
 
 [agents.memory]
 backend = "in_memory"
