@@ -85,7 +85,8 @@ pub fn render_system_prompt(system_prompt: &str, input: &Value) -> String {
 /// Render the user prompt from a template and input values
 ///
 /// If `prompt_template` is provided, renders it with input values as template variables.
-/// Otherwise, extracts the "prompt" field from input.
+/// Otherwise, extracts the "prompt" field from input, or auto-generates a prompt from
+/// structured input fields.
 ///
 /// Example template: "Analyze the topic '{{topic}}' for {{audience}} audience."
 pub fn render_user_prompt(prompt_template: Option<&str>, input: &Value) -> String {
@@ -125,16 +126,49 @@ pub fn render_user_prompt(prompt_template: Option<&str>, input: &Value) -> Strin
                 Ok(rendered) => rendered,
                 Err(e) => {
                     tracing::warn!("Failed to render prompt template: {}", e);
-                    // Fallback to prompt field
-                    input.get("prompt").and_then(|v| v.as_str()).unwrap_or("").to_string()
+                    // Fallback to prompt field or auto-generate
+                    fallback_prompt(input)
                 }
             }
         }
         _ => {
-            // No template, use raw prompt field
-            input.get("prompt").and_then(|v| v.as_str()).unwrap_or("").to_string()
+            // No template - try prompt field first, then auto-generate from structured input
+            fallback_prompt(input)
         }
     }
+}
+
+/// Generate a fallback prompt from input
+/// First tries the "prompt" field, then auto-generates from structured fields
+fn fallback_prompt(input: &Value) -> String {
+    // First try the prompt field
+    if let Some(prompt) = input.get("prompt").and_then(|v| v.as_str()) {
+        if !prompt.is_empty() {
+            return prompt.to_string();
+        }
+    }
+
+    // Auto-generate from structured input fields
+    if let Some(obj) = input.as_object() {
+        let fields: Vec<String> = obj
+            .iter()
+            .filter(|(k, _)| *k != "session_id") // Skip session_id
+            .map(|(k, v)| {
+                let value_str = match v {
+                    Value::String(s) => s.clone(),
+                    Value::Null => String::new(),
+                    _ => serde_json::to_string(v).unwrap_or_default(),
+                };
+                format!("{}: {}", k, value_str)
+            })
+            .collect();
+
+        if !fields.is_empty() {
+            return fields.join("\n");
+        }
+    }
+
+    String::new()
 }
 
 /// Trait for executable agents
