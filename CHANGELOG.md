@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.22.1 - 2025-11-27
+#### Bug Fixes
+- **(api)** update workflow name when editing - (e886b6f) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.22.0 - 2025-11-27
 #### Features
 - **(ui)** expose workflows as tools in agent and workflow editors - (cd9ccea) - Joan Marc Carbo Arnau
