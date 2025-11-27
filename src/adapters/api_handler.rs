@@ -652,10 +652,22 @@ pub async fn get_server_settings(
 ) -> impl IntoResponse {
     let settings = state.settings.read().await;
 
+    // Always return S3 config (with defaults if not configured) so UI can edit it
+    let s3_dto = settings.s3.as_ref().map(S3ConfigDto::from).unwrap_or_else(|| {
+        S3ConfigDto {
+            enabled: false,
+            bucket: None,
+            prefix: None,
+            region: None,
+            endpoint: None,
+            poll_interval_secs: 30,
+        }
+    });
+
     let dto = ServerSettingsDto {
         auth: AuthConfigDto::from(&settings.auth),
         rate_limit: settings.rate_limit.as_ref().map(RateLimitConfigDto::from),
-        s3: settings.s3.as_ref().map(S3ConfigDto::from),
+        s3: Some(s3_dto),
     };
 
     (StatusCode::OK, Json(ApiResponse::success(dto)))
