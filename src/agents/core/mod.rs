@@ -139,32 +139,29 @@ pub fn render_user_prompt(prompt_template: Option<&str>, input: &Value) -> Strin
 }
 
 /// Generate a fallback prompt from input
-/// First tries the "prompt" field, then auto-generates from structured fields
+/// First tries the "prompt" field, then serializes structured input as JSON
 fn fallback_prompt(input: &Value) -> String {
-    // First try the prompt field
+    // First try the prompt field (for backwards compatibility with simple agents)
     if let Some(prompt) = input.get("prompt").and_then(|v| v.as_str()) {
         if !prompt.is_empty() {
             return prompt.to_string();
         }
     }
 
-    // Auto-generate from structured input fields
+    // For structured input (custom schema), serialize as JSON
+    // This allows the LLM to work directly with the schema fields
     if let Some(obj) = input.as_object() {
-        let fields: Vec<String> = obj
+        // Filter out session_id as it's not part of the actual input
+        let filtered: serde_json::Map<String, Value> = obj
             .iter()
-            .filter(|(k, _)| *k != "session_id") // Skip session_id
-            .map(|(k, v)| {
-                let value_str = match v {
-                    Value::String(s) => s.clone(),
-                    Value::Null => String::new(),
-                    _ => serde_json::to_string(v).unwrap_or_default(),
-                };
-                format!("{}: {}", k, value_str)
-            })
+            .filter(|(k, _)| *k != "session_id")
+            .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
 
-        if !fields.is_empty() {
-            return fields.join("\n");
+        if !filtered.is_empty() {
+            // Pretty print JSON for better LLM readability
+            return serde_json::to_string_pretty(&Value::Object(filtered))
+                .unwrap_or_else(|_| input.to_string());
         }
     }
 
