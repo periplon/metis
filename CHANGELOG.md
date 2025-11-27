@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.23.0 - 2025-11-27
+#### Features
+- **(s3)** use credentials from UI secrets store with env var fallback - (542a980) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.22.9 - 2025-11-27
 #### Bug Fixes
 - **(api)** extract detailed S3 service errors for debugging - (0949a0b) - Joan Marc Carbo Arnau
