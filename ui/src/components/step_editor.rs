@@ -365,14 +365,14 @@ fn StepCard(
                     </span>
                     // Step ID and tool preview
                     <div>
-                        <span class="font-medium text-gray-900">{step_id}</span>
+                        <span class="font-medium text-gray-900">{move || step_id()}</span>
                         {move || {
                             let tool = step_tool();
                             if !tool.is_empty() {
                                 view! {
                                     <span class="ml-2 text-sm text-gray-500">
                                         "→ "
-                                        <span class="font-mono text-orange-600">{tool}</span>
+                                        <span class="font-mono text-orange-600">{tool.clone()}</span>
                                     </span>
                                 }.into_any()
                             } else {
