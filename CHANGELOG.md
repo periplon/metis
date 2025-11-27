@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.21.1 - 2025-11-27
+#### Bug Fixes
+- **(ui)** make step ID and tool name reactive in workflow step editor - (95b30a0) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.21.0 - 2025-11-27
 #### Features
 - **(ui)** include agent tools in workflow step tool selector - (db01464) - Joan Marc Carbo Arnau
