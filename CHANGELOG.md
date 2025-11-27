@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.25.0 - 2025-11-27
+#### Features
+- **(ui)** group selected artifacts by category in agent editor - (b1e524d) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.24.0 - 2025-11-27
 #### Features
 - **(ui)** unified artifact selector for agents and workflows - (3fee12d) - Joan Marc Carbo Arnau
