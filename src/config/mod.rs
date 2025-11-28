@@ -434,12 +434,10 @@ impl Settings {
 
         let mut settings: Settings = s.try_deserialize()?;
 
-        // Store the config path (canonicalize if file exists, otherwise use as-is)
-        settings.config_path = Some(
-            config_path
-                .canonicalize()
-                .unwrap_or_else(|_| config_path.clone()),
-        );
+        // Store the config path as-is (don't canonicalize to preserve symlinks)
+        // This is important for Kubernetes ConfigMaps which use symlinks that change
+        // during updates. Canonicalizing would resolve to a path that may become stale.
+        settings.config_path = Some(config_path.clone());
 
         // Apply CLI overrides (CLI > env vars > config file)
         settings.apply_cli_overrides(cli);
@@ -492,12 +490,10 @@ impl Settings {
 
         let mut settings: Settings = s.try_deserialize()?;
 
-        // Store the config path (canonicalize if file exists, otherwise use as-is)
-        settings.config_path = Some(
-            config_path
-                .canonicalize()
-                .unwrap_or_else(|_| config_path),
-        );
+        // Store the config path as-is (don't canonicalize to preserve symlinks)
+        // This is important for Kubernetes ConfigMaps which use symlinks that change
+        // during updates. Canonicalizing would resolve to a path that may become stale.
+        settings.config_path = Some(config_path);
 
         settings.load_external_configs(root)?;
 
