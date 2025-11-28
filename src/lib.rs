@@ -49,7 +49,7 @@ use crate::adapters::health_handler::HealthHandler;
 use crate::adapters::metrics_handler::MetricsHandler;
 use crate::adapters::mock_strategy::MockStrategyHandler;
 use crate::adapters::rmcp_server::MetisServer;
-use crate::adapters::secrets::SharedSecretsStore;
+use crate::adapters::secrets::{SharedSecretsStore, SharedPassphraseStore};
 use crate::adapters::state_manager::StateManager;
 use crate::agents::domain::AgentPort;
 use crate::agents::handler::AgentHandler;
@@ -70,6 +70,7 @@ use tokio::sync::RwLock;
 /// * `settings` - Application settings
 /// * `state_manager` - State manager for stateful mocks
 /// * `secrets_store` - In-memory secrets store for API keys
+/// * `passphrase_store` - In-memory passphrase store for encrypting secrets when saving config
 /// * `tool_handler` - Tool handler for agents (used to reinitialize when API keys change)
 ///
 /// # Returns
@@ -82,6 +83,7 @@ pub async fn create_app(
     settings: Arc<RwLock<crate::config::Settings>>,
     state_manager: Arc<StateManager>,
     secrets_store: SharedSecretsStore,
+    passphrase_store: SharedPassphraseStore,
     tool_handler: Arc<crate::adapters::tool_handler::BasicToolHandler>,
 ) -> Router {
     // Get the broadcaster before moving metis_server into the closure
@@ -174,6 +176,7 @@ pub async fn create_app(
         agent_handler,
         test_agent_handler: test_agent_handler.clone(),
         secrets: secrets_store.clone(),
+        passphrase: passphrase_store,
         broadcaster: Some(broadcaster.clone()),
         tool_handler: Some(tool_handler.clone()),
     };

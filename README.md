@@ -230,16 +230,65 @@ export METIS_S3_REGION=us-east-1
 metis
 ```
 
-**Configuration Precedence:** CLI > Environment Variables > Config File > Defaults
+### Configuration Precedence
+
+Configuration values are merged from multiple sources with increasing precedence (higher sources override lower):
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  5. UI Configuration (Web UI changes)          [HIGHEST]   │
+├─────────────────────────────────────────────────────────────┤
+│  4. S3 Configuration (remote config files)                 │
+├─────────────────────────────────────────────────────────────┤
+│  3. CLI Arguments (--host, --port, etc.)                   │
+├─────────────────────────────────────────────────────────────┤
+│  2. Local Config File (metis.toml)                         │
+├─────────────────────────────────────────────────────────────┤
+│  1. Environment Variables (METIS_*, AWS_*)     [LOWEST]    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**How it works:**
+1. **Environment Variables** - Base configuration, always checked first as defaults
+2. **Local Config File** - `metis.toml` values override environment variables
+3. **CLI Arguments** - Command-line flags override config file values
+4. **S3 Configuration** - Remote config from S3 bucket overrides local config
+5. **UI Configuration** - Changes made via Web UI have highest priority (in-memory)
+
+**Example scenario:**
+```bash
+# Environment variable sets default
+export METIS_PORT=8080
+
+# Config file overrides to 3000
+# metis.toml: port = 3000
+
+# CLI overrides to 4000
+metis --port 4000
+
+# Result: Server runs on port 4000
+```
+
+**Merging behavior:**
+- Configuration sources are merged, not replaced entirely
+- Only explicitly set values override; unset values inherit from lower precedence sources
+- Arrays (tools, resources, agents, etc.) are merged by name/identifier
+- S3 watcher polls for changes and merges updates automatically
 
 ### Secrets Management
 
 Metis provides flexible API key and credential management with multiple options:
 
-#### Priority Order for API Keys
-1. **In-memory secrets** (set via Web UI) - highest priority
-2. **Config file secrets** (plain or AGE-encrypted)
-3. **Environment variables** - fallback
+#### Priority Order for Secrets/API Keys
+
+Secrets follow the same precedence as configuration (lowest to highest):
+
+1. **Environment variables** - `OPENAI_API_KEY`, `AWS_ACCESS_KEY_ID`, etc.
+2. **Config file secrets** - `[secrets]` section (plain or AGE-encrypted)
+3. **S3 config secrets** - Secrets in remote S3 config file
+4. **In-memory secrets** (set via Web UI) - highest priority
+
+When saving config to disk, secrets from the UI are encrypted (if passphrase is set) and stored in the config file.
 
 #### In-Memory Secrets (Web UI)
 

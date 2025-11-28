@@ -25,10 +25,25 @@ pub struct S3Watcher {
     running: Arc<RwLock<bool>>,
 }
 
+/// AWS credentials for S3 access
+#[derive(Debug, Clone)]
+pub struct AwsCredentials {
+    pub access_key_id: String,
+    pub secret_access_key: String,
+}
+
 impl S3Watcher {
     /// Create a new S3Watcher with the given configuration
     pub async fn new(config: &S3Config) -> anyhow::Result<Self> {
-        let sdk_config = Self::build_aws_config(config).await?;
+        Self::new_with_credentials(config, None).await
+    }
+
+    /// Create a new S3Watcher with explicit credentials
+    pub async fn new_with_credentials(
+        config: &S3Config,
+        credentials: Option<AwsCredentials>,
+    ) -> anyhow::Result<Self> {
+        let sdk_config = Self::build_aws_config(config, credentials).await?;
         let client = S3Client::new(&sdk_config);
 
         Ok(Self {
@@ -39,9 +54,10 @@ impl S3Watcher {
         })
     }
 
-    /// Build AWS SDK configuration with optional custom endpoint
+    /// Build AWS SDK configuration with optional custom endpoint and credentials
     async fn build_aws_config(
         config: &S3Config,
+        credentials: Option<AwsCredentials>,
     ) -> anyhow::Result<aws_config::SdkConfig> {
         let mut loader = aws_config::defaults(BehaviorVersion::latest());
 
@@ -49,27 +65,44 @@ impl S3Watcher {
             loader = loader.region(aws_config::Region::new(region.clone()));
         }
 
-        let sdk_config = loader.load().await;
-
-        // If custom endpoint is specified, we need to rebuild with endpoint
+        // If custom endpoint is specified
         if let Some(endpoint) = &config.endpoint {
-            let mut loader = aws_config::defaults(BehaviorVersion::latest());
-
-            if let Some(region) = &config.region {
-                loader = loader.region(aws_config::Region::new(region.clone()));
-            }
-
             loader = loader.endpoint_url(endpoint);
-            return Ok(loader.load().await);
         }
 
-        Ok(sdk_config)
+        // If explicit credentials are provided, use them
+        if let Some(creds) = credentials {
+            let aws_creds = aws_sdk_s3::config::Credentials::new(
+                creds.access_key_id,
+                creds.secret_access_key,
+                None, // session token
+                None, // expiry
+                "metis-s3-watcher",
+            );
+            loader = loader.credentials_provider(aws_creds);
+            debug!("S3 watcher using explicit credentials");
+        } else {
+            debug!("S3 watcher using default credential chain");
+        }
+
+        Ok(loader.load().await)
     }
 
-    /// Start watching for configuration changes
+    /// Start watching for configuration changes (legacy - doesn't fetch S3 content)
     pub async fn start<F>(&self, on_change: F) -> anyhow::Result<()>
     where
         F: Fn() + Send + Sync + 'static,
+    {
+        self.start_with_callback(move |_configs| {
+            on_change();
+        }).await
+    }
+
+    /// Start watching for configuration changes with access to fetched S3 configs
+    /// The callback receives a Vec of (key, content) tuples for all config files in S3
+    pub async fn start_with_callback<F>(&self, on_change: F) -> anyhow::Result<()>
+    where
+        F: Fn(Vec<(String, String)>) + Send + Sync + 'static,
     {
         let bucket = self.config.bucket.as_ref().ok_or_else(|| {
             anyhow::anyhow!("S3 bucket is required")
@@ -95,6 +128,19 @@ impl S3Watcher {
         let running = self.running.clone();
         let on_change = Arc::new(on_change);
 
+        // Do initial fetch on startup
+        match Self::fetch_all_configs(&client, &config).await {
+            Ok(configs) => {
+                if !configs.is_empty() {
+                    info!("Initial S3 config fetch: {} files loaded", configs.len());
+                    on_change(configs);
+                }
+            }
+            Err(e) => {
+                warn!("Failed to fetch initial S3 configs: {}", e);
+            }
+        }
+
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(config.poll_interval_secs));
 
@@ -110,20 +156,113 @@ impl S3Watcher {
                 match Self::check_for_changes(&client, &config, &object_states).await {
                     Ok(changed) => {
                         if changed {
-                            info!("S3 configuration changed, triggering reload");
-                            on_change();
+                            info!("S3 configuration changed, fetching updated configs");
+                            // Fetch the actual configs from S3
+                            match Self::fetch_all_configs(&client, &config).await {
+                                Ok(configs) => {
+                                    info!("Fetched {} config files from S3", configs.len());
+                                    on_change(configs);
+                                }
+                                Err(e) => {
+                                    error!("Failed to fetch S3 configs after change detected: {}", e);
+                                }
+                            }
                         } else {
                             debug!("No S3 configuration changes detected");
                         }
                     }
                     Err(e) => {
-                        error!("Error checking S3 for changes: {}", e);
+                        // Provide more helpful error messages for common S3 issues
+                        let error_str = format!("{:?}", e);
+                        if error_str.contains("credentials") || error_str.contains("Credentials") || error_str.contains("NoCredentialsError") {
+                            warn!(
+                                "S3 watcher: No valid AWS credentials found. \
+                                Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables, \
+                                or configure credentials in the UI Secrets section. Error: {}",
+                                e
+                            );
+                        } else if error_str.contains("NoSuchBucket") {
+                            error!(
+                                "S3 watcher: Bucket '{}' does not exist or you don't have access. Error: {}",
+                                config.bucket.as_deref().unwrap_or("unknown"),
+                                e
+                            );
+                        } else if error_str.contains("AccessDenied") || error_str.contains("Forbidden") {
+                            error!(
+                                "S3 watcher: Access denied to bucket '{}'. Check credentials and bucket permissions. Error: {}",
+                                config.bucket.as_deref().unwrap_or("unknown"),
+                                e
+                            );
+                        } else {
+                            error!(
+                                "S3 watcher error checking for changes: {}. Debug: {:?}",
+                                e, e
+                            );
+                        }
                     }
                 }
             }
         });
 
         Ok(())
+    }
+
+    /// Fetch all config files from S3 (static method for use in spawned task)
+    async fn fetch_all_configs(
+        client: &S3Client,
+        config: &S3Config,
+    ) -> anyhow::Result<Vec<(String, String)>> {
+        let bucket = config.bucket.as_ref().ok_or_else(|| {
+            anyhow::anyhow!("S3 bucket is required")
+        })?;
+        let prefix = config.get_prefix();
+
+        let list_result = client
+            .list_objects_v2()
+            .bucket(bucket)
+            .prefix(&prefix)
+            .send()
+            .await?;
+
+        let mut configs = Vec::new();
+
+        for object in list_result.contents() {
+            let key = match object.key() {
+                Some(k) if Self::is_config_file(k) => k,
+                _ => continue,
+            };
+
+            match client
+                .get_object()
+                .bucket(bucket)
+                .key(key)
+                .send()
+                .await
+            {
+                Ok(result) => {
+                    match result.body.collect().await {
+                        Ok(body) => {
+                            match String::from_utf8(body.into_bytes().to_vec()) {
+                                Ok(content) => {
+                                    configs.push((key.to_string(), content));
+                                }
+                                Err(e) => {
+                                    warn!("S3 object {} contains invalid UTF-8: {}", key, e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Failed to read S3 object body {}: {}", key, e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to fetch S3 object {}: {}", key, e);
+                }
+            }
+        }
+
+        Ok(configs)
     }
 
     /// Stop watching for changes

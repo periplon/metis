@@ -69,6 +69,31 @@ pub struct SecretsConfig {
     pub aws_region: Option<String>,
 }
 
+impl SecretsConfig {
+    /// Merge another SecretsConfig into this one.
+    /// Other's values override self's values if present (Some).
+    pub fn merge(&mut self, other: &SecretsConfig) {
+        if other.openai_api_key.is_some() {
+            self.openai_api_key = other.openai_api_key.clone();
+        }
+        if other.anthropic_api_key.is_some() {
+            self.anthropic_api_key = other.anthropic_api_key.clone();
+        }
+        if other.gemini_api_key.is_some() {
+            self.gemini_api_key = other.gemini_api_key.clone();
+        }
+        if other.aws_access_key_id.is_some() {
+            self.aws_access_key_id = other.aws_access_key_id.clone();
+        }
+        if other.aws_secret_access_key.is_some() {
+            self.aws_secret_access_key = other.aws_secret_access_key.clone();
+        }
+        if other.aws_region.is_some() {
+            self.aws_region = other.aws_region.clone();
+        }
+    }
+}
+
 /// Configuration for connecting to an external MCP server
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct McpServerConfig {
@@ -459,6 +484,98 @@ impl Settings {
         self.load_agents_from_dir(&format!("{}/config/agents", root))?;
         self.load_orchestrations_from_dir(&format!("{}/config/orchestrations", root))?;
         Ok(())
+    }
+
+    /// Merge another Settings into this one.
+    /// The `other` settings take precedence (override) over `self`.
+    /// Arrays are merged by unique identifier (name/uri), with `other` items overriding `self` items.
+    pub fn merge(&mut self, other: Settings) {
+        // Server settings: other overrides self
+        self.server = other.server;
+
+        // Auth: other overrides self
+        self.auth = other.auth;
+
+        // Rate limit: other overrides if present
+        if other.rate_limit.is_some() {
+            self.rate_limit = other.rate_limit;
+        }
+
+        // S3 config: other overrides if present
+        if other.s3.is_some() {
+            self.s3 = other.s3;
+        }
+
+        // Secrets: merge individual fields, other overrides if present
+        self.secrets.merge(&other.secrets);
+
+        // Merge arrays by identifier
+        Self::merge_vec_by_key(&mut self.resources, other.resources, |r| r.uri.clone());
+        Self::merge_vec_by_key(&mut self.resource_templates, other.resource_templates, |r| r.uri_template.clone());
+        Self::merge_vec_by_key(&mut self.tools, other.tools, |t| t.name.clone());
+        Self::merge_vec_by_key(&mut self.prompts, other.prompts, |p| p.name.clone());
+        Self::merge_vec_by_key(&mut self.workflows, other.workflows, |w| w.name.clone());
+        Self::merge_vec_by_key(&mut self.agents, other.agents, |a| a.name.clone());
+        Self::merge_vec_by_key(&mut self.orchestrations, other.orchestrations, |o| o.name.clone());
+        Self::merge_vec_by_key(&mut self.mcp_servers, other.mcp_servers, |m| m.name.clone());
+    }
+
+    /// Merge two vectors by a key function.
+    /// Items from `other` override items in `base` with the same key.
+    /// Items from `other` not in `base` are added.
+    fn merge_vec_by_key<T, K, F>(base: &mut Vec<T>, other: Vec<T>, key_fn: F)
+    where
+        K: Eq + std::hash::Hash,
+        F: Fn(&T) -> K,
+    {
+        use std::collections::HashMap;
+
+        // Build a map of existing items by key
+        let mut key_to_index: HashMap<K, usize> = HashMap::new();
+        for (i, item) in base.iter().enumerate() {
+            key_to_index.insert(key_fn(item), i);
+        }
+
+        // Process other items
+        for item in other {
+            let key = key_fn(&item);
+            if let Some(&idx) = key_to_index.get(&key) {
+                // Override existing item
+                base[idx] = item;
+            } else {
+                // Add new item
+                base.push(item);
+            }
+        }
+    }
+
+    /// Merge S3 configuration files into this Settings.
+    /// Each file in the list is parsed and merged with precedence (later files override earlier).
+    /// Supports TOML, YAML, and JSON formats based on file extension.
+    pub fn merge_s3_configs(&mut self, configs: Vec<(String, String)>) {
+        for (key, content) in configs {
+            // Determine format from key (file path)
+            let settings_result: Result<Settings, String> = if key.ends_with(".toml") {
+                toml::from_str(&content).map_err(|e| format!("TOML parse error in {}: {}", key, e))
+            } else if key.ends_with(".yaml") || key.ends_with(".yml") {
+                serde_yaml::from_str(&content).map_err(|e| format!("YAML parse error in {}: {}", key, e))
+            } else if key.ends_with(".json") {
+                serde_json::from_str(&content).map_err(|e| format!("JSON parse error in {}: {}", key, e))
+            } else {
+                tracing::warn!("Unknown config file format for S3 key: {}", key);
+                continue;
+            };
+
+            match settings_result {
+                Ok(s3_settings) => {
+                    tracing::info!("Merging S3 config from: {}", key);
+                    self.merge(s3_settings);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to parse S3 config {}: {}", key, e);
+                }
+            }
+        }
     }
 
     fn load_tools_from_dir(&mut self, path: &str) -> Result<(), anyhow::Error> {

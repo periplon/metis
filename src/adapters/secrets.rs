@@ -87,6 +87,53 @@ pub fn create_secrets_store() -> SharedSecretsStore {
     Arc::new(SecretsStore::new())
 }
 
+/// In-memory passphrase store for encrypting secrets when saving config
+#[derive(Debug, Default)]
+pub struct PassphraseStore {
+    passphrase: RwLock<Option<String>>,
+}
+
+impl PassphraseStore {
+    /// Create a new empty passphrase store
+    pub fn new() -> Self {
+        Self {
+            passphrase: RwLock::new(None),
+        }
+    }
+
+    /// Set the passphrase
+    pub async fn set(&self, passphrase: impl Into<String>) {
+        let mut p = self.passphrase.write().await;
+        *p = Some(passphrase.into());
+    }
+
+    /// Get the passphrase
+    pub async fn get(&self) -> Option<String> {
+        let p = self.passphrase.read().await;
+        p.clone()
+    }
+
+    /// Clear the passphrase
+    pub async fn clear(&self) {
+        let mut p = self.passphrase.write().await;
+        *p = None;
+    }
+
+    /// Check if passphrase is set
+    pub async fn is_set(&self) -> bool {
+        let p = self.passphrase.read().await;
+        p.is_some()
+    }
+}
+
+/// Thread-safe shared passphrase store
+pub type SharedPassphraseStore = Arc<PassphraseStore>;
+
+/// Create a new shared passphrase store
+pub fn create_passphrase_store() -> SharedPassphraseStore {
+    Arc::new(PassphraseStore::new())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,5 +169,24 @@ mod tests {
         store.set("TEST_KEY", "test_value").await;
         assert!(store.exists("TEST_KEY").await);
         assert!(!store.exists("NONEXISTENT").await);
+    }
+
+    #[tokio::test]
+    async fn test_passphrase_store() {
+        let store = PassphraseStore::new();
+
+        // Initially no passphrase
+        assert!(!store.is_set().await);
+        assert_eq!(store.get().await, None);
+
+        // Set passphrase
+        store.set("my-secret-passphrase").await;
+        assert!(store.is_set().await);
+        assert_eq!(store.get().await, Some("my-secret-passphrase".to_string()));
+
+        // Clear passphrase
+        store.clear().await;
+        assert!(!store.is_set().await);
+        assert_eq!(store.get().await, None);
     }
 }

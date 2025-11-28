@@ -15,7 +15,7 @@ use tokio::sync::RwLock;
 
 use crate::adapters::mock_strategy::MockStrategyHandler;
 use crate::adapters::rmcp_server::SharedNotificationBroadcaster;
-use crate::adapters::secrets::SharedSecretsStore;
+use crate::adapters::secrets::{SharedSecretsStore, SharedPassphraseStore};
 use crate::adapters::state_manager::StateManager;
 use crate::adapters::tool_handler::AGENT_TOOL_PREFIX;
 use crate::adapters::workflow_engine::WorkflowEngine;
@@ -24,9 +24,11 @@ use crate::agents::config::{
     MergeStrategy, OrchestrationConfig, OrchestrationPattern,
 };
 use crate::agents::domain::{AgentPort, AgentType};
+use crate::adapters::encryption;
+use crate::adapters::secrets::keys;
 use crate::config::{
     MockConfig, PromptArgument, PromptConfig, PromptMessage, RateLimitConfig, ResourceConfig,
-    ResourceTemplateConfig, Settings, ToolConfig, WorkflowConfig, WorkflowStep,
+    ResourceTemplateConfig, SecretsConfig, Settings, ToolConfig, WorkflowConfig, WorkflowStep,
 };
 use crate::domain::ToolPort;
 
@@ -41,6 +43,8 @@ pub struct ApiState {
     pub test_agent_handler: Arc<RwLock<Option<Arc<dyn AgentPort>>>>,
     /// Secrets store for API keys (in-memory)
     pub secrets: SharedSecretsStore,
+    /// Passphrase store for encrypting secrets when saving config
+    pub passphrase: SharedPassphraseStore,
     /// MCP notification broadcaster for list change notifications
     pub broadcaster: Option<SharedNotificationBroadcaster>,
     /// Tool handler to reinitialize agents when agents are created/updated/deleted
@@ -1497,10 +1501,29 @@ pub async fn delete_state_key(
 pub async fn save_config_to_disk(
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
-    let settings = state.settings.read().await;
+    // Get mutable copy of settings to add encrypted secrets
+    let settings_guard = state.settings.read().await;
+    let mut settings: Settings = serde_json::from_value(
+        serde_json::to_value(&*settings_guard).unwrap()
+    ).unwrap();
+    drop(settings_guard);
+
+    // Build SecretsConfig from in-memory secrets store, encrypting if passphrase is available
+    let passphrase = state.passphrase.get().await;
+    match build_secrets_config(&state.secrets, passphrase.as_deref()).await {
+        Ok(secrets_config) => {
+            settings.secrets = secrets_config;
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::<()>::error(format!("Failed to build secrets config: {}", e)))
+            );
+        }
+    }
 
     // Serialize settings to TOML
-    let toml_content = match toml::to_string_pretty(&*settings) {
+    let toml_content = match toml::to_string_pretty(&settings) {
         Ok(content) => content,
         Err(e) => {
             return (
@@ -1521,11 +1544,56 @@ pub async fn save_config_to_disk(
     (StatusCode::OK, Json(ApiResponse::<()>::ok()))
 }
 
+/// Build SecretsConfig from the in-memory secrets store
+/// If passphrase is provided, secrets are encrypted; otherwise stored as plain text
+async fn build_secrets_config(
+    secrets: &SharedSecretsStore,
+    passphrase: Option<&str>,
+) -> Result<SecretsConfig, String> {
+    let mut config = SecretsConfig::default();
+
+    // Helper to get and optionally encrypt a secret
+    let encrypt_secret = |value: String, passphrase: Option<&str>| -> Result<String, String> {
+        match passphrase {
+            Some(pass) => encryption::encrypt(&value, pass)
+                .map_err(|e| format!("Encryption failed: {}", e)),
+            None => Ok(value),
+        }
+    };
+
+    // Get each secret from the store and optionally encrypt it
+    if let Some(value) = secrets.get(keys::OPENAI_API_KEY).await {
+        config.openai_api_key = Some(encrypt_secret(value, passphrase)?);
+    }
+    if let Some(value) = secrets.get(keys::ANTHROPIC_API_KEY).await {
+        config.anthropic_api_key = Some(encrypt_secret(value, passphrase)?);
+    }
+    if let Some(value) = secrets.get(keys::GEMINI_API_KEY).await {
+        config.gemini_api_key = Some(encrypt_secret(value, passphrase)?);
+    }
+    if let Some(value) = secrets.get(keys::AWS_ACCESS_KEY_ID).await {
+        config.aws_access_key_id = Some(encrypt_secret(value, passphrase)?);
+    }
+    if let Some(value) = secrets.get(keys::AWS_SECRET_ACCESS_KEY).await {
+        config.aws_secret_access_key = Some(encrypt_secret(value, passphrase)?);
+    }
+    if let Some(value) = secrets.get(keys::AWS_REGION).await {
+        config.aws_region = Some(encrypt_secret(value, passphrase)?);
+    }
+
+    Ok(config)
+}
+
 /// POST /api/config/save-s3 - Save current configuration to S3
 pub async fn save_config_to_s3(
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
-    let settings = state.settings.read().await;
+    // Get mutable copy of settings to add encrypted secrets
+    let settings_guard = state.settings.read().await;
+    let mut settings: Settings = serde_json::from_value(
+        serde_json::to_value(&*settings_guard).unwrap()
+    ).unwrap();
+    drop(settings_guard);
 
     // Check if S3 is configured
     let s3_config = match &settings.s3 {
@@ -1558,8 +1626,22 @@ pub async fn save_config_to_s3(
         }
     };
 
+    // Build SecretsConfig from in-memory secrets store, encrypting if passphrase is available
+    let passphrase = state.passphrase.get().await;
+    match build_secrets_config(&state.secrets, passphrase.as_deref()).await {
+        Ok(secrets_config) => {
+            settings.secrets = secrets_config;
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::<()>::error(format!("Failed to build secrets config: {}", e)))
+            );
+        }
+    }
+
     // Serialize settings to TOML
-    let toml_content = match toml::to_string_pretty(&*settings) {
+    let toml_content = match toml::to_string_pretty(&settings) {
         Ok(content) => content,
         Err(e) => {
             return (
@@ -1568,9 +1650,6 @@ pub async fn save_config_to_s3(
             );
         }
     };
-
-    // Drop the read lock before async S3 operations
-    drop(settings);
 
     // Build S3 client (uses credentials from UI secrets store with env var fallback)
     let sdk_config = match build_s3_config(&s3_config, &state.secrets).await {

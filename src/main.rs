@@ -4,11 +4,11 @@ use metis::adapters::mock_strategy::MockStrategyHandler;
 use metis::adapters::prompt_handler::InMemoryPromptHandler;
 use metis::adapters::resource_handler::InMemoryResourceHandler;
 use metis::adapters::rmcp_server::MetisServer;
-use metis::adapters::secrets::{create_secrets_store, keys};
+use metis::adapters::secrets::{create_passphrase_store, create_secrets_store, keys};
 use metis::adapters::state_manager::StateManager;
 use metis::adapters::tool_handler::BasicToolHandler;
 use metis::cli::{Cli, Commands};
-use metis::config::{watcher::ConfigWatcher, S3Watcher, Settings};
+use metis::config::{watcher::ConfigWatcher, s3_watcher::AwsCredentials, S3Watcher, Settings};
 use std::io::{self, Write};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -39,7 +39,7 @@ async fn main() -> anyhow::Result<()> {
     // Wrap settings in Arc<RwLock> for live reload
     let settings = Arc::new(RwLock::new(settings));
 
-    // Start config watcher
+    // Start config watcher for local file changes
     let settings_for_watcher = settings.clone();
     let paths = vec![
         "metis.toml".to_string(),
@@ -52,39 +52,100 @@ async fn main() -> anyhow::Result<()> {
         match Settings::new() {
             Ok(new_settings) => {
                 let mut w = settings_for_watcher.blocking_write();
-                *w = new_settings;
-                info!("Configuration reloaded successfully");
+                // Merge local config changes (local config is base, gets overridden by S3/UI)
+                w.merge(new_settings);
+                info!("Configuration merged from local files successfully");
             }
             Err(e) => error!("Failed to reload configuration: {}", e),
         }
     })?;
 
-    // Start S3 watcher if enabled
+    // Start S3 watcher if enabled AND credentials are available
     let _s3_watcher = if let Some(ref s3_cfg) = s3_config {
         if s3_cfg.is_active() {
-            info!(
-                "Starting S3 configuration watcher for bucket: {}",
-                s3_cfg.bucket.as_ref().unwrap_or(&"unknown".to_string())
-            );
-            let s3_watcher = S3Watcher::new(s3_cfg).await?;
-            let settings_for_s3 = settings.clone();
-            let cli_clone = cli.clone();
-            s3_watcher
-                .start(move || {
-                    match Settings::new_with_cli(&cli_clone) {
-                        Ok(new_settings) => {
-                            let rt = tokio::runtime::Handle::current();
-                            rt.block_on(async {
-                                let mut w = settings_for_s3.write().await;
-                                *w = new_settings;
-                            });
-                            info!("Configuration reloaded from S3 successfully");
+            // Get AWS credentials from multiple sources with precedence:
+            // 1. Config file (may be encrypted) - higher priority
+            // 2. Environment variables - fallback
+            let passphrase = cli.secret_passphrase.as_deref();
+            let settings_read = settings.read().await;
+
+            // Try to get credentials from config file first (decrypt if needed)
+            let config_credentials: Option<AwsCredentials> = {
+                let access_key = settings_read.secrets.aws_access_key_id.as_ref();
+                let secret_key = settings_read.secrets.aws_secret_access_key.as_ref();
+
+                match (access_key, secret_key) {
+                    (Some(ak), Some(sk)) => {
+                        // Decrypt if encrypted
+                        let decrypted_ak = encryption::decrypt_if_encrypted(ak, passphrase).ok();
+                        let decrypted_sk = encryption::decrypt_if_encrypted(sk, passphrase).ok();
+
+                        match (decrypted_ak, decrypted_sk) {
+                            (Some(ak_val), Some(sk_val)) => Some(AwsCredentials {
+                                access_key_id: ak_val,
+                                secret_access_key: sk_val,
+                            }),
+                            _ => None
                         }
-                        Err(e) => error!("Failed to reload configuration from S3: {}", e),
                     }
-                })
-                .await?;
-            Some(s3_watcher)
+                    _ => None
+                }
+            };
+            drop(settings_read);
+
+            // Fall back to environment variables if no config credentials
+            let env_credentials: Option<AwsCredentials> = {
+                match (std::env::var("AWS_ACCESS_KEY_ID"), std::env::var("AWS_SECRET_ACCESS_KEY")) {
+                    (Ok(ak), Ok(sk)) => Some(AwsCredentials {
+                        access_key_id: ak,
+                        secret_access_key: sk,
+                    }),
+                    _ => None
+                }
+            };
+
+            // Use config credentials first, then env credentials
+            let credentials = config_credentials.or(env_credentials);
+
+            if credentials.is_some() {
+                info!(
+                    "Starting S3 configuration watcher for bucket: {}",
+                    s3_cfg.bucket.as_ref().unwrap_or(&"unknown".to_string())
+                );
+                match S3Watcher::new_with_credentials(s3_cfg, credentials).await {
+                    Ok(s3_watcher) => {
+                        let settings_for_s3 = settings.clone();
+                        if let Err(e) = s3_watcher
+                            .start_with_callback(move |s3_configs| {
+                                let settings_clone = settings_for_s3.clone();
+                                // Spawn a new task to handle the async settings update
+                                tokio::spawn(async move {
+                                    let mut w = settings_clone.write().await;
+                                    // Merge S3 configs into existing settings (S3 takes precedence)
+                                    w.merge_s3_configs(s3_configs);
+                                    info!("Configuration merged from S3 successfully");
+                                });
+                            })
+                            .await
+                        {
+                            warn!("Failed to start S3 watcher: {}", e);
+                        }
+                        Some(s3_watcher)
+                    }
+                    Err(e) => {
+                        warn!("Failed to initialize S3 watcher: {}", e);
+                        None
+                    }
+                }
+            } else {
+                info!(
+                    "S3 is enabled but AWS credentials not found. \
+                    S3 watcher will not start. Provide credentials via: \
+                    environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY), \
+                    config file [secrets] section, or UI Secrets section."
+                );
+                None
+            }
         } else {
             None
         }
@@ -122,6 +183,13 @@ async fn main() -> anyhow::Result<()> {
     let secrets_store = create_secrets_store();
     info!("Initialized in-memory secrets store");
 
+    // Create passphrase store and populate if passphrase is provided
+    let passphrase_store = create_passphrase_store();
+    if let Some(passphrase) = &cli.secret_passphrase {
+        passphrase_store.set(passphrase).await;
+        info!("Passphrase configured for encrypting secrets when saving config");
+    }
+
     // Load secrets from config file into secrets store
     {
         let settings_read = settings.read().await;
@@ -158,7 +226,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // Create application using the library function
-    let app = metis::create_app(metis_server, health_handler, metrics_handler, settings, state_manager, secrets_store, tool_handler).await;
+    let app = metis::create_app(metis_server, health_handler, metrics_handler, settings, state_manager, secrets_store, passphrase_store, tool_handler).await;
 
     // Start server
     let addr: SocketAddr = format!("{}:{}", host, port).parse()?;

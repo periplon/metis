@@ -16,6 +16,9 @@
 .env.local
 .env.*.local
 
+# Config files with secrets
+metis.toml
+
 # Documentation builds
 /docs/_build/
 /docs/.doctrees/
