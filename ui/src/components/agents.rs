@@ -617,355 +617,6 @@ fn provider_requires_api_key(provider: &AgentLlmProvider) -> bool {
     !matches!(provider, AgentLlmProvider::Ollama)
 }
 
-// ============================================================================
-// Searchable Multi-Select Component
-// ============================================================================
-
-/// Item that can be selected in SearchableMultiSelect
-#[derive(Clone, Debug)]
-pub struct SelectableItem {
-    pub id: String,
-    pub name: String,
-    pub description: String,
-    pub category: Option<String>,
-}
-
-/// Color theme for the multi-select component
-#[derive(Clone, Copy, PartialEq, Default)]
-pub enum SelectTheme {
-    #[default]
-    Blue,    // Regular tools
-    Orange,  // Workflows
-    Purple,  // MCP tools
-    Indigo,  // Agents
-}
-
-impl SelectTheme {
-    fn border_class(&self) -> &'static str {
-        match self {
-            Self::Blue => "border-blue-300 focus:border-blue-500 focus:ring-blue-500",
-            Self::Orange => "border-orange-300 focus:border-orange-500 focus:ring-orange-500",
-            Self::Purple => "border-purple-300 focus:border-purple-500 focus:ring-purple-500",
-            Self::Indigo => "border-indigo-300 focus:border-indigo-500 focus:ring-indigo-500",
-        }
-    }
-
-    fn chip_class(&self) -> &'static str {
-        match self {
-            Self::Blue => "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
-            Self::Orange => "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200",
-            Self::Purple => "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
-            Self::Indigo => "bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200",
-        }
-    }
-
-    fn chip_remove_class(&self) -> &'static str {
-        match self {
-            Self::Blue => "text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200",
-            Self::Orange => "text-orange-600 hover:text-orange-800 dark:text-orange-400 dark:hover:text-orange-200",
-            Self::Purple => "text-purple-600 hover:text-purple-800 dark:text-purple-400 dark:hover:text-purple-200",
-            Self::Indigo => "text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-200",
-        }
-    }
-
-    fn dropdown_item_hover(&self) -> &'static str {
-        match self {
-            Self::Blue => "hover:bg-blue-50 dark:hover:bg-blue-900/30",
-            Self::Orange => "hover:bg-orange-50 dark:hover:bg-orange-900/30",
-            Self::Purple => "hover:bg-purple-50 dark:hover:bg-purple-900/30",
-            Self::Indigo => "hover:bg-indigo-50 dark:hover:bg-indigo-900/30",
-        }
-    }
-
-    fn accent_text(&self) -> &'static str {
-        match self {
-            Self::Blue => "text-blue-600 dark:text-blue-400",
-            Self::Orange => "text-orange-600 dark:text-orange-400",
-            Self::Purple => "text-purple-600 dark:text-purple-400",
-            Self::Indigo => "text-indigo-600 dark:text-indigo-400",
-        }
-    }
-}
-
-/// Searchable multi-select component with chips
-/// Scales well for thousands of items by only showing filtered results
-#[component]
-fn SearchableMultiSelect(
-    /// All available items to select from
-    items: Signal<Vec<SelectableItem>>,
-    /// Currently selected item IDs
-    selected: Signal<Vec<String>>,
-    /// Callback when selection changes
-    on_change: Callback<Vec<String>>,
-    /// Placeholder text for search input
-    #[prop(default = "Search...")]
-    placeholder: &'static str,
-    /// Color theme
-    #[prop(default = SelectTheme::Blue)]
-    theme: SelectTheme,
-    /// Label for the component
-    #[prop(optional)]
-    label: Option<&'static str>,
-    /// Help text below the component
-    #[prop(optional)]
-    help_text: Option<&'static str>,
-    /// Maximum items to show in dropdown
-    #[prop(default = 10)]
-    max_results: usize,
-) -> impl IntoView {
-    let (search_query, set_search_query) = signal(String::new());
-    let (show_dropdown, set_show_dropdown) = signal(false);
-    let (focused_index, set_focused_index) = signal(Option::<usize>::None);
-
-    // Filter items based on search query
-    let filtered_items = move || {
-        let query = search_query.get().to_lowercase();
-        let all_items = items.get();
-        let selected_ids = selected.get();
-
-        if query.is_empty() {
-            // Show unselected items when no search
-            all_items
-                .into_iter()
-                .filter(|item| !selected_ids.contains(&item.id))
-                .take(max_results)
-                .collect::<Vec<_>>()
-        } else {
-            // Filter by search query
-            all_items
-                .into_iter()
-                .filter(|item| {
-                    !selected_ids.contains(&item.id) &&
-                    (item.name.to_lowercase().contains(&query) ||
-                     item.description.to_lowercase().contains(&query) ||
-                     item.category.as_ref().map(|c| c.to_lowercase().contains(&query)).unwrap_or(false))
-                })
-                .take(max_results)
-                .collect::<Vec<_>>()
-        }
-    };
-
-    // Get selected items for chip display
-    let selected_items = move || {
-        let all_items = items.get();
-        let selected_ids = selected.get();
-        all_items
-            .into_iter()
-            .filter(|item| selected_ids.contains(&item.id))
-            .collect::<Vec<_>>()
-    };
-
-    // Add item to selection
-    let add_item = move |item_id: String| {
-        let mut current = selected.get();
-        if !current.contains(&item_id) {
-            current.push(item_id);
-            on_change.run(current);
-        }
-        set_search_query.set(String::new());
-        set_focused_index.set(None);
-    };
-
-    // Remove item from selection
-    let remove_item = move |item_id: String| {
-        let mut current = selected.get();
-        current.retain(|id| id != &item_id);
-        on_change.run(current);
-    };
-
-    // Handle keyboard navigation
-    let on_keydown = move |ev: web_sys::KeyboardEvent| {
-        let key = ev.key();
-        let filtered = filtered_items();
-        let filtered_len = filtered.len();
-
-        match key.as_str() {
-            "ArrowDown" => {
-                ev.prevent_default();
-                set_show_dropdown.set(true);
-                set_focused_index.update(|idx| {
-                    *idx = Some(match idx {
-                        Some(i) if *i < filtered_len.saturating_sub(1) => *i + 1,
-                        Some(_) => 0,
-                        None => 0,
-                    });
-                });
-            }
-            "ArrowUp" => {
-                ev.prevent_default();
-                set_focused_index.update(|idx| {
-                    *idx = Some(match idx {
-                        Some(i) if *i > 0 => *i - 1,
-                        Some(_) => filtered_len.saturating_sub(1),
-                        None => filtered_len.saturating_sub(1),
-                    });
-                });
-            }
-            "Enter" => {
-                ev.prevent_default();
-                if let Some(idx) = focused_index.get() {
-                    if let Some(item) = filtered.get(idx) {
-                        add_item(item.id.clone());
-                    }
-                }
-            }
-            "Escape" => {
-                set_show_dropdown.set(false);
-                set_focused_index.set(None);
-            }
-            _ => {}
-        }
-    };
-
-    let total_count = move || items.get().len();
-    let selected_count = move || selected.get().len();
-
-    view! {
-        <div class="space-y-2">
-            // Label
-            {label.map(|l| view! {
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                    {l}
-                    <span class="ml-2 text-gray-400 font-normal">
-                        "("{selected_count}" / "{total_count}" selected)"
-                    </span>
-                </label>
-            })}
-
-            // Selected items as chips
-            {move || {
-                let items = selected_items();
-                if items.is_empty() {
-                    view! { <span></span> }.into_any()
-                } else {
-                    view! {
-                        <div class="flex flex-wrap gap-1.5 mb-2">
-                            {items.into_iter().map(|item| {
-                                let item_id = item.id.clone();
-                                let item_id_for_remove = item_id.clone();
-                                view! {
-                                    <span class=format!("inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium {}", theme.chip_class())>
-                                        <span class="truncate max-w-[150px]">{item.name}</span>
-                                        {item.category.map(|cat| view! {
-                                            <span class="text-[10px] opacity-70">"("{cat}")"</span>
-                                        })}
-                                        <button
-                                            type="button"
-                                            class=format!("ml-0.5 -mr-1 {}", theme.chip_remove_class())
-                                            on:click=move |_| remove_item(item_id_for_remove.clone())
-                                        >
-                                            <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                                                <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
-                                            </svg>
-                                        </button>
-                                    </span>
-                                }
-                            }).collect::<Vec<_>>()}
-                        </div>
-                    }.into_any()
-                }
-            }}
-
-            // Search input with dropdown
-            <div class="relative">
-                <input
-                    type="text"
-                    class=format!("w-full px-3 py-2 text-sm border rounded-md shadow-sm dark:bg-gray-700 dark:text-white {}", theme.border_class())
-                    placeholder=placeholder
-                    prop:value=move || search_query.get()
-                    on:input=move |ev| {
-                        set_search_query.set(event_target_value(&ev));
-                        set_show_dropdown.set(true);
-                        set_focused_index.set(None);
-                    }
-                    on:focus=move |_| set_show_dropdown.set(true)
-                    on:blur=move |_| {
-                        // Delay hiding to allow click on dropdown items
-                        set_timeout(move || set_show_dropdown.set(false), std::time::Duration::from_millis(200));
-                    }
-                    on:keydown=on_keydown
-                />
-
-                // Dropdown with filtered results
-                {move || {
-                    if !show_dropdown.get() {
-                        return view! { <span></span> }.into_any();
-                    }
-
-                    let filtered = filtered_items();
-                    if filtered.is_empty() {
-                        let query = search_query.get();
-                        return view! {
-                            <div class="absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg">
-                                <div class="px-3 py-2 text-sm text-gray-500 dark:text-gray-400">
-                                    {if query.is_empty() {
-                                        "All items selected or no items available"
-                                    } else {
-                                        "No matching items found"
-                                    }}
-                                </div>
-                            </div>
-                        }.into_any();
-                    }
-
-                    let focused_idx = focused_index.get();
-                    view! {
-                        <div class="absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg max-h-60 overflow-y-auto">
-                            {filtered.into_iter().enumerate().map(|(idx, item)| {
-                                let item_id = item.id.clone();
-                                let item_id_for_click = item_id.clone();
-                                let is_focused = focused_idx == Some(idx);
-                                let bg_class = if is_focused {
-                                    match theme {
-                                        SelectTheme::Blue => "bg-blue-50 dark:bg-blue-900/30",
-                                        SelectTheme::Orange => "bg-orange-50 dark:bg-orange-900/30",
-                                        SelectTheme::Purple => "bg-purple-50 dark:bg-purple-900/30",
-                                        SelectTheme::Indigo => "bg-indigo-50 dark:bg-indigo-900/30",
-                                    }
-                                } else {
-                                    ""
-                                };
-                                view! {
-                                    <div
-                                        class=format!("px-3 py-2 cursor-pointer {} {}", theme.dropdown_item_hover(), bg_class)
-                                        on:mousedown=move |_| add_item(item_id_for_click.clone())
-                                    >
-                                        <div class="flex items-center justify-between">
-                                            <span class="text-sm font-medium text-gray-900 dark:text-white truncate">{item.name}</span>
-                                            {item.category.map(|cat| view! {
-                                                <span class=format!("ml-2 text-xs {}", theme.accent_text())>{cat}</span>
-                                            })}
-                                        </div>
-                                        <div class="text-xs text-gray-500 dark:text-gray-400 truncate">{item.description}</div>
-                                    </div>
-                                }
-                            }).collect::<Vec<_>>()}
-                            {move || {
-                                let total = items.get().len();
-                                let shown = filtered_items().len();
-                                let remaining = total.saturating_sub(selected.get().len()).saturating_sub(shown);
-                                if remaining > 0 {
-                                    view! {
-                                        <div class="px-3 py-1.5 text-xs text-gray-400 dark:text-gray-500 border-t border-gray-100 dark:border-gray-700">
-                                            {format!("... and {} more (type to search)", remaining)}
-                                        </div>
-                                    }.into_any()
-                                } else {
-                                    view! { <span></span> }.into_any()
-                                }
-                            }}
-                        </div>
-                    }.into_any()
-                }}
-            </div>
-
-            // Help text
-            {help_text.map(|h| view! {
-                <p class="text-xs text-gray-500 dark:text-gray-400">{h}</p>
-            })}
-        </div>
-    }
-}
 
 #[derive(Clone, Copy, PartialEq)]
 enum ViewMode {
@@ -2001,6 +1652,21 @@ pub fn AgentForm() -> impl IntoView {
         set_saving.set(true);
         set_error.set(None);
 
+        // Validate name
+        let name_val = name.get();
+        let name_trimmed = name_val.trim();
+        if name_trimmed.is_empty() {
+            set_error.set(Some("Name cannot be blank".to_string()));
+            set_saving.set(false);
+            return;
+        }
+        // Validate name format (alphanumeric, underscore, hyphen only)
+        if !name_trimmed.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+            set_error.set(Some("Name can only contain letters, numbers, underscores, and hyphens".to_string()));
+            set_saving.set(false);
+            return;
+        }
+
         // Build schemas from properties
         let input_props = input_schema_properties.get();
         let input_schema = if input_props.is_empty() {
@@ -2027,15 +1693,15 @@ pub fn AgentForm() -> impl IntoView {
         let tool_names: std::collections::HashSet<_> = tools_list.iter().map(|t| t.name.clone()).collect();
         let workflow_ids: std::collections::HashSet<_> = workflows_list.iter().map(|w| format!("workflow_{}", w.name)).collect();
         let agent_names: std::collections::HashSet<_> = agents_list.iter().map(|a| a.name.clone()).collect();
-        let resource_uris: std::collections::HashSet<_> = resources_list.iter().map(|r| r.uri.clone()).collect();
-        let template_uris: std::collections::HashSet<_> = templates_list.iter().map(|t| t.uri_template.clone()).collect();
+        let resource_names: std::collections::HashSet<_> = resources_list.iter().map(|r| r.name.clone()).collect();
+        let template_names: std::collections::HashSet<_> = templates_list.iter().map(|t| t.name.clone()).collect();
 
         let available_tools: Vec<String> = artifacts.iter()
             .filter(|id| tool_names.contains(*id) || workflow_ids.contains(*id))
             .cloned()
             .collect();
         let mcp_tools: Vec<String> = artifacts.iter()
-            .filter(|id| id.contains(':') && !resource_uris.contains(*id) && !template_uris.contains(*id))
+            .filter(|id| id.contains(':') && !resource_names.contains(*id) && !template_names.contains(*id))
             .cloned()
             .collect();
         let agent_tools: Vec<String> = artifacts.iter()
@@ -2043,11 +1709,11 @@ pub fn AgentForm() -> impl IntoView {
             .cloned()
             .collect();
         let available_resources: Vec<String> = artifacts.iter()
-            .filter(|id| resource_uris.contains(*id))
+            .filter(|id| resource_names.contains(*id))
             .cloned()
             .collect();
         let available_resource_templates: Vec<String> = artifacts.iter()
-            .filter(|id| template_uris.contains(*id))
+            .filter(|id| template_names.contains(*id))
             .cloned()
             .collect();
 
@@ -2683,19 +2349,14 @@ pub fn AgentEditForm() -> impl IntoView {
     let (models_loading, set_models_loading) = signal(false);
     let (models_error, set_models_error) = signal(Option::<String>::None);
 
-    // Tools configuration (for ReAct agents)
+    // Artifacts configuration (tools, agents, workflows, resources for ReAct agents)
     let (all_tools, set_all_tools) = signal(Vec::<crate::types::Tool>::new());
-    let (selected_tools, set_selected_tools) = signal(Vec::<String>::new());
-    let (selected_mcp_tools, set_selected_mcp_tools) = signal(Vec::<String>::new());
-    let (selected_agent_tools, set_selected_agent_tools) = signal(Vec::<String>::new());
-    let (selected_workflow_tools, set_selected_workflow_tools) = signal(Vec::<String>::new());
-    let (tools_loading, set_tools_loading) = signal(false);
-
-    // Available agents (for agent-as-tool selection)
     let (all_agents, set_all_agents) = signal(Vec::<Agent>::new());
-
-    // Available workflows (for workflow-as-tool selection)
     let (all_workflows, set_all_workflows) = signal(Vec::<crate::types::Workflow>::new());
+    let (all_resources, set_all_resources) = signal(Vec::<crate::types::Resource>::new());
+    let (all_resource_templates, set_all_resource_templates) = signal(Vec::<crate::types::ResourceTemplate>::new());
+    let (selected_artifacts, set_selected_artifacts) = signal(Vec::<String>::new());
+    let (artifacts_loading, set_artifacts_loading) = signal(false);
 
     // Schema configuration - using hierarchical editor like tools
     let (input_schema_properties, set_input_schema_properties) = signal(Vec::<SchemaProperty>::new());
@@ -2726,37 +2387,27 @@ pub fn AgentEditForm() -> impl IntoView {
         });
     };
 
-    // Fetch available tools on mount
+    // Fetch all available artifacts on mount
     Effect::new(move |_| {
-        set_tools_loading.set(true);
+        set_artifacts_loading.set(true);
         wasm_bindgen_futures::spawn_local(async move {
-            match api::list_tools().await {
-                Ok(tools) => {
-                    set_all_tools.set(tools);
-                    set_tools_loading.set(false);
-                }
-                Err(_) => {
-                    set_tools_loading.set(false);
-                }
+            // Fetch all artifacts sequentially
+            if let Ok(tools) = api::list_tools().await {
+                set_all_tools.set(tools);
             }
-        });
-    });
-
-    // Fetch available agents on mount (for agent-as-tool selection)
-    Effect::new(move |_| {
-        wasm_bindgen_futures::spawn_local(async move {
             if let Ok(agents) = api::list_agents().await {
                 set_all_agents.set(agents);
             }
-        });
-    });
-
-    // Fetch available workflows on mount (for workflow-as-tool selection)
-    Effect::new(move |_| {
-        wasm_bindgen_futures::spawn_local(async move {
             if let Ok(workflows) = api::list_workflows().await {
                 set_all_workflows.set(workflows);
             }
+            if let Ok(resources) = api::list_resources().await {
+                set_all_resources.set(resources);
+            }
+            if let Ok(templates) = api::list_resource_templates().await {
+                set_all_resource_templates.set(templates);
+            }
+            set_artifacts_loading.set(false);
         });
     });
 
@@ -2784,9 +2435,14 @@ pub fn AgentEditForm() -> impl IntoView {
                     set_base_url.set(loaded_base_url.clone());
                     set_system_prompt.set(agent.system_prompt.clone());
                     set_prompt_template.set(agent.prompt_template.clone().unwrap_or_default());
-                    set_selected_tools.set(agent.available_tools.clone());
-                    set_selected_mcp_tools.set(agent.mcp_tools.clone());
-                    set_selected_agent_tools.set(agent.agent_tools.clone());
+                    // Combine all artifacts into unified selection
+                    let mut artifacts = Vec::new();
+                    artifacts.extend(agent.available_tools.clone());
+                    artifacts.extend(agent.mcp_tools.clone());
+                    artifacts.extend(agent.agent_tools.clone());
+                    artifacts.extend(agent.available_resources.clone());
+                    artifacts.extend(agent.available_resource_templates.clone());
+                    set_selected_artifacts.set(artifacts);
                     // Load schema fields using schema_to_properties
                     set_input_schema_properties.set(schema_to_properties(&agent.input_schema));
                     if let Some(output_schema) = &agent.output_schema {
@@ -2812,6 +2468,20 @@ pub fn AgentEditForm() -> impl IntoView {
         set_error.set(None);
         let orig_name = original_name.get();
 
+        // Validate name (in case it was somehow changed)
+        let name_val = name.get();
+        let name_trimmed = name_val.trim();
+        if name_trimmed.is_empty() {
+            set_error.set(Some("Name cannot be blank".to_string()));
+            set_saving.set(false);
+            return;
+        }
+        if !name_trimmed.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+            set_error.set(Some("Name can only contain letters, numbers, underscores, and hyphens".to_string()));
+            set_saving.set(false);
+            return;
+        }
+
         // Build schemas from properties
         let input_props = input_schema_properties.get();
         let input_schema = if input_props.is_empty() {
@@ -2826,6 +2496,41 @@ pub fn AgentEditForm() -> impl IntoView {
         } else {
             Some(properties_to_schema(&output_props))
         };
+
+        // Extract artifacts by category
+        let artifacts = selected_artifacts.get();
+        let tools_list = all_tools.get();
+        let workflows_list = all_workflows.get();
+        let agents_list = all_agents.get();
+        let resources_list = all_resources.get();
+        let templates_list = all_resource_templates.get();
+
+        let tool_names: std::collections::HashSet<_> = tools_list.iter().map(|t| t.name.clone()).collect();
+        let workflow_ids: std::collections::HashSet<_> = workflows_list.iter().map(|w| format!("workflow_{}", w.name)).collect();
+        let agent_names: std::collections::HashSet<_> = agents_list.iter().map(|a| a.name.clone()).collect();
+        let resource_names: std::collections::HashSet<_> = resources_list.iter().map(|r| r.name.clone()).collect();
+        let template_names: std::collections::HashSet<_> = templates_list.iter().map(|t| t.name.clone()).collect();
+
+        let available_tools: Vec<String> = artifacts.iter()
+            .filter(|id| tool_names.contains(*id) || workflow_ids.contains(*id))
+            .cloned()
+            .collect();
+        let mcp_tools: Vec<String> = artifacts.iter()
+            .filter(|id| id.contains(':') && !resource_names.contains(*id) && !template_names.contains(*id))
+            .cloned()
+            .collect();
+        let agent_tools: Vec<String> = artifacts.iter()
+            .filter(|id| agent_names.contains(*id))
+            .cloned()
+            .collect();
+        let available_resources: Vec<String> = artifacts.iter()
+            .filter(|id| resource_names.contains(*id))
+            .cloned()
+            .collect();
+        let available_resource_templates: Vec<String> = artifacts.iter()
+            .filter(|id| template_names.contains(*id))
+            .cloned()
+            .collect();
 
         let agent = Agent {
             name: name.get(),
@@ -2842,16 +2547,11 @@ pub fn AgentEditForm() -> impl IntoView {
             },
             system_prompt: system_prompt.get(),
             prompt_template: if prompt_template.get().is_empty() { None } else { Some(prompt_template.get()) },
-            available_tools: {
-                let mut tools = selected_tools.get();
-                // Add workflow tools to available_tools
-                tools.extend(selected_workflow_tools.get());
-                tools
-            },
-            mcp_tools: selected_mcp_tools.get(),
-            agent_tools: selected_agent_tools.get(),
-            available_resources: Vec::new(),
-            available_resource_templates: Vec::new(),
+            available_tools,
+            mcp_tools,
+            agent_tools,
+            available_resources,
+            available_resource_templates,
             memory: MemoryConfig {
                 backend: MemoryBackend::InMemory,
                 strategy: MemoryStrategy::Full,
@@ -2995,126 +2695,90 @@ pub fn AgentEditForm() -> impl IntoView {
                             />
                         </div>
 
-                        // Tools Configuration (for ReAct agents)
+                        // Artifacts Configuration (for ReAct agents)
                         {move || {
                             if agent_type.get() == AgentType::ReAct {
-                                // Convert tools to SelectableItems
-                                let regular_tools_items = Signal::derive(move || {
-                                    all_tools.get()
-                                        .into_iter()
-                                        .filter(|t| !t.name.starts_with("mcp__"))
-                                        .map(|t| SelectableItem {
-                                            id: t.name.clone(),
-                                            name: t.name.clone(),
-                                            description: t.description.clone(),
-                                            category: None,
-                                        })
-                                        .collect::<Vec<_>>()
-                                });
-
-                                let mcp_tools_items = Signal::derive(move || {
-                                    all_tools.get()
-                                        .into_iter()
-                                        .filter(|t| t.name.starts_with("mcp__"))
-                                        .map(|t| {
-                                            // Extract server name from mcp__{server}_{tool}
-                                            let display_name = t.name.strip_prefix("mcp__")
-                                                .map(|s| s.replacen('_', ":", 1))
-                                                .unwrap_or_else(|| t.name.clone());
-                                            let server = t.name.strip_prefix("mcp__")
-                                                .and_then(|s| s.split('_').next())
-                                                .map(String::from);
-                                            SelectableItem {
-                                                id: t.name.clone(),
-                                                name: display_name,
-                                                description: t.description.clone(),
-                                                category: server,
-                                            }
-                                        })
-                                        .collect::<Vec<_>>()
-                                });
-
-                                let agent_tools_items = Signal::derive(move || {
+                                // Build unified artifacts list
+                                let all_artifacts = Signal::derive(move || {
                                     let current_name = original_name.get();
-                                    all_agents.get()
-                                        .into_iter()
-                                        .filter(|a| a.name != current_name)
-                                        .map(|a| SelectableItem {
-                                            id: a.name.clone(),
-                                            name: a.name.clone(),
-                                            description: a.description.clone(),
-                                            category: Some(format!("{:?}", a.agent_type)),
-                                        })
-                                        .collect::<Vec<_>>()
-                                });
+                                    let mut items = Vec::new();
 
-                                let workflow_tools_items = Signal::derive(move || {
-                                    all_workflows.get()
-                                        .into_iter()
-                                        .map(|w| SelectableItem {
-                                            id: w.name.clone(),
-                                            name: w.name.clone(),
-                                            description: w.description.clone(),
-                                            category: Some(format!("{} steps", w.steps.len())),
-                                        })
-                                        .collect::<Vec<_>>()
+                                    // Add regular tools
+                                    for tool in all_tools.get().into_iter().filter(|t| !t.name.starts_with("mcp__")) {
+                                        items.push(ArtifactItem::tool(tool.name, tool.description));
+                                    }
+
+                                    // Add MCP tools
+                                    for tool in all_tools.get().into_iter().filter(|t| t.name.starts_with("mcp__")) {
+                                        let parts: Vec<&str> = tool.name.strip_prefix("mcp__")
+                                            .unwrap_or(&tool.name)
+                                            .splitn(2, '_')
+                                            .collect();
+                                        if parts.len() == 2 {
+                                            items.push(ArtifactItem::mcp_tool(parts[0], parts[1], tool.description));
+                                        }
+                                    }
+
+                                    // Add workflows
+                                    for workflow in all_workflows.get() {
+                                        items.push(ArtifactItem::workflow(workflow.name, workflow.description));
+                                    }
+
+                                    // Add other agents (not self)
+                                    for agent in all_agents.get().into_iter().filter(|a| a.name != current_name) {
+                                        items.push(ArtifactItem::agent(agent.name, agent.description));
+                                    }
+
+                                    // Add resources
+                                    for resource in all_resources.get() {
+                                        items.push(ArtifactItem::resource(
+                                            resource.uri,
+                                            resource.name,
+                                            resource.description.unwrap_or_default()
+                                        ));
+                                    }
+
+                                    // Add resource templates
+                                    for template in all_resource_templates.get() {
+                                        items.push(ArtifactItem::resource_template(
+                                            template.uri_template,
+                                            template.name,
+                                            template.description.unwrap_or_default()
+                                        ));
+                                    }
+
+                                    items
                                 });
 
                                 view! {
                                     <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
-                                        <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">"Tools Configuration"</h3>
+                                        <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">"Artifacts Configuration"</h3>
+                                        <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                                            "Select tools, workflows, agents, and resources the agent can use"
+                                        </p>
 
-                                        {if tools_loading.get() {
+                                        {if artifacts_loading.get() {
                                             view! {
-                                                <div class="text-sm text-gray-500 dark:text-gray-400">"Loading tools..."</div>
+                                                <div class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+                                                    <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                                    </svg>
+                                                    "Loading artifacts..."
+                                                </div>
                                             }.into_any()
                                         } else {
                                             view! {
-                                                <div class="space-y-4">
-                                                    // Regular Tools
-                                                    <SearchableMultiSelect
-                                                        items=regular_tools_items
-                                                        selected=selected_tools.into()
-                                                        on_change=Callback::new(move |new_selected| set_selected_tools.set(new_selected))
-                                                        placeholder="Search tools..."
-                                                        theme=SelectTheme::Blue
-                                                        label="Available Tools"
-                                                        help_text="Select tools the agent can use"
-                                                    />
-
-                                                    // Workflow Tools
-                                                    <SearchableMultiSelect
-                                                        items=workflow_tools_items
-                                                        selected=selected_workflow_tools.into()
-                                                        on_change=Callback::new(move |new_selected| set_selected_workflow_tools.set(new_selected))
-                                                        placeholder="Search workflows..."
-                                                        theme=SelectTheme::Orange
-                                                        label="Workflow Tools"
-                                                        help_text="Workflows that can be called as tools"
-                                                    />
-
-                                                    // MCP Tools
-                                                    <SearchableMultiSelect
-                                                        items=mcp_tools_items
-                                                        selected=selected_mcp_tools.into()
-                                                        on_change=Callback::new(move |new_selected| set_selected_mcp_tools.set(new_selected))
-                                                        placeholder="Search MCP tools..."
-                                                        theme=SelectTheme::Purple
-                                                        label="MCP Tools"
-                                                        help_text="Tools from external MCP servers"
-                                                    />
-
-                                                    // Agent Tools
-                                                    <SearchableMultiSelect
-                                                        items=agent_tools_items
-                                                        selected=selected_agent_tools.into()
-                                                        on_change=Callback::new(move |new_selected| set_selected_agent_tools.set(new_selected))
-                                                        placeholder="Search agents..."
-                                                        theme=SelectTheme::Indigo
-                                                        label="Agent Tools"
-                                                        help_text="Other agents that can be called as tools"
-                                                    />
-                                                </div>
+                                                <ArtifactSelector
+                                                    items=all_artifacts
+                                                    selected=selected_artifacts.into()
+                                                    on_change=Callback::new(move |new_selected| set_selected_artifacts.set(new_selected))
+                                                    mode=SelectionMode::Multi
+                                                    placeholder="Search tools, workflows, agents, resources..."
+                                                    label="Available Artifacts"
+                                                    help_text="Search and select from tools, workflows, agents, resources, and MCP tools"
+                                                    group_by_category=true
+                                                />
                                             }.into_any()
                                         }}
                                     </div>

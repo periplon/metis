@@ -149,20 +149,22 @@ impl ArtifactItem {
         }
     }
 
-    pub fn resource(uri: impl Into<String>, name: impl Into<String>, description: impl Into<String>) -> Self {
+    pub fn resource(_uri: impl Into<String>, name: impl Into<String>, description: impl Into<String>) -> Self {
+        let name = name.into();
         Self {
-            id: uri.into(),
-            name: name.into(),
+            id: name.clone(), // Use name as ID (backend expects names, not URIs)
+            name,
             description: description.into(),
             category: ArtifactCategory::Resource,
             server: None,
         }
     }
 
-    pub fn resource_template(uri: impl Into<String>, name: impl Into<String>, description: impl Into<String>) -> Self {
+    pub fn resource_template(_uri: impl Into<String>, name: impl Into<String>, description: impl Into<String>) -> Self {
+        let name = name.into();
         Self {
-            id: uri.into(),
-            name: name.into(),
+            id: name.clone(), // Use name as ID (backend expects names, not URIs)
+            name,
             description: description.into(),
             category: ArtifactCategory::ResourceTemplate,
             server: None,

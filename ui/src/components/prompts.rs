@@ -526,6 +526,21 @@ pub fn PromptForm() -> impl IntoView {
         set_saving.set(true);
         set_error.set(None);
 
+        // Validate name
+        let name_val = name.get();
+        let name_trimmed = name_val.trim();
+        if name_trimmed.is_empty() {
+            set_error.set(Some("Name cannot be blank".to_string()));
+            set_saving.set(false);
+            return;
+        }
+        // Validate name format (alphanumeric, underscore, hyphen only)
+        if !name_trimmed.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+            set_error.set(Some("Name can only contain letters, numbers, underscores, and hyphens".to_string()));
+            set_saving.set(false);
+            return;
+        }
+
         // Convert schema properties to prompt arguments
         let props = args_properties.get();
         let arguments: Option<Vec<PromptArgument>> = if props.is_empty() {
@@ -727,6 +742,20 @@ pub fn PromptEditForm() -> impl IntoView {
         ev.prevent_default();
         set_saving.set(true);
         set_error.set(None);
+
+        // Validate name
+        let name_val = name.get();
+        let name_trimmed = name_val.trim();
+        if name_trimmed.is_empty() {
+            set_error.set(Some("Name cannot be blank".to_string()));
+            set_saving.set(false);
+            return;
+        }
+        if !name_trimmed.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+            set_error.set(Some("Name can only contain letters, numbers, underscores, and hyphens".to_string()));
+            set_saving.set(false);
+            return;
+        }
 
         let orig_name = original_name.get();
 

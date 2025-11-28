@@ -110,22 +110,28 @@ impl OpenAiProvider {
             if !tools.is_empty() {
                 body["tools"] = json!(tools.iter().map(|t| {
                     // Ensure parameters is a valid JSON Schema object
-                    // OpenAI requires at minimum {"type": "object"} for function parameters
+                    // OpenAI requires {"type": "object", "properties": {...}} for function parameters
                     let params = if t.parameters.is_null() || t.parameters.as_object().map_or(true, |o| o.is_empty()) {
+                        // Empty or null schema - provide complete default
                         json!({
                             "type": "object",
                             "properties": {},
                             "required": []
                         })
-                    } else if t.parameters.get("type").is_none() {
-                        // Add "type": "object" if missing
+                    } else {
+                        // Schema has content - ensure required fields exist
                         let mut p = t.parameters.clone();
                         if let Some(obj) = p.as_object_mut() {
-                            obj.insert("type".to_string(), json!("object"));
+                            // Ensure "type": "object" exists
+                            if !obj.contains_key("type") {
+                                obj.insert("type".to_string(), json!("object"));
+                            }
+                            // Ensure "properties" exists (OpenAI requires this)
+                            if !obj.contains_key("properties") {
+                                obj.insert("properties".to_string(), json!({}));
+                            }
                         }
                         p
-                    } else {
-                        t.parameters.clone()
                     };
                     json!({
                         "type": "function",

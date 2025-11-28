@@ -175,6 +175,7 @@ pub async fn create_app(
         test_agent_handler: test_agent_handler.clone(),
         secrets: secrets_store.clone(),
         broadcaster: Some(broadcaster.clone()),
+        tool_handler: Some(tool_handler.clone()),
     };
 
     // API routes for Web UI

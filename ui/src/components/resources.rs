@@ -620,6 +620,23 @@ pub fn ResourceForm() -> impl IntoView {
         set_saving.set(true);
         set_error.set(None);
 
+        // Validate name
+        let name_val = name.get();
+        let name_trimmed = name_val.trim();
+        if name_trimmed.is_empty() {
+            set_error.set(Some("Name cannot be blank".to_string()));
+            set_saving.set(false);
+            return;
+        }
+
+        // Validate URI
+        let uri_val = uri.get();
+        if uri_val.trim().is_empty() {
+            set_error.set(Some("URI cannot be blank".to_string()));
+            set_saving.set(false);
+            return;
+        }
+
         // Build output schema from properties (resources don't have input schema)
         let output_props = output_schema_properties.get();
         let output_schema = if output_props.is_empty() {
@@ -1472,6 +1489,23 @@ pub fn ResourceEditForm() -> impl IntoView {
         ev.prevent_default();
         set_saving.set(true);
         set_error.set(None);
+
+        // Validate name
+        let name_val = name.get();
+        let name_trimmed = name_val.trim();
+        if name_trimmed.is_empty() {
+            set_error.set(Some("Name cannot be blank".to_string()));
+            set_saving.set(false);
+            return;
+        }
+
+        // Validate URI
+        let uri_val = resource_uri.get();
+        if uri_val.trim().is_empty() {
+            set_error.set(Some("URI cannot be blank".to_string()));
+            set_saving.set(false);
+            return;
+        }
 
         let orig_uri = original_uri.get();
 

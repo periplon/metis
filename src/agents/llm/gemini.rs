@@ -123,10 +123,32 @@ impl GeminiProvider {
             if !tools.is_empty() {
                 body["tools"] = json!([{
                     "function_declarations": tools.iter().map(|t| {
+                        // Ensure parameters is a valid JSON Schema object
+                        // Gemini requires {"type": "object", "properties": {...}} for parameters
+                        let params = if t.parameters.is_null() || t.parameters.as_object().map_or(true, |o| o.is_empty()) {
+                            // Empty or null schema - provide complete default
+                            json!({
+                                "type": "object",
+                                "properties": {},
+                                "required": []
+                            })
+                        } else {
+                            // Schema has content - ensure required fields exist
+                            let mut p = t.parameters.clone();
+                            if let Some(obj) = p.as_object_mut() {
+                                if !obj.contains_key("type") {
+                                    obj.insert("type".to_string(), json!("object"));
+                                }
+                                if !obj.contains_key("properties") {
+                                    obj.insert("properties".to_string(), json!({}));
+                                }
+                            }
+                            p
+                        };
                         json!({
                             "name": t.name,
                             "description": t.description,
-                            "parameters": t.parameters
+                            "parameters": params
                         })
                     }).collect::<Vec<_>>()
                 }]);

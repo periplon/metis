@@ -43,6 +43,8 @@ pub struct ApiState {
     pub secrets: SharedSecretsStore,
     /// MCP notification broadcaster for list change notifications
     pub broadcaster: Option<SharedNotificationBroadcaster>,
+    /// Tool handler to reinitialize agents when agents are created/updated/deleted
+    pub tool_handler: Option<Arc<crate::adapters::tool_handler::BasicToolHandler>>,
 }
 
 /// Tool handler for workflow testing that uses mock strategies
@@ -805,8 +807,10 @@ pub async fn create_resource(
     drop(settings);
 
     // Notify connected MCP clients about the resource list change
+    // Resources are also exposed as tools, so notify both
     if let Some(broadcaster) = &state.broadcaster {
         broadcaster.notify_resources_changed().await;
+        broadcaster.notify_tools_changed().await;
     }
 
     (StatusCode::CREATED, Json(ApiResponse::success(dto)))
@@ -831,8 +835,10 @@ pub async fn update_resource(
         drop(settings);
 
         // Notify connected MCP clients about the resource list change
+        // Resources are also exposed as tools, so notify both
         if let Some(broadcaster) = &state.broadcaster {
             broadcaster.notify_resources_changed().await;
+            broadcaster.notify_tools_changed().await;
         }
 
         (StatusCode::OK, Json(ApiResponse::success(dto)))
@@ -856,8 +862,10 @@ pub async fn delete_resource(
         drop(settings);
 
         // Notify connected MCP clients about the resource list change
+        // Resources are also exposed as tools, so notify both
         if let Some(broadcaster) = &state.broadcaster {
             broadcaster.notify_resources_changed().await;
+            broadcaster.notify_tools_changed().await;
         }
 
         (StatusCode::OK, Json(ApiResponse::<()>::ok()))
@@ -1262,9 +1270,10 @@ pub async fn create_resource_template(
     settings.resource_templates.push(template);
     drop(settings);
 
-    // Resource templates affect resource list
+    // Resource templates affect resource list and are also exposed as tools
     if let Some(broadcaster) = &state.broadcaster {
         broadcaster.notify_resources_changed().await;
+        broadcaster.notify_tools_changed().await;
     }
 
     (StatusCode::CREATED, Json(ApiResponse::success(dto)))
@@ -1295,9 +1304,10 @@ pub async fn update_resource_template(
         template.mock = dto.mock.clone();
         drop(settings);
 
-        // Resource templates affect resource list
+        // Resource templates affect resource list and are also exposed as tools
         if let Some(broadcaster) = &state.broadcaster {
             broadcaster.notify_resources_changed().await;
+            broadcaster.notify_tools_changed().await;
         }
 
         (StatusCode::OK, Json(ApiResponse::success(dto)))
@@ -1327,9 +1337,10 @@ pub async fn delete_resource_template(
     if settings.resource_templates.len() < initial_len {
         drop(settings);
 
-        // Resource templates affect resource list
+        // Resource templates affect resource list and are also exposed as tools
         if let Some(broadcaster) = &state.broadcaster {
             broadcaster.notify_resources_changed().await;
+            broadcaster.notify_tools_changed().await;
         }
 
         (StatusCode::OK, Json(ApiResponse::<()>::ok()))
@@ -2382,6 +2393,13 @@ pub async fn create_agent(
     // Reset cached agent handler so it re-initializes with new agent
     *state.test_agent_handler.write().await = None;
 
+    // Reinitialize agents in the main tool handler so the new agent is available
+    if let Some(tool_handler) = &state.tool_handler {
+        if let Err(e) = tool_handler.reinitialize_agents().await {
+            tracing::warn!("Failed to reinitialize agents after creating agent: {}", e);
+        }
+    }
+
     // Agents are exposed as tools, so notify about tool list change
     if let Some(broadcaster) = &state.broadcaster {
         broadcaster.notify_tools_changed().await;
@@ -2405,6 +2423,13 @@ pub async fn update_agent(
 
         // Reset cached agent handler so it re-initializes with updated agent
         *state.test_agent_handler.write().await = None;
+
+        // Reinitialize agents in the main tool handler so the updated agent is available
+        if let Some(tool_handler) = &state.tool_handler {
+            if let Err(e) = tool_handler.reinitialize_agents().await {
+                tracing::warn!("Failed to reinitialize agents after updating agent: {}", e);
+            }
+        }
 
         // Agents are exposed as tools, so notify about tool list change
         if let Some(broadcaster) = &state.broadcaster {
@@ -2432,6 +2457,13 @@ pub async fn delete_agent(
 
         // Reset cached agent handler so it re-initializes without deleted agent
         *state.test_agent_handler.write().await = None;
+
+        // Reinitialize agents in the main tool handler so the deleted agent is removed
+        if let Some(tool_handler) = &state.tool_handler {
+            if let Err(e) = tool_handler.reinitialize_agents().await {
+                tracing::warn!("Failed to reinitialize agents after deleting agent: {}", e);
+            }
+        }
 
         // Agents are exposed as tools, so notify about tool list change
         if let Some(broadcaster) = &state.broadcaster {

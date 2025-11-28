@@ -12,6 +12,10 @@ use tokio::sync::RwLock;
 
 /// Prefix for agent tools
 pub const AGENT_TOOL_PREFIX: &str = "agent_";
+/// Prefix for resource tools
+pub const RESOURCE_TOOL_PREFIX: &str = "resource_";
+/// Prefix for resource template tools
+pub const RESOURCE_TEMPLATE_TOOL_PREFIX: &str = "resource_tpl_";
 
 /// Inner tool handler that handles regular tools and agents (but NOT workflows).
 /// This prevents circular dependency when WorkflowEngine needs to call tools.
@@ -204,6 +208,18 @@ impl BasicToolHandler {
         settings.workflows.iter().any(|w| w.name == name)
     }
 
+    /// Find a resource config by name
+    async fn find_resource_config(&self, name: &str) -> Option<crate::config::ResourceConfig> {
+        let settings = self.settings.read().await;
+        settings.resources.iter().find(|r| r.name == name).cloned()
+    }
+
+    /// Find a resource template config by name
+    async fn find_resource_template_config(&self, name: &str) -> Option<crate::config::ResourceTemplateConfig> {
+        let settings = self.settings.read().await;
+        settings.resource_templates.iter().find(|t| t.name == name).cloned()
+    }
+
     /// Get MCP tools matching the given specifications
     /// Format: "server_name:tool_name" or "server_name:*" for all
     pub async fn get_mcp_tools(&self, specs: &[String]) -> Vec<Tool> {
@@ -235,6 +251,77 @@ impl ToolPort for BasicToolHandler {
                 description: format!("[Workflow] {}", workflow.description),
                 input_schema: workflow.input_schema.clone(),
                 output_schema: workflow.output_schema.clone(),
+            });
+        }
+
+        // Resource tools (resources exposed as tools for agents to read)
+        for resource in &settings.resources {
+            tools.push(Tool {
+                name: format!("{}{}", RESOURCE_TOOL_PREFIX, resource.name),
+                description: format!(
+                    "[Resource] {} - URI: {}",
+                    resource.description.as_deref().unwrap_or(&resource.name),
+                    resource.uri
+                ),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }),
+                output_schema: resource.output_schema.clone(),
+            });
+        }
+
+        // Resource template tools (templates exposed as tools with input parameters)
+        for template in &settings.resource_templates {
+            // Build input schema from template's input_schema or extract from URI pattern
+            let input_schema = template.input_schema.clone().unwrap_or_else(|| {
+                // Extract {variables} from uri_template to build schema
+                let mut properties = serde_json::Map::new();
+                let mut required = Vec::new();
+
+                // Simple parser for {variable} patterns without regex
+                let uri = &template.uri_template;
+                let mut chars = uri.chars().peekable();
+                while let Some(c) = chars.next() {
+                    if c == '{' {
+                        let mut var_name = String::new();
+                        while let Some(&next) = chars.peek() {
+                            if next == '}' {
+                                chars.next(); // consume '}'
+                                break;
+                            }
+                            var_name.push(chars.next().unwrap());
+                        }
+                        if !var_name.is_empty() && !properties.contains_key(&var_name) {
+                            properties.insert(
+                                var_name.clone(),
+                                json!({
+                                    "type": "string",
+                                    "description": format!("Value for {{{}}} in URI template", var_name)
+                                }),
+                            );
+                            required.push(json!(var_name));
+                        }
+                    }
+                }
+
+                json!({
+                    "type": "object",
+                    "properties": properties,
+                    "required": required
+                })
+            });
+
+            tools.push(Tool {
+                name: format!("{}{}", RESOURCE_TEMPLATE_TOOL_PREFIX, template.name),
+                description: format!(
+                    "[ResourceTemplate] {} - Pattern: {}",
+                    template.description.as_deref().unwrap_or(&template.name),
+                    template.uri_template
+                ),
+                input_schema,
+                output_schema: template.output_schema.clone(),
             });
         }
 
@@ -326,6 +413,81 @@ impl ToolPort for BasicToolHandler {
                 }));
             } else {
                 return Err(anyhow::anyhow!("Agent handler not available for agent: {}", agent_name));
+            }
+        }
+
+        // Check if this is a resource tool
+        if let Some(resource_name) = name.strip_prefix(RESOURCE_TOOL_PREFIX) {
+            if let Some(config) = self.find_resource_config(resource_name).await {
+                // Return resource content
+                if let Some(mock_config) = &config.mock {
+                    return self.inner_handler
+                        .mock_strategy
+                        .generate(mock_config, Some(&args))
+                        .await;
+                } else if let Some(content) = &config.content {
+                    return Ok(json!({
+                        "uri": config.uri,
+                        "content": content,
+                        "mime_type": config.mime_type
+                    }));
+                } else {
+                    return Ok(json!({
+                        "uri": config.uri,
+                        "content": null,
+                        "mime_type": config.mime_type
+                    }));
+                }
+            } else {
+                return Err(anyhow::anyhow!("Resource not found: {}", resource_name));
+            }
+        }
+
+        // Check if this is a resource template tool
+        if let Some(template_name) = name.strip_prefix(RESOURCE_TEMPLATE_TOOL_PREFIX) {
+            if let Some(config) = self.find_resource_template_config(template_name).await {
+                // Resolve the URI template with provided arguments
+                let mut resolved_uri = config.uri_template.clone();
+                if let Some(obj) = args.as_object() {
+                    for (key, value) in obj {
+                        let placeholder = format!("{{{}}}", key);
+                        if let Some(val_str) = value.as_str() {
+                            resolved_uri = resolved_uri.replace(&placeholder, val_str);
+                        }
+                    }
+                }
+
+                // Return resource template content
+                if let Some(mock_config) = &config.mock {
+                    return self.inner_handler
+                        .mock_strategy
+                        .generate(mock_config, Some(&args))
+                        .await;
+                } else if let Some(content) = &config.content {
+                    // Also resolve template variables in content
+                    let mut resolved_content = content.clone();
+                    if let Some(obj) = args.as_object() {
+                        for (key, value) in obj {
+                            let placeholder = format!("{{{}}}", key);
+                            if let Some(val_str) = value.as_str() {
+                                resolved_content = resolved_content.replace(&placeholder, val_str);
+                            }
+                        }
+                    }
+                    return Ok(json!({
+                        "uri": resolved_uri,
+                        "content": resolved_content,
+                        "mime_type": config.mime_type
+                    }));
+                } else {
+                    return Ok(json!({
+                        "uri": resolved_uri,
+                        "content": null,
+                        "mime_type": config.mime_type
+                    }));
+                }
+            } else {
+                return Err(anyhow::anyhow!("Resource template not found: {}", template_name));
             }
         }
 

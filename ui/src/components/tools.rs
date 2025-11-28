@@ -772,6 +772,21 @@ pub fn ToolForm() -> impl IntoView {
         set_saving.set(true);
         set_error.set(None);
 
+        // Validate name
+        let name_val = name.get();
+        let name_trimmed = name_val.trim();
+        if name_trimmed.is_empty() {
+            set_error.set(Some("Name cannot be blank".to_string()));
+            set_saving.set(false);
+            return;
+        }
+        // Validate name format (alphanumeric, underscore, hyphen only)
+        if !name_trimmed.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+            set_error.set(Some("Name can only contain letters, numbers, underscores, and hyphens".to_string()));
+            set_saving.set(false);
+            return;
+        }
+
         let schema = properties_to_schema(&schema_properties.get());
         let output_props = output_schema_properties.get();
         let output_schema = if output_props.is_empty() {
@@ -1460,6 +1475,20 @@ pub fn ToolEditForm() -> impl IntoView {
         ev.prevent_default();
         set_saving.set(true);
         set_error.set(None);
+
+        // Validate name
+        let name_val = name.get();
+        let name_trimmed = name_val.trim();
+        if name_trimmed.is_empty() {
+            set_error.set(Some("Name cannot be blank".to_string()));
+            set_saving.set(false);
+            return;
+        }
+        if !name_trimmed.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+            set_error.set(Some("Name can only contain letters, numbers, underscores, and hyphens".to_string()));
+            set_saving.set(false);
+            return;
+        }
 
         let orig_name = original_name.get();
         let schema = properties_to_schema(&schema_properties.get());

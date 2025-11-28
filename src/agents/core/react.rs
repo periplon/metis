@@ -89,12 +89,14 @@ impl ReActAgent {
         );
         messages.extend(history_messages);
 
-        // Build tool definitions (includes regular tools, MCP tools, and agent tools)
+        // Build tool definitions (includes regular tools, MCP tools, agent tools, and resources)
         let tools = Self::build_tool_definitions(
             &tool_handler,
             &config.available_tools,
             &config.mcp_tools,
             &config.agent_tools,
+            &config.available_resources,
+            &config.available_resource_templates,
         ).await;
 
         let mut all_tool_calls: Vec<ToolCallResult> = Vec::new();
@@ -248,8 +250,10 @@ impl ReActAgent {
         available_tools: &[String],
         mcp_tools: &[String],
         agent_tools: &[String],
+        available_resources: &[String],
+        available_resource_templates: &[String],
     ) -> Vec<ToolDefinition> {
-        use crate::adapters::tool_handler::AGENT_TOOL_PREFIX;
+        use crate::adapters::tool_handler::{AGENT_TOOL_PREFIX, RESOURCE_TOOL_PREFIX, RESOURCE_TEMPLATE_TOOL_PREFIX};
 
         let all_tools = match tool_handler.list_tools().await {
             Ok(tools) => tools,
@@ -258,21 +262,31 @@ impl ReActAgent {
 
         let mut definitions = Vec::new();
 
-        // If no tools specified at all, use all available tools
-        if available_tools.is_empty() && mcp_tools.is_empty() && agent_tools.is_empty() {
-            definitions = all_tools
-                .into_iter()
-                .map(|t| ToolDefinition {
-                    name: t.name,
-                    description: t.description,
-                    parameters: t.input_schema,
-                })
-                .collect();
-        } else {
-            // Filter to specified tools
-            for tool in &all_tools {
-                // Check if it's in available_tools (regular tools)
-                if available_tools.contains(&tool.name) {
+        // If no tools specified, return empty (don't auto-include all tools)
+        if available_tools.is_empty()
+            && mcp_tools.is_empty()
+            && agent_tools.is_empty()
+            && available_resources.is_empty()
+            && available_resource_templates.is_empty()
+        {
+            return definitions;
+        }
+
+        // Filter to specified tools
+        for tool in &all_tools {
+            // Check if it's in available_tools (regular tools, including workflows)
+            if available_tools.contains(&tool.name) {
+                definitions.push(ToolDefinition {
+                    name: tool.name.clone(),
+                    description: tool.description.clone(),
+                    parameters: tool.input_schema.clone(),
+                });
+                continue;
+            }
+
+            // Check if it's an agent tool
+            if let Some(agent_name) = tool.name.strip_prefix(AGENT_TOOL_PREFIX) {
+                if agent_tools.contains(&agent_name.to_string()) {
                     definitions.push(ToolDefinition {
                         name: tool.name.clone(),
                         description: tool.description.clone(),
@@ -280,35 +294,47 @@ impl ReActAgent {
                     });
                     continue;
                 }
+            }
 
-                // Check if it's an agent tool
-                if let Some(agent_name) = tool.name.strip_prefix(AGENT_TOOL_PREFIX) {
-                    if agent_tools.contains(&agent_name.to_string()) {
-                        definitions.push(ToolDefinition {
-                            name: tool.name.clone(),
-                            description: tool.description.clone(),
-                            parameters: tool.input_schema.clone(),
-                        });
-                        continue;
-                    }
+            // Check if it's a resource tool
+            if let Some(resource_name) = tool.name.strip_prefix(RESOURCE_TOOL_PREFIX) {
+                if available_resources.contains(&resource_name.to_string()) {
+                    definitions.push(ToolDefinition {
+                        name: tool.name.clone(),
+                        description: tool.description.clone(),
+                        parameters: tool.input_schema.clone(),
+                    });
+                    continue;
                 }
+            }
 
-                // Check if it matches MCP tool patterns
-                if tool.name.starts_with("mcp__") {
-                    // Extract server and tool name from "mcp__{server}_{tool}"
-                    if let Some(name_part) = tool.name.strip_prefix("mcp__") {
-                        if let Some((server, tool_name)) = name_part.split_once('_') {
-                            for spec in mcp_tools {
-                                if let Some((spec_server, spec_tool)) = spec.split_once(':') {
-                                    if spec_server == server {
-                                        if spec_tool == "*" || spec_tool == tool_name {
-                                            definitions.push(ToolDefinition {
-                                                name: tool.name.clone(),
-                                                description: tool.description.clone(),
-                                                parameters: tool.input_schema.clone(),
-                                            });
-                                            break;
-                                        }
+            // Check if it's a resource template tool
+            if let Some(template_name) = tool.name.strip_prefix(RESOURCE_TEMPLATE_TOOL_PREFIX) {
+                if available_resource_templates.contains(&template_name.to_string()) {
+                    definitions.push(ToolDefinition {
+                        name: tool.name.clone(),
+                        description: tool.description.clone(),
+                        parameters: tool.input_schema.clone(),
+                    });
+                    continue;
+                }
+            }
+
+            // Check if it matches MCP tool patterns
+            if tool.name.starts_with("mcp__") {
+                // Extract server and tool name from "mcp__{server}_{tool}"
+                if let Some(name_part) = tool.name.strip_prefix("mcp__") {
+                    if let Some((server, tool_name)) = name_part.split_once('_') {
+                        for spec in mcp_tools {
+                            if let Some((spec_server, spec_tool)) = spec.split_once(':') {
+                                if spec_server == server {
+                                    if spec_tool == "*" || spec_tool == tool_name {
+                                        definitions.push(ToolDefinition {
+                                            name: tool.name.clone(),
+                                            description: tool.description.clone(),
+                                            parameters: tool.input_schema.clone(),
+                                        });
+                                        break;
                                     }
                                 }
                             }

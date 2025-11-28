@@ -1,5 +1,33 @@
-resource_templates = []
 orchestrations = []
+
+[[resource_templates]]
+uri_template = "file://users/{user_id}/profile"
+name = "user-profile"
+description = "User profile by ID"
+mime_type = "application/json"
+content = """
+{
+  "user_id": "{user_id}",
+  "name": "Test User",
+  "email": "user@example.com"
+}
+"""
+
+[[resource_templates]]
+uri_template = "file://countries/{country_code}/info"
+name = "country-info"
+description = "Country information by code"
+mime_type = "application/json"
+
+[resource_templates.mock]
+strategy = "template"
+template = """
+{
+  "code": "{{ country_code }}",
+  "name": "Country {{ country_code }}",
+  "population": 1000000
+}
+"""
 mcp_servers = []
 
 [server]
@@ -31,6 +59,20 @@ mime_type = "text/plain"
 strategy = "random"
 faker_type = "sentence"
 
+[[resources]]
+uri = "file://domains/mathematics"
+name = "mathematics-domains"
+description = "Mathematics domains you know about"
+content = "Geometry, Algebra"
+
+[[resources]]
+uri = "file://interest/countries"
+name = "countries-of-interest"
+description = "This are our countries of interest"
+content = """
+Findland
+Sweden"""
+
 [[tools]]
 name = "template_tool"
 description = "Tool using template"
@@ -59,6 +101,17 @@ type = "string"
 
 [tools.static_response]
 asdfs = "b"
+
+[[tools]]
+name = "countries-of-interest"
+description = "Countries of interest"
+static_response = [
+    "finland",
+    "norway",
+]
+
+[tools.input_schema]
+type = "object"
 
 [[prompts]]
 name = "blabla"
@@ -96,34 +149,24 @@ loop_var = "item"
 loop_concurrency = 1
 on_error = "fail"
 
-[[agents]]
-name = "aadfs"
-description = ""
-agent_type = "react"
-system_prompt = "You are a prominent scientist"
-available_tools = [
-    "template_tool",
-    "asdf",
-]
-mcp_tools = []
-agent_tools = []
-max_iterations = 10
-timeout_seconds = 300
+[[workflows]]
+name = "acountry"
+description = "sdss"
+on_error = "fail"
 
-[agents.input_schema]
+[workflows.input_schema]
+type = "object"
 
-[agents.llm]
-provider = "openai"
-model = "gpt-5.1"
-api_key_env = "OPENAI_API_KEY"
-stream = true
+[[workflows.steps]]
+id = "step1"
+tool = "agent_PresidentsOfTheWorld"
+depends_on = []
+loop_var = "item"
+loop_concurrency = 1
+on_error = "fail"
 
-[agents.memory]
-backend = "in_memory"
-max_messages = 100
-
-[agents.memory.strategy]
-type = "full"
+[workflows.steps.args]
+country = "finland"
 
 [[agents]]
 name = "test-flash"
@@ -136,6 +179,8 @@ available_tools = [
 ]
 mcp_tools = []
 agent_tools = []
+available_resources = []
+available_resource_templates = []
 max_iterations = 10
 timeout_seconds = 300
 
@@ -162,6 +207,8 @@ system_prompt = "Be brief."
 available_tools = []
 mcp_tools = []
 agent_tools = []
+available_resources = []
+available_resource_templates = []
 max_iterations = 10
 timeout_seconds = 300
 
@@ -198,6 +245,8 @@ prompt_template = "Find who is the current president is of {{country}} and the c
 available_tools = []
 mcp_tools = []
 agent_tools = []
+available_resources = []
+available_resource_templates = []
 max_iterations = 10
 timeout_seconds = 300
 
@@ -219,5 +268,74 @@ max_messages = 100
 
 [agents.memory.strategy]
 type = "full"
+
+[[agents]]
+name = "scientist"
+description = ""
+agent_type = "react"
+system_prompt = "You are a prominent scientist that only knows about mathematics and does not want to talk about anything else. Use available tools to restrict the mathematics domains you know about."
+available_tools = []
+mcp_tools = []
+agent_tools = []
+available_resources = ["file://domains/mathematics"]
+available_resource_templates = []
+max_iterations = 10
+timeout_seconds = 300
+
+[agents.input_schema]
+
+[agents.llm]
+provider = "openai"
+model = "gpt-5.1"
+api_key_env = "OPENAI_API_KEY"
+stream = true
+
+[agents.memory]
+backend = "in_memory"
+max_messages = 100
+
+[agents.memory.strategy]
+type = "full"
+
+[[agents]]
+name = "countries"
+description = ""
+agent_type = "react"
+system_prompt = ""
+available_tools = []
+mcp_tools = []
+agent_tools = []
+available_resources = ["file://interest/countries"]
+available_resource_templates = []
+max_iterations = 10
+timeout_seconds = 300
+
+[agents.input_schema]
+
+[agents.llm]
+provider = "openai"
+model = "gpt-4o"
+api_key_env = "OPENAI_API_KEY"
+stream = true
+
+[agents.memory]
+backend = "in_memory"
+max_messages = 100
+
+[agents.memory.strategy]
+type = "full"
+
+[rate_limit]
+enabled = false
+requests_per_second = 100
+burst_size = 10
+
+[s3]
+enabled = true
+bucket = "aep"
+prefix = "config"
+region = "eu-central-2"
+endpoint = "https://s3.eu-central-2.wasabisys.com"
+poll_interval_secs = 30
 
 [secrets]

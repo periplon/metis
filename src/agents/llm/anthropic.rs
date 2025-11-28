@@ -110,10 +110,32 @@ impl AnthropicProvider {
         if let Some(tools) = &request.tools {
             if !tools.is_empty() {
                 body["tools"] = json!(tools.iter().map(|t| {
+                    // Ensure input_schema is a valid JSON Schema object
+                    // Anthropic requires {"type": "object", "properties": {...}} for input_schema
+                    let schema = if t.parameters.is_null() || t.parameters.as_object().map_or(true, |o| o.is_empty()) {
+                        // Empty or null schema - provide complete default
+                        json!({
+                            "type": "object",
+                            "properties": {},
+                            "required": []
+                        })
+                    } else {
+                        // Schema has content - ensure required fields exist
+                        let mut p = t.parameters.clone();
+                        if let Some(obj) = p.as_object_mut() {
+                            if !obj.contains_key("type") {
+                                obj.insert("type".to_string(), json!("object"));
+                            }
+                            if !obj.contains_key("properties") {
+                                obj.insert("properties".to_string(), json!({}));
+                            }
+                        }
+                        p
+                    };
                     json!({
                         "name": t.name,
                         "description": t.description,
-                        "input_schema": t.parameters
+                        "input_schema": schema
                     })
                 }).collect::<Vec<_>>());
             }
