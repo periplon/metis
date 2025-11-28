@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.29.0 - 2025-11-28
+#### Features
+- **(config)** add optimistic locking and S3 save for all archetypes - (a3f07fb) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.28.0 - 2025-11-28
 #### Features
 - **(schemas)** add reusable JSON schema definitions with $ref support - (9de4754) - Joan Marc Carbo Arnau
