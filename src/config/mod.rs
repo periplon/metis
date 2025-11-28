@@ -2,6 +2,7 @@ use config::{Config, File};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
+use thiserror::Error;
 
 pub mod s3;
 pub mod s3_watcher;
@@ -16,11 +17,23 @@ pub use schema::SchemaConfig;
 use crate::agents::config::{AgentConfig, OrchestrationConfig};
 use crate::cli::Cli;
 
+/// Error returned when optimistic locking detects a version conflict
+#[derive(Debug, Error)]
+#[error("Version conflict: expected version {expected}, but current version is {actual}. The configuration was modified by another process.")]
+pub struct VersionConflictError {
+    pub expected: u64,
+    pub actual: u64,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Settings {
     /// Path to the configuration file (not serialized, set at runtime)
     #[serde(skip)]
     pub config_path: Option<PathBuf>,
+    /// Version number for optimistic locking (incremented on each save)
+    /// Used to detect concurrent modifications and prevent lost updates
+    #[serde(default)]
+    pub version: u64,
     pub server: ServerSettings,
     #[serde(default)]
     pub auth: crate::domain::auth::AuthConfig,
@@ -513,7 +526,12 @@ impl Settings {
     /// Merge another Settings into this one.
     /// The `other` settings take precedence (override) over `self`.
     /// Arrays are merged by unique identifier (name/uri), with `other` items overriding `self` items.
+    /// Note: `config_path` and `version` are preserved from self (not overridden by other).
     pub fn merge(&mut self, other: Settings) {
+        // Preserve config_path from self (it's set from CLI and should not change)
+        // Note: config_path is #[serde(skip)] so other.config_path is always None after deserialization
+        // Preserve version from self (version is managed separately for optimistic locking)
+
         // Server settings: other overrides self
         self.server = other.server;
 
@@ -571,6 +589,24 @@ impl Settings {
                 // Add new item
                 base.push(item);
             }
+        }
+    }
+
+    /// Increment the version number (call before saving)
+    pub fn increment_version(&mut self) {
+        self.version = self.version.saturating_add(1);
+    }
+
+    /// Check if the provided version matches the current version (for optimistic locking)
+    /// Returns Ok(()) if versions match, Err with details if they don't
+    pub fn check_version(&self, expected_version: u64) -> Result<(), VersionConflictError> {
+        if self.version != expected_version {
+            Err(VersionConflictError {
+                expected: expected_version,
+                actual: self.version,
+            })
+        } else {
+            Ok(())
         }
     }
 

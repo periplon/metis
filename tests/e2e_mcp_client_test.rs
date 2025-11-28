@@ -49,6 +49,7 @@ impl TestServer {
     ) -> Self {
         let settings = Arc::new(RwLock::new(Settings {
             config_path: None,
+            version: 0,
             server: metis::config::ServerSettings {
                 host: "127.0.0.1".to_string(),
                 port: 0,

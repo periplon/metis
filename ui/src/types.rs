@@ -31,6 +31,33 @@ pub struct ConfigOverview {
     pub config_file_loaded: bool,
     #[serde(default)]
     pub mcp_servers_count: usize,
+    /// Version number for optimistic locking
+    #[serde(default)]
+    pub config_version: u64,
+}
+
+/// Request body for save operations with optimistic locking
+#[derive(Debug, Clone, Serialize)]
+pub struct SaveConfigRequest {
+    /// Expected version for optimistic locking
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected_version: Option<u64>,
+}
+
+/// Response from save operations
+#[derive(Debug, Clone, Deserialize)]
+pub struct SaveConfigResponse {
+    /// New version after save
+    pub new_version: u64,
+}
+
+/// Error response for version conflicts
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+pub struct VersionConflictResponse {
+    pub expected_version: u64,
+    pub current_version: u64,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

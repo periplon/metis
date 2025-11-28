@@ -90,6 +90,7 @@ mod tests {
     async fn test_health_endpoint() {
         let settings = Settings {
             config_path: None,
+            version: 0,
             server: ServerSettings {
                 host: "127.0.0.1".to_string(),
                 port: 3000,
@@ -118,6 +119,7 @@ mod tests {
     async fn test_ready_endpoint_with_config() {
         let settings = Settings {
             config_path: None,
+            version: 0,
             server: ServerSettings {
                 host: "127.0.0.1".to_string(),
                 port: 3000,
@@ -147,6 +149,7 @@ mod tests {
     async fn test_live_endpoint() {
         let settings = Settings {
             config_path: None,
+            version: 0,
             server: ServerSettings {
                 host: "127.0.0.1".to_string(),
                 port: 3000,

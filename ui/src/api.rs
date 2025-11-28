@@ -25,16 +25,20 @@ pub async fn update_server_settings(settings: &ServerSettings) -> Result<ServerS
     put_json::<ServerSettings, ServerSettings>(&url, settings).await
 }
 
-/// Save config to disk (metis.toml)
-pub async fn save_config_to_disk() -> Result<(), String> {
+/// Save config to disk (metis.toml) with optimistic locking
+/// Returns the new version number on success, or an error message on failure
+pub async fn save_config_to_disk(expected_version: Option<u64>) -> Result<SaveConfigResponse, String> {
     let url = format!("{}/config/save-disk", API_BASE);
-    post_empty(&url, &()).await
+    let request = SaveConfigRequest { expected_version };
+    post_json::<SaveConfigRequest, SaveConfigResponse>(&url, &request).await
 }
 
-/// Save config to S3
-pub async fn save_config_to_s3() -> Result<(), String> {
+/// Save config to S3 with optimistic locking
+/// Returns the new version number on success, or an error message on failure
+pub async fn save_config_to_s3(expected_version: Option<u64>) -> Result<SaveConfigResponse, String> {
     let url = format!("{}/config/save-s3", API_BASE);
-    post_empty(&url, &()).await
+    let request = SaveConfigRequest { expected_version };
+    post_json::<SaveConfigRequest, SaveConfigResponse>(&url, &request).await
 }
 
 /// Export config as JSON

@@ -380,10 +380,10 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
                 return;
             }
 
-            // Then save to disk
-            match api::save_config_to_disk().await {
-                Ok(_) => {
-                    set_message.set(Some(("Configuration saved to metis.toml successfully!".to_string(), true)));
+            // Then save to disk (without version checking for simplicity - version is incremented on server)
+            match api::save_config_to_disk(None).await {
+                Ok(response) => {
+                    set_message.set(Some((format!("Configuration saved to metis.toml successfully! (version {})", response.new_version), true)));
                 }
                 Err(e) => {
                     set_message.set(Some((format!("Failed to save to disk: {}", e), false)));
@@ -460,10 +460,10 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
                 return;
             }
 
-            // Then save to S3
-            match api::save_config_to_s3().await {
-                Ok(_) => {
-                    set_message.set(Some(("Configuration saved to S3 successfully!".to_string(), true)));
+            // Then save to S3 (without version checking for simplicity - version is incremented on server)
+            match api::save_config_to_s3(None).await {
+                Ok(response) => {
+                    set_message.set(Some((format!("Configuration saved to S3 successfully! (version {})", response.new_version), true)));
                 }
                 Err(e) => {
                     set_message.set(Some((format!("Failed to save to S3: {}", e), false)));

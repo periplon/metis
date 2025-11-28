@@ -20,6 +20,7 @@ use tokio::sync::RwLock;
 
     let settings = Settings {
             config_path: None,
+            version: 0,
         server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
         auth: Default::default(),
         resources: config,
@@ -68,6 +69,7 @@ use tokio::sync::RwLock;
 
     let settings = Settings {
             config_path: None,
+            version: 0,
         server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
         auth: Default::default(),
         resources: config,
@@ -95,6 +97,7 @@ use tokio::sync::RwLock;
     let mock_strategy = Arc::new(MockStrategyHandler::new(Arc::new(StateManager::new())));
     let settings = Settings {
             config_path: None,
+            version: 0,
         server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
         auth: Default::default(),
         resources: vec![],
@@ -141,6 +144,7 @@ use tokio::sync::RwLock;
 
     let settings = Settings {
             config_path: None,
+            version: 0,
         server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
         auth: Default::default(),
         resources: config,

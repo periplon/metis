@@ -217,6 +217,7 @@ mod tests {
     fn test_valid_config() {
         let settings = Settings {
             config_path: None,
+            version: 0,
             server: ServerSettings {
                 host: "127.0.0.1".to_string(),
                 port: 3000,
@@ -244,6 +245,7 @@ mod tests {
     fn test_invalid_port() {
         let settings = Settings {
             config_path: None,
+            version: 0,
             server: ServerSettings {
                 host: "127.0.0.1".to_string(),
                 port: 0,
@@ -273,6 +275,7 @@ mod tests {
     fn test_duplicate_resource_uris() {
         let settings = Settings {
             config_path: None,
+            version: 0,
             server: ServerSettings {
                 host: "127.0.0.1".to_string(),
                 port: 3000,

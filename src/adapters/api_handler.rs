@@ -194,6 +194,33 @@ pub struct ConfigOverview {
     pub s3_enabled: bool,
     pub config_file_loaded: bool,
     pub mcp_servers_count: usize,
+    /// Version number for optimistic locking (incremented on each save)
+    pub config_version: u64,
+}
+
+/// Request body for save operations with optimistic locking
+#[derive(Deserialize)]
+pub struct SaveConfigRequest {
+    /// Expected version number for optimistic locking.
+    /// If provided, the save will fail if the current version doesn't match.
+    /// If not provided (None), the save will proceed without version checking.
+    #[serde(default)]
+    pub expected_version: Option<u64>,
+}
+
+/// Response for successful save operations
+#[derive(Serialize)]
+pub struct SaveConfigResponse {
+    /// New version number after save
+    pub new_version: u64,
+}
+
+/// Error response for version conflicts
+#[derive(Serialize)]
+pub struct VersionConflictResponse {
+    pub expected_version: u64,
+    pub current_version: u64,
+    pub message: String,
 }
 
 #[derive(Serialize)]
@@ -547,8 +574,15 @@ pub async fn get_config_overview(
     let config_file_loaded = settings
         .config_path
         .as_ref()
-        .map(|p| p.exists())
-        .unwrap_or(false);
+        .map(|p| {
+            let exists = p.exists();
+            tracing::debug!("Config path: {:?}, exists: {}", p, exists);
+            exists
+        })
+        .unwrap_or_else(|| {
+            tracing::debug!("No config_path set in settings");
+            false
+        });
 
     let overview = ConfigOverview {
         server: ServerInfo {
@@ -567,6 +601,7 @@ pub async fn get_config_overview(
         s3_enabled: settings.s3.as_ref().is_some_and(|s| s.enabled),
         config_file_loaded,
         mcp_servers_count: settings.mcp_servers.len(),
+        config_version: settings.version,
     };
 
     (StatusCode::OK, Json(ApiResponse::success(overview)))
@@ -1502,15 +1537,44 @@ pub async fn delete_state_key(
 // ============================================================================
 
 /// POST /api/config/save-disk - Save current configuration to config file
+/// Supports optimistic locking via expected_version in request body
 pub async fn save_config_to_disk(
     State(state): State<ApiState>,
+    body: Option<Json<SaveConfigRequest>>,
 ) -> impl IntoResponse {
-    // Get mutable copy of settings to add encrypted secrets
-    let settings_guard = state.settings.read().await;
+    let expected_version = body.and_then(|b| b.expected_version);
+
+    // Acquire write lock for atomic version check and increment
+    let mut settings_guard = state.settings.write().await;
+
+    // Check version if expected_version is provided (optimistic locking)
+    if let Some(expected) = expected_version {
+        if let Err(conflict) = settings_guard.check_version(expected) {
+            let response = VersionConflictResponse {
+                expected_version: conflict.expected,
+                current_version: conflict.actual,
+                message: format!(
+                    "Configuration was modified by another process. Expected version {}, but current version is {}. Please refresh and try again.",
+                    conflict.expected, conflict.actual
+                ),
+            };
+            return (
+                StatusCode::CONFLICT,
+                Json(ApiResponse::success(serde_json::to_value(response).unwrap()))
+            );
+        }
+    }
+
+    // Increment version before saving
+    settings_guard.increment_version();
+    let new_version = settings_guard.version;
+
     let config_path = settings_guard
         .config_path
         .clone()
         .unwrap_or_else(|| std::path::PathBuf::from("metis.toml"));
+
+    // Create a copy of settings for serialization (with new version)
     let mut settings: Settings = serde_json::from_value(
         serde_json::to_value(&*settings_guard).unwrap()
     ).unwrap();
@@ -1525,7 +1589,7 @@ pub async fn save_config_to_disk(
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiResponse::<()>::error(format!("Failed to build secrets config: {}", e)))
+                Json(ApiResponse::<Value>::error(format!("Failed to build secrets config: {}", e)))
             );
         }
     }
@@ -1536,7 +1600,7 @@ pub async fn save_config_to_disk(
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiResponse::<()>::error(format!("Failed to serialize config: {}", e)))
+                Json(ApiResponse::<Value>::error(format!("Failed to serialize config: {}", e)))
             );
         }
     };
@@ -1545,11 +1609,11 @@ pub async fn save_config_to_disk(
     if let Err(e) = std::fs::write(&config_path, toml_content) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiResponse::<()>::error(format!("Failed to write {}: {}", config_path.display(), e)))
+            Json(ApiResponse::<Value>::error(format!("Failed to write {}: {}", config_path.display(), e)))
         );
     }
 
-    (StatusCode::OK, Json(ApiResponse::<()>::ok()))
+    (StatusCode::OK, Json(ApiResponse::success(serde_json::to_value(SaveConfigResponse { new_version }).unwrap())))
 }
 
 /// Build SecretsConfig from the in-memory secrets store
@@ -1592,12 +1656,70 @@ async fn build_secrets_config(
     Ok(config)
 }
 
+/// Upload a single item to S3 as a YAML file in a subdirectory
+async fn upload_item_to_s3<T: Serialize>(
+    client: &aws_sdk_s3::Client,
+    bucket: &str,
+    prefix: &str,
+    subdir: &str,
+    name: &str,
+    item: &T,
+) -> Result<(), String> {
+    let yaml_content = serde_yaml::to_string(item)
+        .map_err(|e| format!("Failed to serialize {} to YAML: {}", name, e))?;
+
+    let key = format!("{}{}/{}.yaml", prefix, subdir, name);
+
+    client
+        .put_object()
+        .bucket(bucket)
+        .key(&key)
+        .body(yaml_content.into_bytes().into())
+        .content_type("application/yaml")
+        .send()
+        .await
+        .map_err(|e| format!("Failed to upload {} to S3: {}", key, e))?;
+
+    tracing::info!("Uploaded {} to S3: {}", name, key);
+    Ok(())
+}
+
 /// POST /api/config/save-s3 - Save current configuration to S3
+/// Supports optimistic locking via expected_version in request body
+/// Also uploads individual schemas, tools, resources, prompts, agents, and workflows
+/// to their respective subdirectories for better organization and hot-reload support
 pub async fn save_config_to_s3(
     State(state): State<ApiState>,
+    body: Option<Json<SaveConfigRequest>>,
 ) -> impl IntoResponse {
-    // Get mutable copy of settings to add encrypted secrets
-    let settings_guard = state.settings.read().await;
+    let expected_version = body.and_then(|b| b.expected_version);
+
+    // Acquire write lock for atomic version check and increment
+    let mut settings_guard = state.settings.write().await;
+
+    // Check version if expected_version is provided (optimistic locking)
+    if let Some(expected) = expected_version {
+        if let Err(conflict) = settings_guard.check_version(expected) {
+            let response = VersionConflictResponse {
+                expected_version: conflict.expected,
+                current_version: conflict.actual,
+                message: format!(
+                    "Configuration was modified by another process. Expected version {}, but current version is {}. Please refresh and try again.",
+                    conflict.expected, conflict.actual
+                ),
+            };
+            return (
+                StatusCode::CONFLICT,
+                Json(ApiResponse::success(serde_json::to_value(response).unwrap()))
+            );
+        }
+    }
+
+    // Increment version before saving
+    settings_guard.increment_version();
+    let new_version = settings_guard.version;
+
+    // Create a copy of settings for serialization (with new version)
     let mut settings: Settings = serde_json::from_value(
         serde_json::to_value(&*settings_guard).unwrap()
     ).unwrap();
@@ -1621,13 +1743,13 @@ pub async fn save_config_to_s3(
             );
             return (
                 StatusCode::BAD_REQUEST,
-                Json(ApiResponse::<()>::error(msg))
+                Json(ApiResponse::<Value>::error(msg))
             );
         }
         None => {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(ApiResponse::<()>::error(
+                Json(ApiResponse::<Value>::error(
                     "S3 is not configured. Please configure S3 settings (enable S3, set bucket name, region) and save to disk first."
                 ))
             );
@@ -1643,7 +1765,7 @@ pub async fn save_config_to_s3(
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiResponse::<()>::error(format!("Failed to build secrets config: {}", e)))
+                Json(ApiResponse::<Value>::error(format!("Failed to build secrets config: {}", e)))
             );
         }
     }
@@ -1654,7 +1776,7 @@ pub async fn save_config_to_s3(
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiResponse::<()>::error(format!("Failed to serialize config: {}", e)))
+                Json(ApiResponse::<Value>::error(format!("Failed to serialize config: {}", e)))
             );
         }
     };
@@ -1665,7 +1787,7 @@ pub async fn save_config_to_s3(
         Err(e) => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiResponse::<()>::error(format!("Failed to configure S3 client: {}", e)))
+                Json(ApiResponse::<Value>::error(format!("Failed to configure S3 client: {}", e)))
             );
         }
     };
@@ -1675,7 +1797,8 @@ pub async fn save_config_to_s3(
     let bucket = s3_config.bucket.as_ref().unwrap();
     let key = format!("{}metis.toml", s3_config.get_prefix());
 
-    match client
+    // First, upload the main config file
+    if let Err(e) = client
         .put_object()
         .bucket(bucket)
         .key(&key)
@@ -1684,65 +1807,134 @@ pub async fn save_config_to_s3(
         .send()
         .await
     {
-        Ok(_) => (StatusCode::OK, Json(ApiResponse::<()>::ok())),
-        Err(e) => {
-            // Extract full error chain for better diagnostics
-            let error_msg = format!("{}", e);
-            let debug_msg = format!("{:?}", e);
+        // Extract full error chain for better diagnostics
+        let error_msg = format!("{}", e);
+        let debug_msg = format!("{:?}", e);
 
-            // Try to get the underlying service error for more details
-            let service_error_details = if let Some(service_err) = e.as_service_error() {
-                format!(" Service error: {:?}", service_err)
-            } else {
-                String::new()
-            };
+        // Try to get the underlying service error for more details
+        let service_error_details = if let Some(service_err) = e.as_service_error() {
+            format!(" Service error: {:?}", service_err)
+        } else {
+            String::new()
+        };
 
-            // Log the full error for debugging
-            tracing::error!("S3 upload error: {} | Debug: {} | Service: {}", error_msg, debug_msg, service_error_details);
+        // Log the full error for debugging
+        tracing::error!("S3 upload error: {} | Debug: {} | Service: {}", error_msg, debug_msg, service_error_details);
 
-            // Provide more helpful error messages for common S3 issues
-            let full_error = format!("{}{}", error_msg, service_error_details);
-            let helpful_msg = if full_error.contains("credentials") || full_error.contains("Credentials") || full_error.contains("NoCredentialsError") {
-                format!(
-                    "S3 credentials error: {}. Set AWS credentials in the UI Secrets section (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY) or as environment variables.",
-                    error_msg
-                )
-            } else if full_error.contains("NoSuchBucket") {
-                format!(
-                    "S3 bucket '{}' does not exist or you don't have access to it.",
-                    bucket
-                )
-            } else if full_error.contains("AccessDenied") || full_error.contains("Forbidden") {
-                format!(
-                    "S3 access denied to bucket '{}'. Check your credentials and bucket permissions.",
-                    bucket
-                )
-            } else if full_error.contains("InvalidAccessKeyId") {
-                "Invalid AWS access key. Check your AWS_ACCESS_KEY_ID in UI Secrets or environment.".to_string()
-            } else if full_error.contains("SignatureDoesNotMatch") {
-                "AWS signature mismatch. Check your AWS_SECRET_ACCESS_KEY in UI Secrets or environment.".to_string()
-            } else if s3_config.region.is_none() && s3_config.endpoint.is_some() {
-                format!(
-                    "S3 error: {}. Note: You're using a custom endpoint but no region is set. For S3-compatible services like Wasabi or MinIO, you may need to specify a region (e.g., 'us-east-1').",
-                    full_error
-                )
-            } else {
-                // Include debug info for unknown errors
-                format!(
-                    "S3 upload failed: {}.{} Config: bucket='{}', region={:?}, endpoint={:?}. Check server logs for more details.",
-                    error_msg,
-                    service_error_details,
-                    bucket,
-                    s3_config.region,
-                    s3_config.endpoint
-                )
-            };
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ApiResponse::<()>::error(helpful_msg))
+        // Provide more helpful error messages for common S3 issues
+        let full_error = format!("{}{}", error_msg, service_error_details);
+        let helpful_msg = if full_error.contains("credentials") || full_error.contains("Credentials") || full_error.contains("NoCredentialsError") {
+            format!(
+                "S3 credentials error: {}. Set AWS credentials in the UI Secrets section (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY) or as environment variables.",
+                error_msg
             )
-        },
+        } else if full_error.contains("NoSuchBucket") {
+            format!(
+                "S3 bucket '{}' does not exist or you don't have access to it.",
+                bucket
+            )
+        } else if full_error.contains("AccessDenied") || full_error.contains("Forbidden") {
+            format!(
+                "S3 access denied to bucket '{}'. Check your credentials and bucket permissions.",
+                bucket
+            )
+        } else if full_error.contains("InvalidAccessKeyId") {
+            "Invalid AWS access key. Check your AWS_ACCESS_KEY_ID in UI Secrets or environment.".to_string()
+        } else if full_error.contains("SignatureDoesNotMatch") {
+            "AWS signature mismatch. Check your AWS_SECRET_ACCESS_KEY in UI Secrets or environment.".to_string()
+        } else if s3_config.region.is_none() && s3_config.endpoint.is_some() {
+            format!(
+                "S3 error: {}. Note: You're using a custom endpoint but no region is set. For S3-compatible services like Wasabi or MinIO, you may need to specify a region (e.g., 'us-east-1').",
+                full_error
+            )
+        } else {
+            // Include debug info for unknown errors
+            format!(
+                "S3 upload failed: {}.{} Config: bucket='{}', region={:?}, endpoint={:?}. Check server logs for more details.",
+                error_msg,
+                service_error_details,
+                bucket,
+                s3_config.region,
+                s3_config.endpoint
+            )
+        };
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse::<Value>::error(helpful_msg))
+        );
     }
+
+    tracing::info!("Uploaded main config to S3: {}", key);
+
+    // Upload individual items to S3 subdirectories for hot-reload support
+    let prefix = s3_config.get_prefix();
+    let mut upload_errors: Vec<String> = Vec::new();
+
+    // Upload schemas
+    for schema in &settings.schemas {
+        if let Err(e) = upload_item_to_s3(&client, bucket, &prefix, "schemas", &schema.name, schema).await {
+            upload_errors.push(e);
+        }
+    }
+
+    // Upload tools
+    for tool in &settings.tools {
+        if let Err(e) = upload_item_to_s3(&client, bucket, &prefix, "tools", &tool.name, tool).await {
+            upload_errors.push(e);
+        }
+    }
+
+    // Upload resources
+    for resource in &settings.resources {
+        // Use a sanitized version of the URI as the filename
+        let safe_name = resource.uri.replace(['/', ':', '?', '#', ' '], "_");
+        if let Err(e) = upload_item_to_s3(&client, bucket, &prefix, "resources", &safe_name, resource).await {
+            upload_errors.push(e);
+        }
+    }
+
+    // Upload resource templates
+    for template in &settings.resource_templates {
+        // Use a sanitized version of the URI template as the filename
+        let safe_name = template.uri_template.replace(['/', ':', '?', '#', ' ', '{', '}'], "_");
+        if let Err(e) = upload_item_to_s3(&client, bucket, &prefix, "resource_templates", &safe_name, template).await {
+            upload_errors.push(e);
+        }
+    }
+
+    // Upload prompts
+    for prompt in &settings.prompts {
+        if let Err(e) = upload_item_to_s3(&client, bucket, &prefix, "prompts", &prompt.name, prompt).await {
+            upload_errors.push(e);
+        }
+    }
+
+    // Upload agents
+    for agent in &settings.agents {
+        if let Err(e) = upload_item_to_s3(&client, bucket, &prefix, "agents", &agent.name, agent).await {
+            upload_errors.push(e);
+        }
+    }
+
+    // Upload workflows
+    for workflow in &settings.workflows {
+        if let Err(e) = upload_item_to_s3(&client, bucket, &prefix, "workflows", &workflow.name, workflow).await {
+            upload_errors.push(e);
+        }
+    }
+
+    // Log any upload errors but don't fail the whole operation
+    if !upload_errors.is_empty() {
+        tracing::warn!("Some individual item uploads failed: {:?}", upload_errors);
+    }
+
+    let total_items = settings.schemas.len() + settings.tools.len() + settings.resources.len()
+        + settings.resource_templates.len() + settings.prompts.len()
+        + settings.agents.len() + settings.workflows.len();
+    let successful_items = total_items - upload_errors.len();
+    tracing::info!("Uploaded {}/{} individual items to S3", successful_items, total_items);
+
+    (StatusCode::OK, Json(ApiResponse::success(serde_json::to_value(SaveConfigResponse { new_version }).unwrap())))
 }
 
 /// GET /api/config/export - Export current configuration as JSON for browser download
