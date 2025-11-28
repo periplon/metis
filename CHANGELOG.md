@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.26.0 - 2025-11-28
+#### Features
+- **(agents)** add resource and resource template support - (c3ede66) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.25.0 - 2025-11-27
 #### Features
 - **(ui)** group selected artifacts by category in agent editor - (b1e524d) - Joan Marc Carbo Arnau
