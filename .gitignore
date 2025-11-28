@@ -40,3 +40,5 @@ Thumbs.db
 # Added by cargo
 
 /target
+
+/tmp

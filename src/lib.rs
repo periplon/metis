@@ -223,6 +223,9 @@ pub async fn create_app(
         .route("/orchestrations", get(api_handler::list_orchestrations).post(api_handler::create_orchestration))
         .route("/orchestrations/:name", get(api_handler::get_orchestration).put(api_handler::update_orchestration).delete(api_handler::delete_orchestration))
         .route("/orchestrations/:name/test", post(api_handler::test_orchestration))
+        // Schemas CRUD
+        .route("/schemas", get(api_handler::list_schemas).post(api_handler::create_schema))
+        .route("/schemas/:name", get(api_handler::get_schema).put(api_handler::update_schema).delete(api_handler::delete_schema))
         // LLM models discovery
         .route("/llm/models/:provider", get(api_handler::fetch_llm_models))
         .with_state(api_state);

@@ -589,3 +589,12 @@ pub enum MergeStrategy {
     Vote,
     Custom { script: String },
 }
+
+/// Reusable JSON Schema definition
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct Schema {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub schema: Value,
+}

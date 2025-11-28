@@ -28,7 +28,7 @@ use crate::adapters::encryption;
 use crate::adapters::secrets::keys;
 use crate::config::{
     MockConfig, PromptArgument, PromptConfig, PromptMessage, RateLimitConfig, ResourceConfig,
-    ResourceTemplateConfig, SecretsConfig, Settings, ToolConfig, WorkflowConfig, WorkflowStep,
+    ResourceTemplateConfig, SchemaConfig, SecretsConfig, Settings, ToolConfig, WorkflowConfig, WorkflowStep,
 };
 use crate::domain::ToolPort;
 
@@ -543,8 +543,12 @@ pub async fn get_config_overview(
 ) -> impl IntoResponse {
     let settings = state.settings.read().await;
 
-    // Check if config file exists (default: metis.toml)
-    let config_file_loaded = std::path::Path::new("metis.toml").exists();
+    // Check if config file exists using the stored config path
+    let config_file_loaded = settings
+        .config_path
+        .as_ref()
+        .map(|p| p.exists())
+        .unwrap_or(false);
 
     let overview = ConfigOverview {
         server: ServerInfo {
@@ -1497,12 +1501,16 @@ pub async fn delete_state_key(
 // Config Persistence Endpoints
 // ============================================================================
 
-/// POST /api/config/save-disk - Save current configuration to metis.toml
+/// POST /api/config/save-disk - Save current configuration to config file
 pub async fn save_config_to_disk(
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
     // Get mutable copy of settings to add encrypted secrets
     let settings_guard = state.settings.read().await;
+    let config_path = settings_guard
+        .config_path
+        .clone()
+        .unwrap_or_else(|| std::path::PathBuf::from("metis.toml"));
     let mut settings: Settings = serde_json::from_value(
         serde_json::to_value(&*settings_guard).unwrap()
     ).unwrap();
@@ -1533,11 +1541,11 @@ pub async fn save_config_to_disk(
         }
     };
 
-    // Write to metis.toml
-    if let Err(e) = std::fs::write("metis.toml", toml_content) {
+    // Write to config file
+    if let Err(e) = std::fs::write(&config_path, toml_content) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiResponse::<()>::error(format!("Failed to write metis.toml: {}", e)))
+            Json(ApiResponse::<()>::error(format!("Failed to write {}: {}", config_path.display(), e)))
         );
     }
 
@@ -3281,4 +3289,130 @@ pub async fn clear_secrets(
     }
 
     (StatusCode::OK, Json(ApiResponse::<()>::ok()))
+}
+
+// ============================================================================
+// Schema CRUD Endpoints
+// ============================================================================
+
+/// DTO for reusable JSON schema definitions
+#[derive(Serialize, Deserialize, Clone)]
+pub struct SchemaDto {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub schema: Value,
+}
+
+impl From<&SchemaConfig> for SchemaDto {
+    fn from(s: &SchemaConfig) -> Self {
+        Self {
+            name: s.name.clone(),
+            description: s.description.clone(),
+            schema: s.schema.clone(),
+        }
+    }
+}
+
+impl From<SchemaDto> for SchemaConfig {
+    fn from(dto: SchemaDto) -> Self {
+        Self {
+            name: dto.name,
+            description: dto.description,
+            schema: dto.schema,
+        }
+    }
+}
+
+/// GET /api/schemas - List all schemas
+pub async fn list_schemas(
+    State(state): State<ApiState>,
+) -> impl IntoResponse {
+    let settings = state.settings.read().await;
+    let schemas: Vec<SchemaDto> = settings.schemas.iter().map(SchemaDto::from).collect();
+    (StatusCode::OK, Json(ApiResponse::success(schemas)))
+}
+
+/// GET /api/schemas/:name - Get a single schema
+pub async fn get_schema(
+    State(state): State<ApiState>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    let settings = state.settings.read().await;
+
+    if let Some(schema) = settings.schemas.iter().find(|s| s.name == name) {
+        (StatusCode::OK, Json(ApiResponse::success(SchemaDto::from(schema))))
+    } else {
+        (StatusCode::NOT_FOUND, Json(ApiResponse::<SchemaDto>::error("Schema not found")))
+    }
+}
+
+/// POST /api/schemas - Create a new schema
+pub async fn create_schema(
+    State(state): State<ApiState>,
+    Json(dto): Json<SchemaDto>,
+) -> impl IntoResponse {
+    let mut settings = state.settings.write().await;
+
+    // Check for duplicate name
+    if settings.schemas.iter().any(|s| s.name == dto.name) {
+        return (
+            StatusCode::CONFLICT,
+            Json(ApiResponse::<SchemaDto>::error("Schema with this name already exists")),
+        );
+    }
+
+    let schema = SchemaConfig::from(dto.clone());
+    settings.schemas.push(schema);
+    drop(settings);
+
+    (StatusCode::CREATED, Json(ApiResponse::success(dto)))
+}
+
+/// PUT /api/schemas/:name - Update a schema
+pub async fn update_schema(
+    State(state): State<ApiState>,
+    Path(name): Path<String>,
+    Json(dto): Json<SchemaDto>,
+) -> impl IntoResponse {
+    let mut settings = state.settings.write().await;
+
+    // Check if name is being changed and would conflict
+    if dto.name != name {
+        let new_name_exists = settings.schemas.iter().any(|s| s.name == dto.name);
+        if new_name_exists {
+            return (
+                StatusCode::CONFLICT,
+                Json(ApiResponse::<SchemaDto>::error("Schema with this name already exists")),
+            );
+        }
+    }
+
+    if let Some(schema) = settings.schemas.iter_mut().find(|s| s.name == name) {
+        schema.name = dto.name.clone();
+        schema.description = dto.description.clone();
+        schema.schema = dto.schema.clone();
+        drop(settings);
+
+        (StatusCode::OK, Json(ApiResponse::success(dto)))
+    } else {
+        (StatusCode::NOT_FOUND, Json(ApiResponse::<SchemaDto>::error("Schema not found")))
+    }
+}
+
+/// DELETE /api/schemas/:name - Delete a schema
+pub async fn delete_schema(
+    State(state): State<ApiState>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    let mut settings = state.settings.write().await;
+
+    let initial_len = settings.schemas.len();
+    settings.schemas.retain(|s| s.name != name);
+
+    if settings.schemas.len() < initial_len {
+        (StatusCode::OK, Json(ApiResponse::<()>::ok()))
+    } else {
+        (StatusCode::NOT_FOUND, Json(ApiResponse::<()>::error("Schema not found")))
+    }
 }

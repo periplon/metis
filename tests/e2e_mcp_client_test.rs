@@ -48,6 +48,7 @@ impl TestServer {
         prompts: Vec<PromptConfig>,
     ) -> Self {
         let settings = Arc::new(RwLock::new(Settings {
+            config_path: None,
             server: metis::config::ServerSettings {
                 host: "127.0.0.1".to_string(),
                 port: 0,
@@ -64,6 +65,7 @@ impl TestServer {
             orchestrations: vec![],
             mcp_servers: vec![],
             secrets: Default::default(),
+            schemas: vec![],
         }));
 
         let state_manager = Arc::new(StateManager::new());
@@ -79,11 +81,12 @@ impl TestServer {
         // Create MetisServer using rmcp SDK
         let metis_server = MetisServer::new(resource_handler, tool_handler.clone(), prompt_handler);
 
-        // Create test secrets store
+        // Create test secrets store and passphrase store
         let secrets_store = metis::adapters::secrets::create_secrets_store();
+        let passphrase_store = metis::adapters::secrets::create_passphrase_store();
 
         let app =
-            metis::create_app(metis_server, health_handler, metrics_handler, settings, state_manager, secrets_store, tool_handler).await;
+            metis::create_app(metis_server, health_handler, metrics_handler, settings, state_manager, secrets_store, passphrase_store, tool_handler).await;
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

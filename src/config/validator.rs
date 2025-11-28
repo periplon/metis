@@ -216,6 +216,7 @@ mod tests {
     #[test]
     fn test_valid_config() {
         let settings = Settings {
+            config_path: None,
             server: ServerSettings {
                 host: "127.0.0.1".to_string(),
                 port: 3000,
@@ -232,6 +233,7 @@ mod tests {
             orchestrations: vec![],
             mcp_servers: vec![],
             secrets: Default::default(),
+            schemas: vec![],
         };
 
         let result = ConfigValidator::validate(&settings);
@@ -241,6 +243,7 @@ mod tests {
     #[test]
     fn test_invalid_port() {
         let settings = Settings {
+            config_path: None,
             server: ServerSettings {
                 host: "127.0.0.1".to_string(),
                 port: 0,
@@ -257,6 +260,7 @@ mod tests {
             orchestrations: vec![],
             mcp_servers: vec![],
             secrets: Default::default(),
+            schemas: vec![],
         };
 
         let result = ConfigValidator::validate(&settings);
@@ -268,6 +272,7 @@ mod tests {
     #[test]
     fn test_duplicate_resource_uris() {
         let settings = Settings {
+            config_path: None,
             server: ServerSettings {
                 host: "127.0.0.1".to_string(),
                 port: 3000,
@@ -303,6 +308,7 @@ mod tests {
             orchestrations: vec![],
             mcp_servers: vec![],
             secrets: Default::default(),
+            schemas: vec![],
         };
 
         let result = ConfigValidator::validate(&settings);

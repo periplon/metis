@@ -22,6 +22,10 @@ pub struct SchemaProperty {
     pub nested_properties: Vec<SchemaProperty>,
     /// For enums: allowed values (comma-separated in UI)
     pub enum_values: Vec<String>,
+    /// For $ref: reference to internal schema name or external URL
+    pub ref_value: String,
+    /// For $ref: whether this is an external URL reference
+    pub ref_is_external: bool,
 }
 
 static NEXT_PROP_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
@@ -41,11 +45,26 @@ impl SchemaProperty {
             items_type: "string".to_string(),
             nested_properties: Vec::new(),
             enum_values: Vec::new(),
+            ref_value: String::new(),
+            ref_is_external: false,
         }
     }
 
     /// Convert to JSON Schema Value
     pub fn to_schema_value(&self) -> Value {
+        // Handle $ref type - returns just the reference object
+        if self.prop_type == "$ref" {
+            let mut prop = Map::new();
+            if !self.ref_value.is_empty() {
+                prop.insert("$ref".to_string(), json!(self.ref_value));
+            }
+            // Include description if present (valid alongside $ref in some implementations)
+            if !self.description.is_empty() {
+                prop.insert("description".to_string(), json!(self.description));
+            }
+            return Value::Object(prop);
+        }
+
         let mut prop = Map::new();
 
         // Handle enum type specially - it's a string with enum constraint
@@ -70,6 +89,9 @@ impl SchemaProperty {
                 } else if self.items_type == "enum" && !self.enum_values.is_empty() {
                     // Array of enum values
                     json!({"type": "string", "enum": self.enum_values})
+                } else if self.items_type == "$ref" && !self.ref_value.is_empty() {
+                    // Array of $ref items
+                    json!({"$ref": self.ref_value})
                 } else {
                     json!({"type": self.items_type})
                 };
@@ -130,6 +152,12 @@ pub fn schema_to_properties(schema: &Value) -> Vec<SchemaProperty> {
             .unwrap_or_default();
 
         for (name, prop) in props {
+            // Check if this is a $ref
+            let ref_value = prop.get("$ref")
+                .and_then(|r| r.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+
             let raw_type = prop.get("type")
                 .and_then(|t| t.as_str())
                 .unwrap_or("string")
@@ -141,20 +169,31 @@ pub fn schema_to_properties(schema: &Value) -> Vec<SchemaProperty> {
                 .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
                 .unwrap_or_default();
 
-            // If it has enum values, treat it as enum type
-            let prop_type = if !enum_values.is_empty() {
+            // Determine property type: $ref takes precedence, then enum, then raw type
+            let prop_type = if !ref_value.is_empty() {
+                "$ref".to_string()
+            } else if !enum_values.is_empty() {
                 "enum".to_string()
             } else {
                 raw_type.clone()
             };
+
+            // Check if ref is external (starts with http:// or https://)
+            let ref_is_external = ref_value.starts_with("http://") || ref_value.starts_with("https://");
 
             let description = prop.get("description")
                 .and_then(|d| d.as_str())
                 .unwrap_or("")
                 .to_string();
 
-            let (items_type, nested_properties, items_enum_values) = if raw_type == "array" {
+            let (items_type, nested_properties, items_enum_values, items_ref_value, items_ref_is_external) = if raw_type == "array" {
                 if let Some(items) = prop.get("items") {
+                    // Check for $ref in items
+                    let items_ref = items.get("$ref")
+                        .and_then(|r| r.as_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_default();
+
                     let items_t = items.get("type")
                         .and_then(|t| t.as_str())
                         .unwrap_or("string")
@@ -166,25 +205,29 @@ pub fn schema_to_properties(schema: &Value) -> Vec<SchemaProperty> {
                         .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
                         .unwrap_or_default();
 
-                    let actual_items_type = if !items_enum.is_empty() {
+                    let actual_items_type = if !items_ref.is_empty() {
+                        "$ref".to_string()
+                    } else if !items_enum.is_empty() {
                         "enum".to_string()
                     } else {
                         items_t.clone()
                     };
+
+                    let items_is_external = items_ref.starts_with("http://") || items_ref.starts_with("https://");
 
                     let nested = if items_t == "object" {
                         schema_to_properties(items)
                     } else {
                         Vec::new()
                     };
-                    (actual_items_type, nested, items_enum)
+                    (actual_items_type, nested, items_enum, items_ref, items_is_external)
                 } else {
-                    ("string".to_string(), Vec::new(), Vec::new())
+                    ("string".to_string(), Vec::new(), Vec::new(), String::new(), false)
                 }
             } else if raw_type == "object" {
-                ("string".to_string(), schema_to_properties(prop), Vec::new())
+                ("string".to_string(), schema_to_properties(prop), Vec::new(), String::new(), false)
             } else {
-                ("string".to_string(), Vec::new(), Vec::new())
+                ("string".to_string(), Vec::new(), Vec::new(), String::new(), false)
             };
 
             // Use items_enum_values if this is an array of enums, otherwise use the property's enum_values
@@ -192,6 +235,19 @@ pub fn schema_to_properties(schema: &Value) -> Vec<SchemaProperty> {
                 items_enum_values
             } else {
                 enum_values
+            };
+
+            // Use items_ref if this is an array of refs, otherwise use the property's ref
+            let final_ref_value = if raw_type == "array" && !items_ref_value.is_empty() {
+                items_ref_value
+            } else {
+                ref_value
+            };
+
+            let final_ref_is_external = if raw_type == "array" && items_ref_is_external {
+                items_ref_is_external
+            } else {
+                ref_is_external
             };
 
             properties.push(SchemaProperty {
@@ -203,6 +259,8 @@ pub fn schema_to_properties(schema: &Value) -> Vec<SchemaProperty> {
                 items_type,
                 nested_properties,
                 enum_values: final_enum_values,
+                ref_value: final_ref_value,
+                ref_is_external: final_ref_is_external,
             });
         }
     }
@@ -274,6 +332,8 @@ pub fn JsonSchemaEditor(
     set_properties: WriteSignal<Vec<SchemaProperty>>,
     #[prop(default = "Properties")] label: &'static str,
     #[prop(default = "green")] color: &'static str,
+    /// Available schema names for $ref selection (optional)
+    #[prop(optional)] available_schemas: Option<ReadSignal<Vec<String>>>,
 ) -> impl IntoView {
     let ring_color = match color {
         "orange" => "focus:ring-orange-500",
@@ -288,6 +348,9 @@ pub fn JsonSchemaEditor(
         "blue" => "text-blue-600 hover:bg-blue-50",
         _ => "text-green-600 hover:bg-green-50",
     };
+
+    // Store available_schemas for passing to children
+    let schemas_stored = StoredValue::new(available_schemas);
 
     let add_property = move |_| {
         set_properties.update(|props| {
@@ -334,6 +397,7 @@ pub fn JsonSchemaEditor(
                                     set_properties=set_properties
                                     ring_color=ring_color
                                     btn_color=btn_color
+                                    available_schemas=schemas_stored.get_value()
                                 />
                             }
                         }
@@ -353,11 +417,14 @@ fn RecursivePropertyEditor(
     set_properties: WriteSignal<Vec<SchemaProperty>>,
     ring_color: &'static str,
     btn_color: &'static str,
+    /// Available schema names for $ref selection (passed as Option)
+    available_schemas: Option<ReadSignal<Vec<String>>>,
 ) -> AnyView {
     let (expanded, set_expanded) = signal(depth == 0); // Auto-expand top level
 
-    // Store path for all derived signals and closures
+    // Store path and available_schemas for all derived signals and closures
     let path_stored = StoredValue::new(path.clone());
+    let schemas_stored = StoredValue::new(available_schemas);
 
     // Derived signals for this property's fields
     let name = move || {
@@ -384,12 +451,24 @@ fn RecursivePropertyEditor(
         let props = properties.get();
         get_property_at_path(&props, &path_stored.get_value()).map(|p| p.enum_values.join(", ")).unwrap_or_default()
     };
+    let ref_value = move || {
+        let props = properties.get();
+        get_property_at_path(&props, &path_stored.get_value()).map(|p| p.ref_value.clone()).unwrap_or_default()
+    };
+    let ref_is_external = move || {
+        let props = properties.get();
+        get_property_at_path(&props, &path_stored.get_value()).map(|p| p.ref_is_external).unwrap_or(false)
+    };
     let has_nested = move || {
         let props = properties.get();
         let path = path_stored.get_value();
         let pt = get_property_at_path(&props, &path).map(|p| p.prop_type.clone()).unwrap_or_default();
         let it = get_property_at_path(&props, &path).map(|p| p.items_type.clone()).unwrap_or_default();
         pt == "object" || (pt == "array" && it == "object")
+    };
+    // Check if we need to show $ref input (type is $ref, or array with items_type $ref)
+    let needs_ref_input = move || {
+        prop_type() == "$ref" || (prop_type() == "array" && items_type() == "$ref")
     };
 
     // Indentation based on depth
@@ -441,6 +520,10 @@ fn RecursivePropertyEditor(
                                     if p.prop_type != "enum" {
                                         p.enum_values.clear();
                                     }
+                                    if p.prop_type != "$ref" {
+                                        p.ref_value.clear();
+                                        p.ref_is_external = false;
+                                    }
                                 });
                             });
                         }
@@ -452,6 +535,7 @@ fn RecursivePropertyEditor(
                         <option value="enum">"enum"</option>
                         <option value="array">"array"</option>
                         <option value="object">"object"</option>
+                        <option value="$ref">"$ref"</option>
                     </select>
                 </div>
 
@@ -475,6 +559,10 @@ fn RecursivePropertyEditor(
                                         if p.items_type != "enum" {
                                             p.enum_values.clear();
                                         }
+                                        if p.items_type != "$ref" {
+                                            p.ref_value.clear();
+                                            p.ref_is_external = false;
+                                        }
                                     });
                                 });
                             }
@@ -485,6 +573,7 @@ fn RecursivePropertyEditor(
                             <option value="boolean">"[boolean]"</option>
                             <option value="enum">"[enum]"</option>
                             <option value="object">"[object]"</option>
+                            <option value="$ref">"[$ref]"</option>
                         </select>
                     </div>
                 </Show>
@@ -592,6 +681,130 @@ fn RecursivePropertyEditor(
                 </div>
             </Show>
 
+            // $ref input (shown when type is $ref or array of $ref)
+            <Show when=needs_ref_input>
+                <div class="mt-2 space-y-2">
+                    // Toggle between internal and external reference
+                    <div class="flex items-center gap-4">
+                        <label class="flex items-center gap-1 text-sm text-gray-600">
+                            <input
+                                type="radio"
+                                name=format!("ref-type-{}", path_stored.get_value().iter().map(|i| i.to_string()).collect::<Vec<_>>().join("-"))
+                                checked=move || !ref_is_external()
+                                on:change=move |_| {
+                                    let path = path_stored.get_value();
+                                    set_properties.update(move |props| {
+                                        mutate_property_at_path(props, &path, |p| {
+                                            p.ref_is_external = false;
+                                            p.ref_value.clear();
+                                        });
+                                    });
+                                }
+                            />
+                            "Internal Schema"
+                        </label>
+                        <label class="flex items-center gap-1 text-sm text-gray-600">
+                            <input
+                                type="radio"
+                                name=format!("ref-type-{}", path_stored.get_value().iter().map(|i| i.to_string()).collect::<Vec<_>>().join("-"))
+                                checked=ref_is_external
+                                on:change=move |_| {
+                                    let path = path_stored.get_value();
+                                    set_properties.update(move |props| {
+                                        mutate_property_at_path(props, &path, |p| {
+                                            p.ref_is_external = true;
+                                            p.ref_value.clear();
+                                        });
+                                    });
+                                }
+                            />
+                            "External URL"
+                        </label>
+                    </div>
+
+                    // Internal schema selector (dropdown)
+                    <Show when=move || !ref_is_external()>
+                        {move || {
+                            let available = schemas_stored.get_value()
+                                .map(|s| s.get())
+                                .unwrap_or_default();
+
+                            if available.is_empty() {
+                                view! {
+                                    <div>
+                                        <input
+                                            type="text"
+                                            class=format!("w-full px-2 py-1 text-sm border border-gray-300 rounded {} bg-teal-50", ring_color)
+                                            placeholder="Schema name (e.g., UserInput)"
+                                            prop:value=ref_value
+                                            on:input=move |ev| {
+                                                let target = ev.target().unwrap();
+                                                let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                                let value = input.value();
+                                                let path = path_stored.get_value();
+                                                set_properties.update(move |props| {
+                                                    mutate_property_at_path(props, &path, |p| p.ref_value = value.clone());
+                                                });
+                                            }
+                                        />
+                                        <p class="mt-1 text-xs text-gray-500">"Enter schema name. Create schemas in the Schemas section first."</p>
+                                    </div>
+                                }.into_any()
+                            } else {
+                                view! {
+                                    <div>
+                                        <select
+                                            class=format!("w-full px-2 py-1 text-sm border border-gray-300 rounded {} bg-teal-50", ring_color)
+                                            prop:value=ref_value
+                                            on:change=move |ev| {
+                                                let target = ev.target().unwrap();
+                                                let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
+                                                let value = select.value();
+                                                let path = path_stored.get_value();
+                                                set_properties.update(move |props| {
+                                                    mutate_property_at_path(props, &path, |p| p.ref_value = value.clone());
+                                                });
+                                            }
+                                        >
+                                            <option value="">"-- Select Schema --"</option>
+                                            {available.into_iter().map(|schema_name| {
+                                                let name_clone = schema_name.clone();
+                                                view! {
+                                                    <option value=schema_name.clone()>{name_clone}</option>
+                                                }
+                                            }).collect::<Vec<_>>()}
+                                        </select>
+                                        <p class="mt-1 text-xs text-gray-500">"Select an internal schema to reference"</p>
+                                    </div>
+                                }.into_any()
+                            }
+                        }}
+                    </Show>
+
+                    // External URL input
+                    <Show when=ref_is_external>
+                        <div>
+                            <input
+                                type="url"
+                                class=format!("w-full px-2 py-1 text-sm border border-gray-300 rounded {} bg-blue-50", ring_color)
+                                placeholder="https://example.com/schemas/my-schema.json"
+                                prop:value=ref_value
+                                on:input=move |ev| {
+                                    let target = ev.target().unwrap();
+                                    let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                    let value = input.value();
+                                    let path = path_stored.get_value();
+                                    set_properties.update(move |props| {
+                                        mutate_property_at_path(props, &path, |p| p.ref_value = value.clone());
+                                    });
+                                }
+                            />
+                            <p class="mt-1 text-xs text-gray-500">"Enter full URL to external JSON Schema"</p>
+                        </div>
+                    </Show>
+                </div>
+            </Show>
+
             // Nested properties for object/array[object]
             <Show when=move || has_nested() && expanded.get()>
                 <div class="mt-3 pt-3 border-t border-gray-200">
@@ -647,6 +860,7 @@ fn RecursivePropertyEditor(
                                             set_properties=set_properties
                                             ring_color=ring_color
                                             btn_color=btn_color
+                                            available_schemas=schemas_stored.get_value()
                                         />
                                     }
                                 }

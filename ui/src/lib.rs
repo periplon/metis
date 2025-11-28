@@ -15,6 +15,7 @@ use components::tools::{Tools, ToolForm, ToolEditForm};
 use components::prompts::{Prompts, PromptForm, PromptEditForm};
 use components::workflows::{Workflows, WorkflowForm, WorkflowEditForm};
 use components::agents::{Agents, AgentForm, AgentEditForm};
+use components::schemas::{Schemas, SchemaForm, SchemaEditForm};
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -32,6 +33,7 @@ pub fn App() -> impl IntoView {
                         <NavLink href="/prompts" label="Prompts" />
                         <NavLink href="/workflows" label="Workflows" />
                         <NavLink href="/agents" label="AI Agents" />
+                        <NavLink href="/schemas" label="Schemas" />
                         <div class="border-t border-gray-700 my-4"></div>
                         <NavLink href="/config" label="Configuration" />
                         <NavLink href="/logs" label="Logs" />
@@ -63,6 +65,9 @@ pub fn App() -> impl IntoView {
                         <Route path=path!("/agents/new") view=AgentForm/>
                         <Route path=path!("/agents/edit/:name") view=AgentEditForm/>
                         <Route path=path!("/agents") view=Agents/>
+                        <Route path=path!("/schemas/new") view=SchemaForm/>
+                        <Route path=path!("/schemas/edit/:name") view=SchemaEditForm/>
+                        <Route path=path!("/schemas") view=Schemas/>
                         <Route path=path!("/config") view=Config/>
                         <Route path=path!("/logs") view=Logs/>
                     </Routes>

@@ -3,6 +3,7 @@ use crate::adapters::mock_strategy::MockStrategyHandler;
 use crate::adapters::workflow_engine::WorkflowEngine;
 use crate::agents::domain::AgentPort;
 use crate::config::{Settings, ToolConfig, WorkflowConfig};
+use crate::config::schema::{resolve_schema_refs, SchemaConfig};
 use crate::domain::{Tool, ToolPort};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -49,14 +50,27 @@ impl InnerToolHandler {
 impl ToolPort for InnerToolHandler {
     async fn list_tools(&self) -> Result<Vec<Tool>> {
         let settings = self.settings.read().await;
+        let schemas = &settings.schemas;
+
+        // Helper to resolve schema refs with logging on error
+        let resolve = |schema: &Value| -> Value {
+            resolve_schema_refs(schema, schemas).unwrap_or_else(|e| {
+                tracing::warn!("Failed to resolve schema reference: {}", e);
+                schema.clone()
+            })
+        };
+        let resolve_opt = |schema: &Option<Value>| -> Option<Value> {
+            schema.as_ref().map(|s| resolve(s))
+        };
+
         let tools = settings
             .tools
             .iter()
             .map(|t| Tool {
                 name: t.name.clone(),
                 description: t.description.clone(),
-                input_schema: t.input_schema.clone(),
-                output_schema: t.output_schema.clone(),
+                input_schema: resolve(&t.input_schema),
+                output_schema: resolve_opt(&t.output_schema),
             })
             .collect();
         Ok(tools)
@@ -231,6 +245,18 @@ impl BasicToolHandler {
 impl ToolPort for BasicToolHandler {
     async fn list_tools(&self) -> Result<Vec<Tool>> {
         let settings = self.settings.read().await;
+        let schemas = &settings.schemas;
+
+        // Helper to resolve schema refs with logging on error
+        let resolve = |schema: &Value, schemas: &[SchemaConfig]| -> Value {
+            resolve_schema_refs(schema, schemas).unwrap_or_else(|e| {
+                tracing::warn!("Failed to resolve schema reference: {}", e);
+                schema.clone()
+            })
+        };
+        let resolve_opt = |schema: &Option<Value>, schemas: &[SchemaConfig]| -> Option<Value> {
+            schema.as_ref().map(|s| resolve(s, schemas))
+        };
 
         // Regular tools
         let mut tools: Vec<Tool> = settings
@@ -239,8 +265,8 @@ impl ToolPort for BasicToolHandler {
             .map(|t| Tool {
                 name: t.name.clone(),
                 description: t.description.clone(),
-                input_schema: t.input_schema.clone(),
-                output_schema: t.output_schema.clone(),
+                input_schema: resolve(&t.input_schema, schemas),
+                output_schema: resolve_opt(&t.output_schema, schemas),
             })
             .collect();
 
@@ -249,8 +275,8 @@ impl ToolPort for BasicToolHandler {
             tools.push(Tool {
                 name: workflow.name.clone(),
                 description: format!("[Workflow] {}", workflow.description),
-                input_schema: workflow.input_schema.clone(),
-                output_schema: workflow.output_schema.clone(),
+                input_schema: resolve(&workflow.input_schema, schemas),
+                output_schema: resolve_opt(&workflow.output_schema, schemas),
             });
         }
 
@@ -268,14 +294,14 @@ impl ToolPort for BasicToolHandler {
                     "properties": {},
                     "required": []
                 }),
-                output_schema: resource.output_schema.clone(),
+                output_schema: resolve_opt(&resource.output_schema, schemas),
             });
         }
 
         // Resource template tools (templates exposed as tools with input parameters)
         for template in &settings.resource_templates {
             // Build input schema from template's input_schema or extract from URI pattern
-            let input_schema = template.input_schema.clone().unwrap_or_else(|| {
+            let input_schema = template.input_schema.clone().map(|s| resolve(&s, schemas)).unwrap_or_else(|| {
                 // Extract {variables} from uri_template to build schema
                 let mut properties = serde_json::Map::new();
                 let mut required = Vec::new();
@@ -321,7 +347,7 @@ impl ToolPort for BasicToolHandler {
                     template.uri_template
                 ),
                 input_schema,
-                output_schema: template.output_schema.clone(),
+                output_schema: resolve_opt(&template.output_schema, schemas),
             });
         }
 

@@ -377,6 +377,35 @@ pub async fn test_orchestration(name: &str, args: &serde_json::Value) -> Result<
 }
 
 // ============================================================================
+// Schemas (Reusable JSON Schema Definitions)
+// ============================================================================
+
+pub async fn list_schemas() -> Result<Vec<Schema>, String> {
+    let url = format!("{}/schemas", API_BASE);
+    fetch_json::<Vec<Schema>>(&url).await
+}
+
+pub async fn get_schema(name: &str) -> Result<Schema, String> {
+    let url = format!("{}/schemas/{}", API_BASE, name);
+    fetch_json::<Schema>(&url).await
+}
+
+pub async fn create_schema(schema: &Schema) -> Result<Schema, String> {
+    let url = format!("{}/schemas", API_BASE);
+    post_json::<Schema, Schema>(&url, schema).await
+}
+
+pub async fn update_schema(name: &str, schema: &Schema) -> Result<Schema, String> {
+    let url = format!("{}/schemas/{}", API_BASE, name);
+    put_json::<Schema, Schema>(&url, schema).await
+}
+
+pub async fn delete_schema(name: &str) -> Result<(), String> {
+    let url = format!("{}/schemas/{}", API_BASE, name);
+    delete_request(&url).await
+}
+
+// ============================================================================
 // State Management
 // ============================================================================
 

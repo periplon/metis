@@ -34,22 +34,36 @@ async fn main() -> anyhow::Result<()> {
     let port = settings.server.port;
     let s3_config = settings.s3.clone();
 
+    // Get the config root directory for watching and reloading
+    let config_path = settings
+        .config_path
+        .clone()
+        .unwrap_or_else(|| std::path::PathBuf::from("metis.toml"));
+    let config_root = config_path
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|| ".".to_string());
+    let config_root_for_reload = config_root.clone();
+
     info!("Starting Metis MCP Mock Server on {}:{}", host, port);
+    info!("Using configuration file: {}", config_path.display());
 
     // Wrap settings in Arc<RwLock> for live reload
     let settings = Arc::new(RwLock::new(settings));
 
     // Start config watcher for local file changes
     let settings_for_watcher = settings.clone();
+    // Build watch paths based on the actual config location
     let paths = vec![
-        "metis.toml".to_string(),
-        "config/tools".to_string(),
-        "config/resources".to_string(),
-        "config/resource_templates".to_string(),
-        "config/prompts".to_string(),
+        config_path.to_string_lossy().to_string(),
+        format!("{}/config/tools", config_root),
+        format!("{}/config/resources", config_root),
+        format!("{}/config/resource_templates", config_root),
+        format!("{}/config/prompts", config_root),
+        format!("{}/config/schemas", config_root),
     ];
     let _watcher = ConfigWatcher::new(paths, move || {
-        match Settings::new() {
+        match Settings::from_root(&config_root_for_reload) {
             Ok(new_settings) => {
                 let mut w = settings_for_watcher.blocking_write();
                 // Merge local config changes (local config is base, gets overridden by S3/UI)

@@ -1,20 +1,26 @@
 use config::{Config, File};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::path::PathBuf;
 
 pub mod s3;
 pub mod s3_watcher;
+pub mod schema;
 pub mod validator;
 pub mod watcher;
 
 pub use s3::S3Config;
 pub use s3_watcher::S3Watcher;
+pub use schema::SchemaConfig;
 
 use crate::agents::config::{AgentConfig, OrchestrationConfig};
 use crate::cli::Cli;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Settings {
+    /// Path to the configuration file (not serialized, set at runtime)
+    #[serde(skip)]
+    pub config_path: Option<PathBuf>,
     pub server: ServerSettings,
     #[serde(default)]
     pub auth: crate::domain::auth::AuthConfig,
@@ -32,6 +38,9 @@ pub struct Settings {
     pub agents: Vec<AgentConfig>,
     #[serde(default)]
     pub orchestrations: Vec<OrchestrationConfig>,
+    /// Reusable JSON schema definitions that can be referenced via $ref
+    #[serde(default)]
+    pub schemas: Vec<SchemaConfig>,
     #[serde(default)]
     pub rate_limit: Option<RateLimitConfig>,
     #[serde(default)]
@@ -412,6 +421,13 @@ impl Settings {
 
         let mut settings: Settings = s.try_deserialize()?;
 
+        // Store the config path (canonicalize if file exists, otherwise use as-is)
+        settings.config_path = Some(
+            config_path
+                .canonicalize()
+                .unwrap_or_else(|_| config_path.clone()),
+        );
+
         // Apply CLI overrides (CLI > env vars > config file)
         settings.apply_cli_overrides(cli);
 
@@ -454,14 +470,21 @@ impl Settings {
     }
 
     pub fn from_root(root: &str) -> Result<Self, anyhow::Error> {
-        let config_path = std::path::Path::new(root).join("metis");
+        let config_path = std::path::Path::new(root).join("metis.toml");
         let s = Config::builder()
-            .add_source(File::from(config_path).required(false))
+            .add_source(File::from(config_path.clone()).required(false))
             .set_default("server.host", "127.0.0.1")?
             .set_default("server.port", 3000)?
             .build()?;
 
         let mut settings: Settings = s.try_deserialize()?;
+
+        // Store the config path (canonicalize if file exists, otherwise use as-is)
+        settings.config_path = Some(
+            config_path
+                .canonicalize()
+                .unwrap_or_else(|_| config_path),
+        );
 
         settings.load_external_configs(root)?;
 
@@ -483,6 +506,7 @@ impl Settings {
         self.load_workflows_from_dir(&format!("{}/config/workflows", root))?;
         self.load_agents_from_dir(&format!("{}/config/agents", root))?;
         self.load_orchestrations_from_dir(&format!("{}/config/orchestrations", root))?;
+        self.load_schemas_from_dir(&format!("{}/config/schemas", root))?;
         Ok(())
     }
 
@@ -517,6 +541,7 @@ impl Settings {
         Self::merge_vec_by_key(&mut self.workflows, other.workflows, |w| w.name.clone());
         Self::merge_vec_by_key(&mut self.agents, other.agents, |a| a.name.clone());
         Self::merge_vec_by_key(&mut self.orchestrations, other.orchestrations, |o| o.name.clone());
+        Self::merge_vec_by_key(&mut self.schemas, other.schemas, |s| s.name.clone());
         Self::merge_vec_by_key(&mut self.mcp_servers, other.mcp_servers, |m| m.name.clone());
     }
 
@@ -552,9 +577,18 @@ impl Settings {
     /// Merge S3 configuration files into this Settings.
     /// Each file in the list is parsed and merged with precedence (later files override earlier).
     /// Supports TOML, YAML, and JSON formats based on file extension.
+    ///
+    /// Handles two patterns:
+    /// 1. Full Settings files (e.g., `metis.toml`, `config.yaml`)
+    /// 2. Individual item files in subdirectories (e.g., `config/schemas/my_schema.yaml`)
     pub fn merge_s3_configs(&mut self, configs: Vec<(String, String)>) {
         for (key, content) in configs {
-            // Determine format from key (file path)
+            // Check if this is an individual config file in a known subdirectory
+            if self.try_merge_individual_s3_config(&key, &content) {
+                continue;
+            }
+
+            // Try to parse as a full Settings file
             let settings_result: Result<Settings, String> = if key.ends_with(".toml") {
                 toml::from_str(&content).map_err(|e| format!("TOML parse error in {}: {}", key, e))
             } else if key.ends_with(".yaml") || key.ends_with(".yml") {
@@ -575,6 +609,173 @@ impl Settings {
                     tracing::error!("Failed to parse S3 config {}: {}", key, e);
                 }
             }
+        }
+    }
+
+    /// Try to merge an individual config file from a known S3 subdirectory.
+    /// Returns true if the file was handled as an individual config, false otherwise.
+    fn try_merge_individual_s3_config(&mut self, key: &str, content: &str) -> bool {
+        // Detect config type from path pattern (handles both with and without prefix)
+        // e.g., "config/schemas/my_schema.yaml" or "metis/config/schemas/my_schema.yaml"
+        let config_type = if key.contains("/schemas/") {
+            Some("schema")
+        } else if key.contains("/tools/") {
+            Some("tool")
+        } else if key.contains("/resources/") && !key.contains("/resource_templates/") {
+            Some("resource")
+        } else if key.contains("/resource_templates/") {
+            Some("resource_template")
+        } else if key.contains("/prompts/") {
+            Some("prompt")
+        } else if key.contains("/agents/") {
+            Some("agent")
+        } else if key.contains("/workflows/") {
+            Some("workflow")
+        } else {
+            None
+        };
+
+        let config_type = match config_type {
+            Some(t) => t,
+            None => return false,
+        };
+
+        // Parse based on file extension
+        let is_json = key.ends_with(".json");
+        let is_yaml = key.ends_with(".yaml") || key.ends_with(".yml");
+
+        if !is_json && !is_yaml {
+            return false;
+        }
+
+        match config_type {
+            "schema" => {
+                let result: Result<schema::SchemaConfig, String> = if is_json {
+                    serde_json::from_str(content).map_err(|e| e.to_string())
+                } else {
+                    serde_yaml::from_str(content).map_err(|e| e.to_string())
+                };
+                match result {
+                    Ok(schema_config) => {
+                        tracing::info!("Loaded schema '{}' from S3: {}", schema_config.name, key);
+                        Self::merge_vec_by_key(&mut self.schemas, vec![schema_config], |s| s.name.clone());
+                        true
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to parse S3 schema file {}: {}", key, e);
+                        false
+                    }
+                }
+            }
+            "tool" => {
+                let result: Result<ToolConfig, String> = if is_json {
+                    serde_json::from_str(content).map_err(|e| e.to_string())
+                } else {
+                    serde_yaml::from_str(content).map_err(|e| e.to_string())
+                };
+                match result {
+                    Ok(tool_config) => {
+                        tracing::info!("Loaded tool '{}' from S3: {}", tool_config.name, key);
+                        Self::merge_vec_by_key(&mut self.tools, vec![tool_config], |t| t.name.clone());
+                        true
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to parse S3 tool file {}: {}", key, e);
+                        false
+                    }
+                }
+            }
+            "resource" => {
+                let result: Result<ResourceConfig, String> = if is_json {
+                    serde_json::from_str(content).map_err(|e| e.to_string())
+                } else {
+                    serde_yaml::from_str(content).map_err(|e| e.to_string())
+                };
+                match result {
+                    Ok(resource_config) => {
+                        tracing::info!("Loaded resource '{}' from S3: {}", resource_config.uri, key);
+                        Self::merge_vec_by_key(&mut self.resources, vec![resource_config], |r| r.uri.clone());
+                        true
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to parse S3 resource file {}: {}", key, e);
+                        false
+                    }
+                }
+            }
+            "resource_template" => {
+                let result: Result<ResourceTemplateConfig, String> = if is_json {
+                    serde_json::from_str(content).map_err(|e| e.to_string())
+                } else {
+                    serde_yaml::from_str(content).map_err(|e| e.to_string())
+                };
+                match result {
+                    Ok(template_config) => {
+                        tracing::info!("Loaded resource template '{}' from S3: {}", template_config.uri_template, key);
+                        Self::merge_vec_by_key(&mut self.resource_templates, vec![template_config], |r| r.uri_template.clone());
+                        true
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to parse S3 resource template file {}: {}", key, e);
+                        false
+                    }
+                }
+            }
+            "prompt" => {
+                let result: Result<PromptConfig, String> = if is_json {
+                    serde_json::from_str(content).map_err(|e| e.to_string())
+                } else {
+                    serde_yaml::from_str(content).map_err(|e| e.to_string())
+                };
+                match result {
+                    Ok(prompt_config) => {
+                        tracing::info!("Loaded prompt '{}' from S3: {}", prompt_config.name, key);
+                        Self::merge_vec_by_key(&mut self.prompts, vec![prompt_config], |p| p.name.clone());
+                        true
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to parse S3 prompt file {}: {}", key, e);
+                        false
+                    }
+                }
+            }
+            "agent" => {
+                let result: Result<AgentConfig, String> = if is_json {
+                    serde_json::from_str(content).map_err(|e| e.to_string())
+                } else {
+                    serde_yaml::from_str(content).map_err(|e| e.to_string())
+                };
+                match result {
+                    Ok(agent_config) => {
+                        tracing::info!("Loaded agent '{}' from S3: {}", agent_config.name, key);
+                        Self::merge_vec_by_key(&mut self.agents, vec![agent_config], |a| a.name.clone());
+                        true
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to parse S3 agent file {}: {}", key, e);
+                        false
+                    }
+                }
+            }
+            "workflow" => {
+                let result: Result<WorkflowConfig, String> = if is_json {
+                    serde_json::from_str(content).map_err(|e| e.to_string())
+                } else {
+                    serde_yaml::from_str(content).map_err(|e| e.to_string())
+                };
+                match result {
+                    Ok(workflow_config) => {
+                        tracing::info!("Loaded workflow '{}' from S3: {}", workflow_config.name, key);
+                        Self::merge_vec_by_key(&mut self.workflows, vec![workflow_config], |w| w.name.clone());
+                        true
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to parse S3 workflow file {}: {}", key, e);
+                        false
+                    }
+                }
+            }
+            _ => false,
         }
     }
 
@@ -730,6 +931,29 @@ impl Settings {
                                 _ => serde_yaml::from_str(&content)?,
                             };
                             self.orchestrations.push(orchestration);
+                        }
+                    }
+                }
+                Err(e) => tracing::warn!("Failed to read glob entry: {}", e),
+            }
+        }
+        Ok(())
+    }
+
+    fn load_schemas_from_dir(&mut self, path: &str) -> Result<(), anyhow::Error> {
+        let pattern = format!("{}/*", path);
+        for entry in glob::glob(&pattern)? {
+            match entry {
+                Ok(path) => {
+                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                        if matches!(ext, "json" | "yaml" | "yml" | "toml") {
+                            let content = std::fs::read_to_string(&path)?;
+                            let schema: SchemaConfig = match ext {
+                                "json" => serde_json::from_str(&content)?,
+                                "toml" => toml::from_str(&content)?,
+                                _ => serde_yaml::from_str(&content)?,
+                            };
+                            self.schemas.push(schema);
                         }
                     }
                 }

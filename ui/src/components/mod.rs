@@ -5,6 +5,7 @@ pub mod config;
 pub mod logs;
 pub mod resources;
 pub mod resource_templates;
+pub mod schemas;
 pub mod secrets;
 pub mod tools;
 pub mod prompts;

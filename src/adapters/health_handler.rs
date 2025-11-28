@@ -89,6 +89,7 @@ mod tests {
     #[tokio::test]
     async fn test_health_endpoint() {
         let settings = Settings {
+            config_path: None,
             server: ServerSettings {
                 host: "127.0.0.1".to_string(),
                 port: 3000,
@@ -105,6 +106,7 @@ mod tests {
             orchestrations: vec![],
             mcp_servers: vec![],
             secrets: Default::default(),
+            schemas: vec![],
         };
         let handler = HealthHandler::new(Arc::new(RwLock::new(settings)));
 
@@ -115,6 +117,7 @@ mod tests {
     #[tokio::test]
     async fn test_ready_endpoint_with_config() {
         let settings = Settings {
+            config_path: None,
             server: ServerSettings {
                 host: "127.0.0.1".to_string(),
                 port: 3000,
@@ -131,6 +134,7 @@ mod tests {
             orchestrations: vec![],
             mcp_servers: vec![],
             secrets: Default::default(),
+            schemas: vec![],
         };
         let handler = HealthHandler::new(Arc::new(RwLock::new(settings)));
 
@@ -142,6 +146,7 @@ mod tests {
     #[tokio::test]
     async fn test_live_endpoint() {
         let settings = Settings {
+            config_path: None,
             server: ServerSettings {
                 host: "127.0.0.1".to_string(),
                 port: 3000,
@@ -158,6 +163,7 @@ mod tests {
             orchestrations: vec![],
             mcp_servers: vec![],
             secrets: Default::default(),
+            schemas: vec![],
         };
         let handler = HealthHandler::new(Arc::new(RwLock::new(settings)));
 
