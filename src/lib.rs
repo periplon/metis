@@ -42,8 +42,10 @@ pub mod application;
 pub mod cli;
 pub mod config;
 pub mod domain;
+pub mod persistence;
 
 use crate::adapters::api_handler::{self, ApiState, SecretsApiState};
+use crate::adapters::data_lake_handler;
 use crate::adapters::auth_middleware::{auth_middleware, AuthMiddleware, SharedAuthMiddleware};
 use crate::adapters::health_handler::HealthHandler;
 use crate::adapters::metrics_handler::MetricsHandler;
@@ -53,6 +55,7 @@ use crate::adapters::secrets::{SharedSecretsStore, SharedPassphraseStore};
 use crate::adapters::state_manager::StateManager;
 use crate::agents::domain::AgentPort;
 use crate::agents::handler::AgentHandler;
+use crate::persistence::DataStore;
 use axum::{routing::{delete, get, post}, Router};
 use rmcp::transport::streamable_http_server::{
     session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
@@ -72,6 +75,7 @@ use tokio::sync::RwLock;
 /// * `secrets_store` - In-memory secrets store for API keys
 /// * `passphrase_store` - In-memory passphrase store for encrypting secrets when saving config
 /// * `tool_handler` - Tool handler for agents (used to reinitialize when API keys change)
+/// * `data_store` - Optional database store for archetypes (when database persistence is enabled)
 ///
 /// # Returns
 ///
@@ -85,6 +89,7 @@ pub async fn create_app(
     secrets_store: SharedSecretsStore,
     passphrase_store: SharedPassphraseStore,
     tool_handler: Arc<crate::adapters::tool_handler::BasicToolHandler>,
+    data_store: Option<Arc<DataStore>>,
 ) -> Router {
     // Get the broadcaster before moving metis_server into the closure
     let broadcaster = metis_server.broadcaster().clone();
@@ -179,6 +184,7 @@ pub async fn create_app(
         passphrase: passphrase_store,
         broadcaster: Some(broadcaster.clone()),
         tool_handler: Some(tool_handler.clone()),
+        data_store,
     };
 
     // API routes for Web UI
@@ -226,8 +232,25 @@ pub async fn create_app(
         // Schemas CRUD
         .route("/schemas", get(api_handler::list_schemas).post(api_handler::create_schema))
         .route("/schemas/:name", get(api_handler::get_schema).put(api_handler::update_schema).delete(api_handler::delete_schema))
+        // Data Lakes CRUD
+        .route("/data-lakes", get(data_lake_handler::list_data_lakes).post(data_lake_handler::create_data_lake))
+        .route("/data-lakes/:name", get(data_lake_handler::get_data_lake).put(data_lake_handler::update_data_lake).delete(data_lake_handler::delete_data_lake))
+        // Data Records
+        .route("/data-lakes/:name/records", get(data_lake_handler::list_records).post(data_lake_handler::create_record).delete(data_lake_handler::delete_all_records))
+        .route("/data-lakes/:name/records/count", get(data_lake_handler::count_records))
+        .route("/data-lakes/:name/records/generate", post(data_lake_handler::generate_records))
+        .route("/data-lakes/:name/records/:id", get(data_lake_handler::get_record).put(data_lake_handler::update_record).delete(data_lake_handler::delete_record))
         // LLM models discovery
         .route("/llm/models/:provider", get(api_handler::fetch_llm_models))
+        // Database & Version History
+        .route("/database/status", get(api_handler::get_database_status))
+        .route("/commits", get(api_handler::list_commits))
+        .route("/commits/rollback", post(api_handler::rollback_to_commit))
+        .route("/commits/:commit_hash", get(api_handler::get_commit))
+        .route("/commits/:commit_hash/changesets", get(api_handler::get_commit_changesets))
+        .route("/commits/:commit_hash/tags", post(api_handler::create_tag))
+        .route("/tags", get(api_handler::list_tags))
+        .route("/tags/:name", get(api_handler::get_tag).delete(api_handler::delete_tag))
         .with_state(api_state);
 
     // Secrets API routes (separate state for secrets store, but shares test_agent_handler and broadcaster)

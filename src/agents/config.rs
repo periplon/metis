@@ -12,6 +12,9 @@ pub struct AgentConfig {
     pub name: String,
     /// Human-readable description
     pub description: String,
+    /// Tags for categorization and filtering
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     /// Type of agent
     #[serde(default)]
     pub agent_type: AgentType,
@@ -223,6 +226,9 @@ pub struct OrchestrationConfig {
     pub name: String,
     /// Human-readable description
     pub description: String,
+    /// Tags for categorization and filtering
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     /// Orchestration pattern
     pub pattern: OrchestrationPattern,
     /// JSON Schema defining expected input

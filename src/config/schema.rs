@@ -41,6 +41,9 @@ pub struct SchemaConfig {
     /// Human-readable description of the schema
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Tags for categorization and filtering
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     /// The actual JSON Schema definition
     pub schema: Value,
 }

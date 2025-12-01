@@ -2,14 +2,17 @@ use leptos::prelude::*;
 use leptos::web_sys;
 use leptos_router::hooks::use_params_map;
 use wasm_bindgen::JsCast;
+use std::collections::HashSet;
 use crate::api;
 use crate::types::{
     Resource, MockConfig, MockStrategyType, StatefulConfig, StateOperation,
-    FileConfig, ScriptLang, LLMConfig, LLMProvider, DatabaseConfig,
+    FileConfig, ScriptLang, LLMConfig, LLMProvider, MockDatabaseConfig,
 };
-use crate::components::schema_editor::{
-    JsonSchemaEditor, SchemaPreview, SchemaProperty,
-    properties_to_schema, schema_to_properties,
+use crate::components::schema_editor::FullSchemaEditor;
+use crate::components::list_filter::{
+    ListFilterBar, Pagination, TagBadges, TagInput,
+    extract_tags, filter_items, paginate_items, total_pages,
+    SortField, SortOrder, sort_items,
 };
 
 #[derive(Clone, Copy, PartialEq)]
@@ -25,6 +28,14 @@ pub fn Resources() -> impl IntoView {
     let (delete_target, set_delete_target) = signal(Option::<String>::None);
     let (deleting, set_deleting) = signal(false);
 
+    // Search, filter, and sort state
+    let search_query = RwSignal::new(String::new());
+    let selected_tags = RwSignal::new(HashSet::<String>::new());
+    let sort_field = RwSignal::new(SortField::Name);
+    let sort_order = RwSignal::new(SortOrder::Ascending);
+    let current_page = RwSignal::new(0usize);
+    let items_per_page = 10usize;
+
     // Test modal state
     let (test_target, set_test_target) = signal(Option::<String>::None);
     let (test_input, set_test_input) = signal(String::from("{}"));
@@ -34,6 +45,15 @@ pub fn Resources() -> impl IntoView {
     let resources = LocalResource::new(move || {
         let _ = refresh_trigger.get();
         async move { api::list_resources().await.ok() }
+    });
+
+    // Reset page when filters or sort change
+    Effect::new(move || {
+        let _ = search_query.get();
+        let _ = selected_tags.get();
+        let _ = sort_field.get();
+        let _ = sort_order.get();
+        current_page.set(0);
     });
 
     let on_delete_confirm = move |_| {
@@ -265,11 +285,62 @@ pub fn Resources() -> impl IntoView {
                     resources.get().map(|data| {
                         match data {
                             Some(list) if !list.is_empty() => {
-                                if view_mode.get() == ViewMode::Table {
-                                    view! { <ResourceTable resources=list set_delete_target=set_delete_target set_test_target=set_test_target /> }.into_any()
-                                } else {
-                                    view! { <ResourceCards resources=list set_delete_target=set_delete_target set_test_target=set_test_target /> }.into_any()
-                                }
+                                // Extract available tags from all resources
+                                let available_tags = extract_tags(&list, |r: &Resource| r.tags.as_slice());
+
+                                // Filter items based on search and tags
+                                let mut filtered = filter_items(
+                                    &list,
+                                    &search_query.get(),
+                                    &selected_tags.get(),
+                                    |r: &Resource| format!("{} {} {}", r.name, r.uri, r.description.as_deref().unwrap_or("")),
+                                    |r: &Resource| r.tags.as_slice(),
+                                );
+
+                                // Sort the filtered items
+                                sort_items(&mut filtered, sort_field.get(), sort_order.get(), |r: &Resource| &r.name);
+
+                                let total_filtered = filtered.len();
+                                let pages = total_pages(total_filtered, items_per_page);
+                                let paginated = paginate_items(&filtered, current_page.get(), items_per_page);
+
+                                view! {
+                                    <div>
+                                        // Filter bar with sorting
+                                        <ListFilterBar
+                                            search_query=search_query
+                                            selected_tags=selected_tags
+                                            available_tags=available_tags
+                                            sort_field=sort_field
+                                            sort_order=sort_order
+                                            placeholder="Search resources by name, URI or description..."
+                                        />
+
+                                        // Results info
+                                        {(total_filtered != list.len()).then(|| view! {
+                                            <p class="text-sm text-gray-500 mb-4">
+                                                "Showing " {total_filtered} " of " {list.len()} " resources"
+                                            </p>
+                                        })}
+
+                                        // Content
+                                        {if paginated.is_empty() {
+                                            view! { <NoResultsState /> }.into_any()
+                                        } else if view_mode.get() == ViewMode::Table {
+                                            view! { <ResourceTable resources=paginated set_delete_target=set_delete_target set_test_target=set_test_target /> }.into_any()
+                                        } else {
+                                            view! { <ResourceCards resources=paginated set_delete_target=set_delete_target set_test_target=set_test_target /> }.into_any()
+                                        }}
+
+                                        // Pagination
+                                        <Pagination
+                                            current_page=current_page
+                                            total_pages=Signal::derive(move || pages)
+                                            total_items=Signal::derive(move || total_filtered)
+                                            items_per_page=items_per_page
+                                        />
+                                    </div>
+                                }.into_any()
                             },
                             Some(_) => view! { <EmptyState /> }.into_any(),
                             None => view! { <ErrorState /> }.into_any(),
@@ -326,6 +397,19 @@ fn ErrorState() -> impl IntoView {
 }
 
 #[component]
+fn NoResultsState() -> impl IntoView {
+    view! {
+        <div class="text-center py-12 bg-white rounded-lg shadow">
+            <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+            </svg>
+            <h3 class="mt-2 text-sm font-medium text-gray-900">"No matching resources"</h3>
+            <p class="mt-1 text-sm text-gray-500">"Try adjusting your search or filter criteria."</p>
+        </div>
+    }
+}
+
+#[component]
 fn ResourceTable(
     resources: Vec<Resource>,
     set_delete_target: WriteSignal<Option<String>>,
@@ -338,6 +422,7 @@ fn ResourceTable(
                     <tr>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Name"</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"URI"</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Tags"</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Type"</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Strategy"</th>
                         <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">"Actions"</th>
@@ -348,6 +433,7 @@ fn ResourceTable(
                         let uri_for_edit = resource.uri.clone();
                         let uri_for_delete = resource.uri.clone();
                         let uri_for_test = resource.uri.clone();
+                        let tags = resource.tags.clone();
                         let strategy = resource.mock.as_ref()
                             .map(|m| format!("{:?}", m.strategy))
                             .unwrap_or_else(|| if resource.content.is_some() { "Static".to_string() } else { "-".to_string() });
@@ -361,6 +447,9 @@ fn ResourceTable(
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-600">
                                     {resource.uri.clone()}
+                                </td>
+                                <td class="px-6 py-4">
+                                    <TagBadges tags=tags />
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                     {mime}
@@ -411,6 +500,7 @@ fn ResourceCards(
                 let uri_for_edit = resource.uri.clone();
                 let uri_for_delete = resource.uri.clone();
                 let uri_for_test = resource.uri.clone();
+                let tags = resource.tags.clone();
                 let strategy = resource.mock.as_ref()
                     .map(|m| format!("{:?}", m.strategy))
                     .unwrap_or_else(|| if resource.content.is_some() { "Static".to_string() } else { "-".to_string() });
@@ -418,7 +508,7 @@ fn ResourceCards(
 
                 view! {
                     <div class="bg-white rounded-lg shadow hover:shadow-md transition-shadow p-4">
-                        <div class="flex justify-between items-start mb-3">
+                        <div class="flex justify-between items-start mb-2">
                             <div class="flex-1 min-w-0">
                                 <h3 class="font-semibold text-gray-900 truncate">{resource.name.clone()}</h3>
                                 <p class="text-sm text-gray-500 truncate">{resource.description.clone().unwrap_or_default()}</p>
@@ -427,6 +517,12 @@ fn ResourceCards(
                                 {strategy}
                             </span>
                         </div>
+                        // Tags section
+                        {(!tags.is_empty()).then(|| view! {
+                            <div class="mb-3">
+                                <TagBadges tags=tags />
+                            </div>
+                        })}
                         <div class="space-y-2 mb-4">
                             <div class="flex items-center text-sm">
                                 <span class="text-gray-500 w-16">"URI:"</span>
@@ -504,9 +600,14 @@ pub fn ResourceForm() -> impl IntoView {
     let (content, set_content) = signal(String::new());
     let (error, set_error) = signal(Option::<String>::None);
     let (saving, set_saving) = signal(false);
+    let tags = RwSignal::new(Vec::<String>::new());
 
-    // Schema signals (resources only have output schema, not input)
-    let (output_schema_properties, set_output_schema_properties) = signal(Vec::<SchemaProperty>::new());
+    // Schema signals - using Value for full JSON schema support
+    let default_schema = serde_json::json!({
+        "type": "object",
+        "properties": {}
+    });
+    let (output_schema, set_output_schema) = signal(default_schema);
 
     // Mock strategy signals
     let (mock_strategy, set_mock_strategy) = signal("none".to_string());
@@ -603,7 +704,7 @@ pub fn ResourceForm() -> impl IntoView {
                 });
             }
             "database" => {
-                config.database = Some(DatabaseConfig {
+                config.database = Some(MockDatabaseConfig {
                     url: mock_db_url.get(),
                     query: mock_db_query.get(),
                     params: vec![],
@@ -617,6 +718,7 @@ pub fn ResourceForm() -> impl IntoView {
 
     let on_submit = move |ev: web_sys::SubmitEvent| {
         ev.prevent_default();
+        web_sys::console::log_1(&format!("ResourceForm CREATE: on_submit triggered, tags = {:?}", tags.get()).into());
         set_saving.set(true);
         set_error.set(None);
 
@@ -637,20 +739,28 @@ pub fn ResourceForm() -> impl IntoView {
             return;
         }
 
-        // Build output schema from properties (resources don't have input schema)
-        let output_props = output_schema_properties.get();
-        let output_schema = if output_props.is_empty() {
+        // Get output schema
+        let out_schema = output_schema.get();
+        let output_schema_opt = if out_schema.get("properties")
+            .and_then(|p| p.as_object())
+            .map(|o| o.is_empty())
+            .unwrap_or(true)
+        {
             None
         } else {
-            Some(properties_to_schema(&output_props))
+            Some(out_schema)
         };
+
+        let tags_val = tags.get();
+        web_sys::console::log_1(&format!("ResourceForm submit: tags = {:?}", tags_val).into());
 
         let resource = Resource {
             name: name.get(),
             uri: uri.get(),
             description: if description.get().is_empty() { None } else { Some(description.get()) },
+            tags: tags_val,
             mime_type: if mime_type.get().is_empty() { None } else { Some(mime_type.get()) },
-            output_schema,
+            output_schema: output_schema_opt,
             content: if content.get().is_empty() { None } else { Some(content.get()) },
             mock: build_mock_config(),
         };
@@ -696,8 +806,8 @@ pub fn ResourceForm() -> impl IntoView {
                     description=description set_description=set_description
                     mime_type=mime_type set_mime_type=set_mime_type
                     content=content set_content=set_content
-                    output_schema_properties=output_schema_properties
-                    set_output_schema_properties=set_output_schema_properties
+                    output_schema=output_schema
+                    set_output_schema=set_output_schema
                     mock_strategy=mock_strategy set_mock_strategy=set_mock_strategy
                     mock_template=mock_template set_mock_template=set_mock_template
                     mock_faker_type=mock_faker_type set_mock_faker_type=set_mock_faker_type
@@ -715,6 +825,11 @@ pub fn ResourceForm() -> impl IntoView {
                     mock_db_url=mock_db_url set_mock_db_url=set_mock_db_url
                     mock_db_query=mock_db_query set_mock_db_query=set_mock_db_query
                 />
+
+                // Tags - directly in the form to avoid signal propagation issues
+                <div class="mt-4">
+                    <TagInput tags=tags />
+                </div>
 
                 <div class="mt-6 flex gap-3">
                     <button
@@ -749,8 +864,9 @@ fn ResourceFormFields(
     set_mime_type: WriteSignal<String>,
     content: ReadSignal<String>,
     set_content: WriteSignal<String>,
-    output_schema_properties: ReadSignal<Vec<SchemaProperty>>,
-    set_output_schema_properties: WriteSignal<Vec<SchemaProperty>>,
+    // NOTE: tags moved out of this component to fix signal propagation issues
+    output_schema: ReadSignal<serde_json::Value>,
+    set_output_schema: WriteSignal<serde_json::Value>,
     mock_strategy: ReadSignal<String>,
     set_mock_strategy: WriteSignal<String>,
     mock_template: ReadSignal<String>,
@@ -856,13 +972,13 @@ fn ResourceFormFields(
                 <h3 class="text-lg font-semibold text-gray-800 mb-4">"Output Schema"</h3>
                 <p class="text-sm text-gray-500 mb-4">"Define the expected structure of the resource output. For parameterized resources with input variables, use Resource Templates instead."</p>
                 <div>
-                    <JsonSchemaEditor
-                        properties=output_schema_properties
-                        set_properties=set_output_schema_properties
+                    <FullSchemaEditor
                         label="Output Schema"
                         color="green"
+                        schema=output_schema
+                        set_schema=set_output_schema
+                        show_definitions=true
                     />
-                    <SchemaPreview properties=output_schema_properties />
                 </div>
             </div>
 
@@ -1269,9 +1385,14 @@ pub fn ResourceEditForm() -> impl IntoView {
     let (saving, set_saving) = signal(false);
     let (loading, set_loading) = signal(true);
     let (original_uri, set_original_uri) = signal(String::new());
+    let (has_loaded, set_has_loaded) = signal(false);
 
-    // Schema signals (resources only have output schema)
-    let (output_schema_properties, set_output_schema_properties) = signal(Vec::<SchemaProperty>::new());
+    // Schema signals - using Value for full JSON schema support
+    let default_schema_edit = serde_json::json!({
+        "type": "object",
+        "properties": {}
+    });
+    let (output_schema, set_output_schema) = signal(default_schema_edit);
 
     // Mock strategy signals
     let (mock_strategy, set_mock_strategy) = signal("none".to_string());
@@ -1290,12 +1411,17 @@ pub fn ResourceEditForm() -> impl IntoView {
     let (mock_llm_system_prompt, set_mock_llm_system_prompt) = signal(String::new());
     let (mock_db_url, set_mock_db_url) = signal(String::new());
     let (mock_db_query, set_mock_db_query) = signal(String::new());
+    let tags = RwSignal::new(Vec::<String>::new());
 
-    // Load existing resource
+    // Load existing resource (only once)
     Effect::new(move |_| {
         let uri_param = uri();
         // Skip if uri is empty (params not ready yet)
         if uri_param.is_empty() {
+            return;
+        }
+        // Skip if already loaded to prevent overwriting user changes
+        if has_loaded.get() {
             return;
         }
         // Decode the URL-encoded URI from the route parameter
@@ -1310,10 +1436,11 @@ pub fn ResourceEditForm() -> impl IntoView {
                     set_description.set(resource.description.clone().unwrap_or_default());
                     set_mime_type.set(resource.mime_type.clone().unwrap_or_default());
                     set_content.set(resource.content.clone().unwrap_or_default());
+                    tags.set(resource.tags.clone());
 
-                    // Load output schema if present (resources don't have input schema)
-                    if let Some(output_schema) = &resource.output_schema {
-                        set_output_schema_properties.set(schema_to_properties(output_schema));
+                    // Load output schema directly
+                    if let Some(out_schema) = &resource.output_schema {
+                        set_output_schema.set(out_schema.clone());
                     }
 
                     // Load mock config
@@ -1387,6 +1514,7 @@ pub fn ResourceEditForm() -> impl IntoView {
                             set_mock_db_query.set(db.query.clone());
                         }
                     }
+                    set_has_loaded.set(true);
                 }
                 Err(e) => {
                     set_error.set(Some(format!("Failed to load resource: {}", e)));
@@ -1473,7 +1601,7 @@ pub fn ResourceEditForm() -> impl IntoView {
                 });
             }
             "database" => {
-                config.database = Some(DatabaseConfig {
+                config.database = Some(MockDatabaseConfig {
                     url: mock_db_url.get(),
                     query: mock_db_query.get(),
                     params: vec![],
@@ -1487,6 +1615,7 @@ pub fn ResourceEditForm() -> impl IntoView {
 
     let on_submit = move |ev: web_sys::SubmitEvent| {
         ev.prevent_default();
+        web_sys::console::log_1(&format!("ResourceForm EDIT: on_submit triggered, tags = {:?}", tags.get()).into());
         set_saving.set(true);
         set_error.set(None);
 
@@ -1507,26 +1636,33 @@ pub fn ResourceEditForm() -> impl IntoView {
             return;
         }
 
-        let orig_uri = original_uri.get();
-
-        // Build output schema from properties (resources don't have input schema)
-        let output_props = output_schema_properties.get();
-        let output_schema = if output_props.is_empty() {
+        // Get output schema
+        let out_schema = output_schema.get();
+        let output_schema_opt = if out_schema.get("properties")
+            .and_then(|p| p.as_object())
+            .map(|o| o.is_empty())
+            .unwrap_or(true)
+        {
             None
         } else {
-            Some(properties_to_schema(&output_props))
+            Some(out_schema)
         };
+
+        let tags_val = tags.get();
+        web_sys::console::log_1(&format!("ResourceForm EDIT submit: tags = {:?}", tags_val).into());
 
         let resource = Resource {
             name: name.get(),
             uri: resource_uri.get(),
             description: if description.get().is_empty() { None } else { Some(description.get()) },
+            tags: tags_val,
             mime_type: if mime_type.get().is_empty() { None } else { Some(mime_type.get()) },
-            output_schema,
+            output_schema: output_schema_opt,
             content: if content.get().is_empty() { None } else { Some(content.get()) },
             mock: build_mock_config(),
         };
 
+        let orig_uri = original_uri.get();
         wasm_bindgen_futures::spawn_local(async move {
             match api::update_resource(&orig_uri, &resource).await {
                 Ok(_) => {
@@ -1555,66 +1691,74 @@ pub fn ResourceEditForm() -> impl IntoView {
 
             <h2 class="text-2xl font-bold mb-6">"Edit Resource"</h2>
 
-            {move || if loading.get() {
-                view! {
-                    <div class="flex items-center justify-center py-12">
-                        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-                        <span class="ml-3 text-gray-500">"Loading resource..."</span>
+            // Loading spinner
+            <div
+                class="flex items-center justify-center py-12"
+                style=move || if loading.get() { "display: flex" } else { "display: none" }
+            >
+                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+                <span class="ml-3 text-gray-500">"Loading resource..."</span>
+            </div>
+
+            // Form - always rendered but hidden while loading
+            <form
+                on:submit=on_submit
+                class="bg-white rounded-lg shadow p-6 max-w-3xl"
+                style=move || if loading.get() { "display: none" } else { "display: block" }
+            >
+                {move || error.get().map(|e| view! {
+                    <div class="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+                        {e}
                     </div>
-                }.into_any()
-            } else {
-                view! {
-                    <form on:submit=on_submit class="bg-white rounded-lg shadow p-6 max-w-3xl">
-                        {move || error.get().map(|e| view! {
-                            <div class="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
-                                {e}
-                            </div>
-                        })}
+                })}
 
-                        <ResourceFormFields
-                            name=name set_name=set_name
-                            uri=resource_uri set_uri=set_resource_uri
-                            description=description set_description=set_description
-                            mime_type=mime_type set_mime_type=set_mime_type
-                            content=content set_content=set_content
-                            output_schema_properties=output_schema_properties
-                            set_output_schema_properties=set_output_schema_properties
-                            mock_strategy=mock_strategy set_mock_strategy=set_mock_strategy
-                            mock_template=mock_template set_mock_template=set_mock_template
-                            mock_faker_type=mock_faker_type set_mock_faker_type=set_mock_faker_type
-                            mock_state_key=mock_state_key set_mock_state_key=set_mock_state_key
-                            mock_state_operation=mock_state_operation set_mock_state_operation=set_mock_state_operation
-                            mock_script=mock_script set_mock_script=set_mock_script
-                            mock_script_lang=mock_script_lang set_mock_script_lang=set_mock_script_lang
-                            mock_file_path=mock_file_path set_mock_file_path=set_mock_file_path
-                            mock_file_selection=mock_file_selection set_mock_file_selection=set_mock_file_selection
-                            mock_pattern=mock_pattern set_mock_pattern=set_mock_pattern
-                            mock_llm_provider=mock_llm_provider set_mock_llm_provider=set_mock_llm_provider
-                            mock_llm_model=mock_llm_model set_mock_llm_model=set_mock_llm_model
-                            mock_llm_api_key_env=mock_llm_api_key_env set_mock_llm_api_key_env=set_mock_llm_api_key_env
-                            mock_llm_system_prompt=mock_llm_system_prompt set_mock_llm_system_prompt=set_mock_llm_system_prompt
-                            mock_db_url=mock_db_url set_mock_db_url=set_mock_db_url
-                            mock_db_query=mock_db_query set_mock_db_query=set_mock_db_query
-                        />
+                <ResourceFormFields
+                    name=name set_name=set_name
+                    uri=resource_uri set_uri=set_resource_uri
+                    description=description set_description=set_description
+                    mime_type=mime_type set_mime_type=set_mime_type
+                    content=content set_content=set_content
+                    output_schema=output_schema
+                    set_output_schema=set_output_schema
+                    mock_strategy=mock_strategy set_mock_strategy=set_mock_strategy
+                    mock_template=mock_template set_mock_template=set_mock_template
+                    mock_faker_type=mock_faker_type set_mock_faker_type=set_mock_faker_type
+                    mock_state_key=mock_state_key set_mock_state_key=set_mock_state_key
+                    mock_state_operation=mock_state_operation set_mock_state_operation=set_mock_state_operation
+                    mock_script=mock_script set_mock_script=set_mock_script
+                    mock_script_lang=mock_script_lang set_mock_script_lang=set_mock_script_lang
+                    mock_file_path=mock_file_path set_mock_file_path=set_mock_file_path
+                    mock_file_selection=mock_file_selection set_mock_file_selection=set_mock_file_selection
+                    mock_pattern=mock_pattern set_mock_pattern=set_mock_pattern
+                    mock_llm_provider=mock_llm_provider set_mock_llm_provider=set_mock_llm_provider
+                    mock_llm_model=mock_llm_model set_mock_llm_model=set_mock_llm_model
+                    mock_llm_api_key_env=mock_llm_api_key_env set_mock_llm_api_key_env=set_mock_llm_api_key_env
+                    mock_llm_system_prompt=mock_llm_system_prompt set_mock_llm_system_prompt=set_mock_llm_system_prompt
+                    mock_db_url=mock_db_url set_mock_db_url=set_mock_db_url
+                    mock_db_query=mock_db_query set_mock_db_query=set_mock_db_query
+                />
 
-                        <div class="mt-6 flex gap-3">
-                            <button
-                                type="submit"
-                                disabled=move || saving.get()
-                                class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                                {move || if saving.get() { "Saving..." } else { "Save Changes" }}
-                            </button>
-                            <a
-                                href="/resources"
-                                class="px-4 py-2 border border-gray-300 text-gray-700 rounded hover:bg-gray-50"
-                            >
-                                "Cancel"
-                            </a>
-                        </div>
-                    </form>
-                }.into_any()
-            }}
+                // Tags - directly in the form to avoid signal propagation issues
+                <div class="mt-4">
+                    <TagInput tags=tags />
+                </div>
+
+                <div class="mt-6 flex gap-3">
+                    <button
+                        type="submit"
+                        disabled=move || saving.get()
+                        class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {move || if saving.get() { "Saving..." } else { "Save Changes" }}
+                    </button>
+                    <a
+                        href="/resources"
+                        class="px-4 py-2 border border-gray-300 text-gray-700 rounded hover:bg-gray-50"
+                    >
+                        "Cancel"
+                    </a>
+                </div>
+            </form>
         </div>
     }
 }

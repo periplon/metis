@@ -7,6 +7,7 @@ use metis::adapters::{
     rmcp_server::MetisServer,
     state_manager::StateManager,
     tool_handler::BasicToolHandler,
+    secrets::{SecretsStore, PassphraseStore},
 };
 use metis::config::Settings;
 use std::net::SocketAddr;
@@ -30,12 +31,24 @@ impl TestServer {
             resources: vec![],
             tools: vec![],
             prompts: vec![],
+            workflows: vec![],
+            resource_templates: vec![],
+            agents: vec![],
+            orchestrations: vec![],
+            schemas: vec![],
+            data_lakes: vec![],
+            secrets: Default::default(),
             rate_limit: None,
+            s3: None,
+            database: None,
+            config_path: None,
+            mcp_servers: vec![],
+            version: 1,
         }));
 
         // Initialize handlers
         let state_manager = Arc::new(StateManager::new());
-        let mock_strategy = Arc::new(MockStrategyHandler::new(state_manager));
+        let mock_strategy = Arc::new(MockStrategyHandler::new(state_manager.clone()));
         let resource_handler = Arc::new(InMemoryResourceHandler::new(
             settings.clone(),
             mock_strategy.clone(),
@@ -48,13 +61,25 @@ impl TestServer {
         let health_handler = Arc::new(HealthHandler::new(settings.clone()));
         let metrics_collector = Arc::new(MetricsCollector::new().unwrap());
         let metrics_handler = Arc::new(MetricsHandler::new(metrics_collector));
+        
+        let secrets_store = Arc::new(SecretsStore::new());
+        let passphrase_store = Arc::new(PassphraseStore::new());
 
         // Create MetisServer using rmcp SDK
-        let metis_server = MetisServer::new(resource_handler, tool_handler, prompt_handler);
+        let metis_server = MetisServer::new(resource_handler, tool_handler.clone(), prompt_handler);
 
         // Create app
-        let app =
-            metis::create_app(metis_server, health_handler, metrics_handler, settings).await;
+        let app = metis::create_app(
+            metis_server, 
+            health_handler, 
+            metrics_handler, 
+            settings,
+            state_manager,
+            secrets_store,
+            passphrase_store,
+            tool_handler,
+            None
+        ).await;
 
         // Start server on random port
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

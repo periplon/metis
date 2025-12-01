@@ -70,6 +70,81 @@ pub enum Commands {
         #[arg(short, long)]
         passphrase: Option<String>,
     },
+    /// Run database migrations
+    Migrate {
+        /// Database URL (overrides config file)
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: Option<String>,
+    },
+    /// Show database migration status
+    MigrateStatus {
+        /// Database URL (overrides config file)
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: Option<String>,
+    },
+    /// Export configuration to a file
+    Export {
+        /// Output file path (stdout if not specified)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Export format: toml, json, or yaml
+        #[arg(short, long, default_value = "toml")]
+        format: String,
+        /// Export from database (requires database configuration)
+        #[arg(long)]
+        from_database: bool,
+    },
+    /// Import configuration from a file
+    Import {
+        /// Input file path
+        input: PathBuf,
+        /// Import format: toml, json, or yaml (auto-detect from extension if not specified)
+        #[arg(short, long)]
+        format: Option<String>,
+        /// Target: database or config-file
+        #[arg(long, default_value = "database")]
+        target: String,
+        /// Merge with existing data instead of replacing
+        #[arg(long)]
+        merge: bool,
+    },
+    /// List version history (commits)
+    VersionList {
+        /// Database URL (overrides config file)
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: Option<String>,
+        /// Maximum number of commits to show
+        #[arg(short, long, default_value = "20")]
+        limit: usize,
+        /// Show verbose output including changesets
+        #[arg(short, long)]
+        verbose: bool,
+    },
+    /// Show all tags
+    TagList {
+        /// Database URL (overrides config file)
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: Option<String>,
+    },
+    /// Create a new tag for the current HEAD
+    TagCreate {
+        /// Tag name
+        name: String,
+        /// Optional message
+        #[arg(short, long)]
+        message: Option<String>,
+        /// Database URL (overrides config file)
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: Option<String>,
+    },
+    /// Rollback to a specific commit
+    Rollback {
+        /// Commit hash to rollback to
+        commit_hash: String,
+        /// Database URL (overrides config file)
+        #[arg(long, env = "DATABASE_URL")]
+        database_url: Option<String>,
+    },
 }
 
 impl Cli {

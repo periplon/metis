@@ -5,7 +5,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use crate::api;
 use crate::components::secrets::SecretsEditor;
-use crate::types::{ConfigOverview, ServerSettings, AuthConfig, RateLimitConfig, S3Config};
+use crate::types::{ConfigOverview, ServerSettings, AuthConfig, RateLimitConfig, S3Config, DatabaseConfig};
 
 // Re-export web_sys types with full features for file operations
 use web_sys::{Blob, BlobPropertyBag, FileReader, Url};
@@ -95,6 +95,7 @@ pub fn Config() -> impl IntoView {
                                         endpoint: None,
                                         poll_interval_secs: 30,
                                     }),
+                                    database: None,
                                 };
                                 view! {
                                     <div class="space-y-6">
@@ -238,6 +239,22 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
     let (s3_endpoint, set_s3_endpoint) = signal(initial_s3.endpoint.unwrap_or_default());
     let (s3_poll_interval, set_s3_poll_interval) = signal(initial_s3.poll_interval_secs);
 
+    // Database configuration
+    let initial_db = initial_settings.database.clone().unwrap_or(DatabaseConfig {
+        url: String::new(),
+        max_connections: 5,
+        auto_migrate: true,
+        seed_on_startup: false,
+        snapshot_interval: 10,
+    });
+
+    let (db_enabled, set_db_enabled) = signal(!initial_db.url.is_empty());
+    let (db_url, set_db_url) = signal(initial_db.url);
+    let (db_max_connections, set_db_max_connections) = signal(initial_db.max_connections);
+    let (db_auto_migrate, set_db_auto_migrate) = signal(initial_db.auto_migrate);
+    let (db_seed_on_startup, set_db_seed_on_startup) = signal(initial_db.seed_on_startup);
+    let (db_snapshot_interval, set_db_snapshot_interval) = signal(initial_db.snapshot_interval);
+
     let (saving, set_saving) = signal(false);
     let (message, set_message) = signal(Option::<(String, bool)>::None);
 
@@ -275,6 +292,20 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
             None
         };
 
+        // Database config - only include if enabled with a URL
+        let db_url_val = db_url.get();
+        let database_config = if db_enabled.get() && !db_url_val.is_empty() {
+            Some(DatabaseConfig {
+                url: db_url_val,
+                max_connections: db_max_connections.get(),
+                auto_migrate: db_auto_migrate.get(),
+                seed_on_startup: db_seed_on_startup.get(),
+                snapshot_interval: db_snapshot_interval.get(),
+            })
+        } else {
+            None
+        };
+
         let settings = ServerSettings {
             auth: AuthConfig {
                 enabled: auth_enabled.get(),
@@ -298,6 +329,7 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
                 endpoint: if endpoint_val.is_empty() { None } else { Some(endpoint_val) },
                 poll_interval_secs: s3_poll_interval.get(),
             }),
+            database: database_config,
         };
 
         wasm_bindgen_futures::spawn_local(async move {
@@ -347,6 +379,20 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
             None
         };
 
+        // Database config - only include if enabled with a URL
+        let db_url_val = db_url.get();
+        let database_config = if db_enabled.get() && !db_url_val.is_empty() {
+            Some(DatabaseConfig {
+                url: db_url_val,
+                max_connections: db_max_connections.get(),
+                auto_migrate: db_auto_migrate.get(),
+                seed_on_startup: db_seed_on_startup.get(),
+                snapshot_interval: db_snapshot_interval.get(),
+            })
+        } else {
+            None
+        };
+
         let settings = ServerSettings {
             auth: AuthConfig {
                 enabled: auth_enabled.get(),
@@ -370,6 +416,7 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
                 endpoint: if endpoint_val.is_empty() { None } else { Some(endpoint_val) },
                 poll_interval_secs: s3_poll_interval.get(),
             }),
+            database: database_config,
         };
 
         wasm_bindgen_futures::spawn_local(async move {
@@ -427,6 +474,20 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
             None
         };
 
+        // Database config - only include if enabled with a URL
+        let db_url_val = db_url.get();
+        let database_config = if db_enabled.get() && !db_url_val.is_empty() {
+            Some(DatabaseConfig {
+                url: db_url_val,
+                max_connections: db_max_connections.get(),
+                auto_migrate: db_auto_migrate.get(),
+                seed_on_startup: db_seed_on_startup.get(),
+                snapshot_interval: db_snapshot_interval.get(),
+            })
+        } else {
+            None
+        };
+
         let settings = ServerSettings {
             auth: AuthConfig {
                 enabled: auth_enabled.get(),
@@ -450,6 +511,7 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
                 endpoint: if endpoint_val.is_empty() { None } else { Some(endpoint_val) },
                 poll_interval_secs: s3_poll_interval.get(),
             }),
+            database: database_config,
         };
 
         wasm_bindgen_futures::spawn_local(async move {
@@ -1140,6 +1202,111 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
                                     }
                                 />
                                 <p class="text-xs text-gray-500 mt-1">"How often to check for configuration changes"</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                // Database Configuration Section
+                <div>
+                    <h4 class="text-md font-semibold text-gray-700 mb-4 flex items-center">
+                        <span class="w-2 h-2 bg-cyan-500 rounded-full mr-2"></span>
+                        "Database Persistence"
+                    </h4>
+                    <div class="space-y-4 pl-4">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <label class="font-medium text-gray-700">"Enable Database Persistence"</label>
+                                <p class="text-sm text-gray-500">"Store archetypes in a database with version history"</p>
+                            </div>
+                            <ToggleSwitch
+                                enabled=db_enabled
+                                on_toggle=move |v| set_db_enabled.set(v)
+                            />
+                        </div>
+
+                        <div class=move || format!("space-y-4 {}", if db_enabled.get() { "" } else { "opacity-50 pointer-events-none" })>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">"Database URL"</label>
+                                <input
+                                    type="text"
+                                    placeholder="sqlite://metis.db or postgres://user:pass@host/db"
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
+                                    prop:value=move || db_url.get()
+                                    on:input=move |ev| {
+                                        let target = ev.target().unwrap();
+                                        let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                        set_db_url.set(input.value());
+                                    }
+                                />
+                                <p class="text-xs text-gray-500 mt-1">"Supports SQLite, PostgreSQL, and MySQL"</p>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">"Max Connections"</label>
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        max="100"
+                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        prop:value=move || db_max_connections.get().to_string()
+                                        on:input=move |ev| {
+                                            let target = ev.target().unwrap();
+                                            let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                            if let Ok(v) = input.value().parse::<u32>() {
+                                                set_db_max_connections.set(v);
+                                            }
+                                        }
+                                    />
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">"Snapshot Interval (min)"</label>
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        max="1440"
+                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        prop:value=move || db_snapshot_interval.get().to_string()
+                                        on:input=move |ev| {
+                                            let target = ev.target().unwrap();
+                                            let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                            if let Ok(v) = input.value().parse::<u32>() {
+                                                set_db_snapshot_interval.set(v);
+                                            }
+                                        }
+                                    />
+                                </div>
+                            </div>
+
+                            <div class="flex items-center justify-between py-2 border-t border-gray-200">
+                                <div>
+                                    <label class="font-medium text-gray-700">"Auto-Migrate"</label>
+                                    <p class="text-sm text-gray-500">"Run database migrations automatically on startup"</p>
+                                </div>
+                                <ToggleSwitch
+                                    enabled=db_auto_migrate
+                                    on_toggle=move |v| set_db_auto_migrate.set(v)
+                                />
+                            </div>
+
+                            <div class="flex items-center justify-between py-2 border-t border-gray-200">
+                                <div>
+                                    <label class="font-medium text-gray-700">"Seed on Startup"</label>
+                                    <p class="text-sm text-gray-500">"Import archetypes from config files into database on startup"</p>
+                                </div>
+                                <ToggleSwitch
+                                    enabled=db_seed_on_startup
+                                    on_toggle=move |v| set_db_seed_on_startup.set(v)
+                                />
+                            </div>
+
+                            <div class="p-3 bg-cyan-50 border border-cyan-200 rounded-lg">
+                                <p class="text-sm text-cyan-800">
+                                    <strong>"Note:"</strong>
+                                    " Database configuration changes require a server restart to take effect. "
+                                    "Make sure to save to disk before restarting."
+                                </p>
                             </div>
                         </div>
                     </div>

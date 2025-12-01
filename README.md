@@ -35,20 +35,35 @@ metis/
 ├── src/
 │   ├── adapters/           # Infrastructure layer (Ports & Adapters)
 │   │   ├── mcp_protocol_handler.rs
+│   │   ├── api_handler.rs      # REST API endpoints
 │   │   ├── resource_handler.rs
 │   │   ├── tool_handler.rs
 │   │   ├── prompt_handler.rs
 │   │   ├── mock_strategy.rs
 │   │   ├── state_manager.rs
-│   │   └── workflow_engine.rs
+│   │   ├── workflow_engine.rs
+│   │   └── agent_executor.rs   # AI Agent execution engine
 │   ├── application/        # Application layer
 │   │   └── mod.rs
 │   ├── domain/            # Domain layer (Business logic)
 │   │   └── mcp_types.rs
 │   ├── config/            # Configuration management
 │   │   └── mod.rs
+│   ├── persistence/       # Database persistence layer
+│   │   ├── mod.rs
+│   │   ├── migrations.rs      # Migration runner
+│   │   ├── archetype_repository.rs
+│   │   └── commit_repository.rs
+│   ├── cli.rs             # CLI commands and argument parsing
 │   ├── lib.rs
 │   └── main.rs
+├── ui/                    # Web UI (Leptos CSR)
+│   ├── src/
+│   │   ├── components/    # UI components
+│   │   ├── api.rs         # API client
+│   │   └── types.rs       # Shared types
+│   └── Cargo.toml
+├── migrations/            # SQL migration files
 ├── tests/                 # Integration tests
 │   └── api_integration_test.rs
 ├── metis.toml            # Configuration file
@@ -74,8 +89,15 @@ metis/
 - **Metrics**: Prometheus-compatible metrics endpoint (`/metrics`)
 - **Hot Reload**: Zero-downtime configuration updates
 
+### 💾 Database Persistence & Version Control
+- **Multi-Database Support**: SQLite, PostgreSQL, MySQL via SQLx
+- **Git-Style Versioning**: Commits, changesets, snapshots, and tags
+- **Version History**: Track all changes to resources, tools, prompts, workflows, and agents
+- **Rollback**: Restore to any previous commit or tagged version
+- **Export/Import**: Full configuration backup and restore
+
 ### 💻 Developer Experience
-- **Web UI**: Basic dashboard for monitoring
+- **Web UI**: Full dashboard with configuration editor and database management
 - **CLI**: Full-featured command-line interface with environment variable support
 - **TOML Config**: Human-readable configuration
 - **S3 Config**: Load configuration from S3 buckets with live reload
@@ -116,6 +138,14 @@ metis [OPTIONS] [COMMAND]
 Commands:
   encrypt-secret  Encrypt a secret value using AGE passphrase encryption
   decrypt-secret  Decrypt an AGE-encrypted secret value
+  migrate         Run database migrations
+  migrate-status  Show migration status
+  export          Export configuration to JSON file
+  import          Import configuration from JSON file
+  version-list    List version history commits
+  tag-list        List all tags
+  tag-create      Create a new tag at HEAD
+  rollback        Rollback to a specific commit
   help            Print help for commands
 
 Options:
@@ -129,6 +159,7 @@ Options:
       --s3-region <REGION>            AWS region for S3
       --s3-endpoint <ENDPOINT>        S3 endpoint URL (for MinIO/LocalStack)
       --s3-poll-interval <SECS>       S3 polling interval in seconds
+      --db-url <URL>                  Database connection URL
   -h, --help                          Print help
   -V, --version                       Print version
 ```
@@ -138,6 +169,7 @@ All CLI options can also be set via environment variables:
 - `METIS_SECRET_PASSPHRASE` - Passphrase for AGE-encrypted secrets
 - `METIS_S3_ENABLED`, `METIS_S3_BUCKET`, `METIS_S3_PREFIX`
 - `METIS_S3_REGION`, `METIS_S3_ENDPOINT`, `METIS_S3_POLL_INTERVAL`
+- `METIS_DATABASE_URL` - Database connection URL for persistence
 
 ### Basic Usage
 
@@ -229,6 +261,70 @@ export METIS_S3_PREFIX=config/
 export METIS_S3_REGION=us-east-1
 metis
 ```
+
+### Database Persistence Configuration (Optional)
+
+Enable database persistence to store all archetypes (resources, tools, prompts, workflows, agents) with full version history:
+
+```toml
+[database]
+url = "sqlite://metis.db"       # SQLite, PostgreSQL, or MySQL
+max_connections = 5             # Connection pool size
+auto_migrate = true             # Run migrations on startup
+seed_on_startup = false         # Import config files into database on first run
+snapshot_interval = 10          # Create full snapshot every N commits
+```
+
+**Supported Database URLs:**
+- SQLite: `sqlite://metis.db` or `sqlite://:memory:`
+- PostgreSQL: `postgres://user:pass@localhost/metis`
+- MySQL: `mysql://user:pass@localhost/metis`
+
+**CLI Commands for Database Management:**
+
+```bash
+# Run database migrations
+metis migrate --db-url sqlite://metis.db
+
+# Check migration status
+metis migrate-status --db-url sqlite://metis.db
+
+# Export all configuration to JSON
+metis export --output backup.json
+
+# Import configuration from JSON
+metis import --input backup.json
+
+# List version history
+metis version-list --limit 20
+
+# List all tags
+metis tag-list
+
+# Create a tag at current HEAD
+metis tag-create --name "v1.0.0" --message "Production release"
+
+# Rollback to a specific commit
+metis rollback --commit abc123
+```
+
+**Version History Features:**
+
+The database tracks all changes with git-style versioning:
+
+- **Commits**: Each modification creates a commit with author, message, and timestamp
+- **Changesets**: Individual changes within a commit (create, update, delete operations)
+- **Snapshots**: Periodic full state captures for efficient rollback
+- **Tags**: Named references to specific commits (e.g., releases)
+
+Example API endpoints:
+- `GET /api/database/status` - Database health and HEAD commit
+- `GET /api/database/commits` - List commit history
+- `GET /api/database/commits/:hash` - Get commit details with changesets
+- `POST /api/database/rollback` - Rollback to a specific commit
+- `GET /api/database/tags` - List all tags
+- `POST /api/database/tags` - Create a new tag
+- `DELETE /api/database/tags/:name` - Delete a tag
 
 ### Configuration Precedence
 
@@ -369,6 +465,39 @@ export AWS_ACCESS_KEY_ID="AKIA..."
 export AWS_SECRET_ACCESS_KEY="..."
 export AWS_REGION="us-east-1"
 ```
+
+### Web UI
+
+The embedded Web UI provides a full-featured interface for managing your Metis server:
+
+**Dashboard** (`/`)
+- Server status and configuration overview
+- Database health and version history status
+- Quick links to all archetype counts
+
+**Configuration Editor** (`/config`)
+- Edit authentication settings (API Key, JWT, Basic Auth, OAuth2)
+- Configure rate limiting
+- Set up S3 storage integration
+- Configure database persistence settings
+- Import/Export configuration as JSON
+- Save to memory, disk, or S3
+
+**Archetype Management**
+- **Resources** (`/resources`) - View, create, edit, delete, and test static resources
+- **Resource Templates** (`/resource-templates`) - Manage dynamic URI template resources
+- **Tools** (`/tools`) - Configure mock tools with various strategies
+- **Prompts** (`/prompts`) - Define and test prompt templates
+- **Workflows** (`/workflows`) - Build multi-step tool chains
+- **Agents** (`/agents`) - Configure AI agents with LLM providers
+- **Schemas** (`/schemas`) - Define reusable JSON Schema definitions
+
+**Features in Each Archetype Editor:**
+- Table and card view modes
+- Inline JSON Schema editor with validation
+- Mock strategy configuration (all 9 strategies)
+- Test modal for live testing with custom input
+- Delete confirmation dialogs
 
 ### Authentication Configuration (Optional)
 
@@ -535,6 +664,171 @@ args = { results = "{{ steps.process_each }}" }
 - `{{ item }}` - Current loop item (when using `loop_over`)
 - `{{ loop.index }}` - Current loop index (0-based)
 
+### AI Agent Configuration
+
+AI Agents are autonomous LLM-powered components that can use tools, access resources, and maintain conversation memory.
+
+```toml
+[[agents]]
+name = "research_assistant"
+description = "An AI assistant that can search and summarize information"
+agent_type = "react"  # Options: "single_turn", "multi_turn", "react"
+
+# Input/Output schemas
+input_schema = { type = "object", properties = { query = { type = "string" } } }
+output_schema = { type = "object", properties = { answer = { type = "string" } } }
+
+# LLM Configuration
+[agents.llm]
+provider = "openai"           # Options: "openai", "anthropic", "gemini", "ollama", "azureopenai"
+model = "gpt-4"
+api_key_env = "OPENAI_API_KEY"
+temperature = 0.7
+max_tokens = 2000
+stream = true
+
+# System prompt
+system_prompt = """
+You are a helpful research assistant. Use the available tools to find information
+and provide comprehensive answers to user queries.
+"""
+
+# Optional: Prompt template for formatting user input
+prompt_template = "Please research the following: {{ query }}"
+
+# Available tools (local tool names)
+available_tools = ["web_search", "summarize"]
+
+# MCP tools from external servers (format: "server_name:tool_name" or "server_name:*")
+mcp_tools = ["browser:*", "filesystem:read_file"]
+
+# Other agents that can be called as tools
+agent_tools = ["fact_checker"]
+
+# Available resources
+available_resources = ["file:///knowledge_base.json"]
+available_resource_templates = ["postgres://db/documents/{id}"]
+
+# Memory configuration
+[agents.memory]
+backend = "in_memory"         # Options: "in_memory", "file", "database"
+strategy = { type = "sliding_window", size = 20 }  # Or "full", { type = "first_last", first = 5, last = 10 }
+max_messages = 100
+file_path = "memory/research_agent.json"  # For "file" backend
+
+# Execution limits
+max_iterations = 10
+timeout_seconds = 120
+```
+
+**Agent Types:**
+- `single_turn`: One-shot response, no tool use
+- `multi_turn`: Conversational with memory, no tool use
+- `react`: Full ReAct loop with reasoning, tool use, and observation
+
+**Memory Strategies:**
+- `full`: Keep all messages (up to `max_messages`)
+- `sliding_window`: Keep last N messages
+- `first_last`: Keep first N and last M messages
+
+### Multi-Agent Orchestration
+
+Orchestrations coordinate multiple agents to work together on complex tasks.
+
+```toml
+[[orchestrations]]
+name = "document_analysis_pipeline"
+description = "Analyze documents using multiple specialized agents"
+pattern = "sequential"        # Options: "sequential", "hierarchical", "collaborative"
+
+input_schema = { type = "object", properties = { document = { type = "string" } } }
+output_schema = { type = "object", properties = { analysis = { type = "object" } } }
+
+# Agent configuration
+[[orchestrations.agents]]
+agent = "extractor"           # Agent name to invoke
+depends_on = []               # Wait for these agents to complete first
+condition = "true"            # Rhai expression to conditionally run
+input_transform = "{ document: input.document }"  # Transform input for this agent
+
+[[orchestrations.agents]]
+agent = "analyzer"
+depends_on = ["extractor"]
+input_transform = "{ data: steps.extractor.output }"
+
+[[orchestrations.agents]]
+agent = "summarizer"
+depends_on = ["analyzer"]
+
+# For hierarchical pattern: specify manager agent
+manager_agent = "coordinator"
+
+# For collaborative pattern: how to merge results
+[orchestrations.merge_strategy]
+type = "concat"               # Options: "concat", "vote", { type = "custom", script = "..." }
+
+timeout_seconds = 300
+```
+
+**Orchestration Patterns:**
+- `sequential`: Agents run in order based on dependencies (DAG execution)
+- `hierarchical`: Manager agent coordinates worker agents
+- `collaborative`: All agents work in parallel, results merged
+
+### Reusable JSON Schema Definitions
+
+Define schemas once and reference them across resources, tools, prompts, and agents using `$ref`:
+
+```toml
+[[schemas]]
+name = "User"
+description = "Standard user object schema"
+schema = '''
+{
+  "type": "object",
+  "properties": {
+    "id": { "type": "string", "format": "uuid" },
+    "email": { "type": "string", "format": "email" },
+    "name": { "type": "string" },
+    "created_at": { "type": "string", "format": "date-time" }
+  },
+  "required": ["id", "email", "name"]
+}
+'''
+
+[[schemas]]
+name = "PaginatedResponse"
+description = "Generic paginated response wrapper"
+schema = '''
+{
+  "type": "object",
+  "properties": {
+    "items": { "type": "array" },
+    "total": { "type": "integer" },
+    "page": { "type": "integer" },
+    "per_page": { "type": "integer" }
+  }
+}
+'''
+```
+
+**Using Schema References:**
+
+```toml
+[[resources]]
+uri = "file:///users.json"
+name = "User List"
+output_schema = { "$ref": "#/schemas/PaginatedResponse" }
+
+[[tools]]
+name = "create_user"
+description = "Create a new user"
+input_schema = { "$ref": "#/schemas/User" }
+output_schema = { "$ref": "#/schemas/User" }
+```
+
+Schema references are resolved at configuration load time, allowing you to maintain consistent data structures across your entire API surface.
+
 ## 🧪 Testing
 
 ### Run All Tests
@@ -632,15 +926,19 @@ Metis implements the following MCP protocol methods:
 - ✅ CLI with Environment Variable Support
 - ✅ Health Checks & Prometheus Metrics
 - ✅ Rate Limiting
-- ✅ Basic Web UI (Embedded)
 - ✅ Authentication (API Key, JWT Bearer, Basic Auth, OAuth2/JWKS)
 - ✅ Secrets Management (Web UI + AGE encryption)
+- ✅ Advanced Workflow engine
+- ✅ AI Agents (Single-turn, Multi-turn, ReAct)
+- ✅ Multi-agent Orchestration (Sequential, Hierarchical, Collaborative)
+- ✅ Database Persistence with Version History
+- ✅ Enhanced Web UI with Configuration Editor
+- ✅ Reusable JSON Schema Definitions
 
 ### Planned Features
-- ✅ Advanced Workflow engine
-- ✅ Secrets Management with AGE encryption
-- [ ] Enhanced Web UI for configuration management
 - [ ] Performance optimizations (>10k req/s)
+- [ ] WebSocket support for real-time updates
+- [ ] Distributed mode with Redis backend
 
 See [metis-implementation-plan.md](metis-implementation-plan.md) for detailed roadmap.
 

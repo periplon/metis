@@ -3,6 +3,7 @@
 //! Provides CRUD operations for schemas that can be referenced
 //! across tools, agents, workflows, and other archetypes.
 
+use std::collections::HashSet;
 use leptos::prelude::*;
 use leptos::web_sys;
 use leptos_router::hooks::use_params_map;
@@ -10,8 +11,14 @@ use leptos_router::components::A;
 use crate::api;
 use crate::types::Schema;
 use crate::components::schema_editor::{
-    JsonSchemaEditor, SchemaPreview, SchemaProperty,
-    properties_to_schema, schema_to_properties,
+    JsonSchemaEditor, SchemaPreview, SchemaProperty, SchemaMetadata, SchemaDefinition,
+    DefinitionsEditor, schema_to_properties, schema_to_metadata, schema_to_definitions,
+    full_schema_to_value,
+};
+use crate::components::list_filter::{
+    ListFilterBar, Pagination, TagBadges, TagInput,
+    extract_tags, filter_items, paginate_items, total_pages,
+    SortField, SortOrder, sort_items,
 };
 
 #[derive(Clone, Copy, PartialEq)]
@@ -27,9 +34,26 @@ pub fn Schemas() -> impl IntoView {
     let (delete_target, set_delete_target) = signal(Option::<String>::None);
     let (deleting, set_deleting) = signal(false);
 
+    // Search and filter state
+    let search_query = RwSignal::new(String::new());
+    let selected_tags = RwSignal::new(HashSet::<String>::new());
+    let sort_field = RwSignal::new(SortField::Name);
+    let sort_order = RwSignal::new(SortOrder::Ascending);
+    let current_page = RwSignal::new(0usize);
+    let items_per_page = 10usize;
+
     let schemas = LocalResource::new(move || {
         let _ = refresh_trigger.get();
         async move { api::list_schemas().await.ok() }
+    });
+
+    // Reset page when filters change
+    Effect::new(move || {
+        let _ = search_query.get();
+        let _ = selected_tags.get();
+        let _ = sort_field.get();
+        let _ = sort_order.get();
+        current_page.set(0);
     });
 
     let on_delete_confirm = move |_| {
@@ -102,107 +126,172 @@ pub fn Schemas() -> impl IntoView {
                 {move || {
                     schemas.get().map(|maybe_schemas| {
                         match maybe_schemas {
-                            Some(items) if !items.is_empty() => {
-                                if view_mode.get() == ViewMode::Table {
-                                    view! {
-                                        <div class="bg-white rounded-lg shadow overflow-hidden">
-                                            <table class="min-w-full divide-y divide-gray-200">
-                                                <thead class="bg-gray-50">
-                                                    <tr>
-                                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Name"</th>
-                                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Description"</th>
-                                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Properties"</th>
-                                                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Reference"</th>
-                                                        <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">"Actions"</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody class="bg-white divide-y divide-gray-200">
+                            Some(list) if !list.is_empty() => {
+                                // Extract available tags
+                                let available_tags = extract_tags(&list, |s: &Schema| s.tags.as_slice());
+
+                                // Filter items based on search and tags
+                                let mut filtered = filter_items(
+                                    &list,
+                                    &search_query.get(),
+                                    &selected_tags.get(),
+                                    |s: &Schema| {
+                                        format!("{} {}", s.name, s.description.as_ref().unwrap_or(&String::new()))
+                                    },
+                                    |s: &Schema| s.tags.as_slice(),
+                                );
+
+                                // Sort the filtered items
+                                sort_items(&mut filtered, sort_field.get(), sort_order.get(), |s: &Schema| &s.name);
+
+                                let total_filtered = filtered.len();
+                                let total = list.len();
+                                let pages = total_pages(total_filtered, items_per_page);
+                                let items = paginate_items(&filtered, current_page.get(), items_per_page);
+
+                                view! {
+                                    <div>
+                                        // Filter bar
+                                        <ListFilterBar
+                                            search_query=search_query
+                                            selected_tags=selected_tags
+                                            available_tags=available_tags
+                                            sort_field=sort_field
+                                            sort_order=sort_order
+                                            placeholder="Search schemas..."
+                                        />
+
+                                        // Results count when filtered
+                                        {(total_filtered != total).then(|| view! {
+                                            <p class="text-sm text-gray-500 mb-4">
+                                                "Showing " {total_filtered} " of " {total} " schemas"
+                                            </p>
+                                        })}
+
+                                        // Content
+                                        {if items.is_empty() {
+                                            view! { <NoResultsState /> }.into_any()
+                                        } else if view_mode.get() == ViewMode::Table {
+                                            view! {
+                                                <div class="bg-white rounded-lg shadow overflow-hidden">
+                                                    <table class="min-w-full divide-y divide-gray-200">
+                                                        <thead class="bg-gray-50">
+                                                            <tr>
+                                                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Name"</th>
+                                                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Description"</th>
+                                                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Properties"</th>
+                                                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Tags"</th>
+                                                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Reference"</th>
+                                                                <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">"Actions"</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody class="bg-white divide-y divide-gray-200">
+                                                            {items.into_iter().map(|schema| {
+                                                                let name = schema.name.clone();
+                                                                let name_for_delete = schema.name.clone();
+                                                                let name_for_edit = schema.name.clone();
+                                                                let tags = schema.tags.clone();
+                                                                let prop_count = schema.schema.get("properties")
+                                                                    .and_then(|p| p.as_object())
+                                                                    .map(|o| o.len())
+                                                                    .unwrap_or(0);
+                                                                view! {
+                                                                    <tr class="hover:bg-gray-50">
+                                                                        <td class="px-6 py-4 whitespace-nowrap">
+                                                                            <div class="text-sm font-medium text-gray-900">{name.clone()}</div>
+                                                                        </td>
+                                                                        <td class="px-6 py-4">
+                                                                            <div class="text-sm text-gray-500 max-w-md truncate">
+                                                                                {schema.description.clone().unwrap_or_else(|| "—".to_string())}
+                                                                            </div>
+                                                                        </td>
+                                                                        <td class="px-6 py-4 whitespace-nowrap">
+                                                                            <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-teal-100 text-teal-800">
+                                                                                {prop_count} " properties"
+                                                                            </span>
+                                                                        </td>
+                                                                        <td class="px-6 py-4">
+                                                                            <TagBadges tags=tags />
+                                                                        </td>
+                                                                        <td class="px-6 py-4 whitespace-nowrap">
+                                                                            <code class="text-xs bg-gray-100 px-2 py-1 rounded font-mono text-teal-600">
+                                                                                {format!(r#"{{"$ref": "{}"}}"#, name)}
+                                                                            </code>
+                                                                        </td>
+                                                                        <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                                                            <A href=format!("/schemas/edit/{}", name_for_edit) attr:class="text-teal-600 hover:text-teal-900 mr-4">"Edit"</A>
+                                                                            <button
+                                                                                class="text-red-600 hover:text-red-900"
+                                                                                on:click=move |_| set_delete_target.set(Some(name_for_delete.clone()))
+                                                                            >
+                                                                                "Delete"
+                                                                            </button>
+                                                                        </td>
+                                                                    </tr>
+                                                                }
+                                                            }).collect::<Vec<_>>()}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            }.into_any()
+                                        } else {
+                                            view! {
+                                                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                                                     {items.into_iter().map(|schema| {
                                                         let name = schema.name.clone();
                                                         let name_for_delete = schema.name.clone();
                                                         let name_for_edit = schema.name.clone();
+                                                        let tags = schema.tags.clone();
                                                         let prop_count = schema.schema.get("properties")
                                                             .and_then(|p| p.as_object())
                                                             .map(|o| o.len())
                                                             .unwrap_or(0);
                                                         view! {
-                                                            <tr class="hover:bg-gray-50">
-                                                                <td class="px-6 py-4 whitespace-nowrap">
-                                                                    <div class="text-sm font-medium text-gray-900">{name.clone()}</div>
-                                                                </td>
-                                                                <td class="px-6 py-4">
-                                                                    <div class="text-sm text-gray-500 max-w-md truncate">
-                                                                        {schema.description.clone().unwrap_or_else(|| "—".to_string())}
-                                                                    </div>
-                                                                </td>
-                                                                <td class="px-6 py-4 whitespace-nowrap">
-                                                                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-teal-100 text-teal-800">
-                                                                        {prop_count} " properties"
+                                                            <div class="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow">
+                                                                <div class="flex justify-between items-start mb-4">
+                                                                    <h3 class="text-lg font-semibold text-gray-900">{name.clone()}</h3>
+                                                                    <span class="px-2 py-1 text-xs font-semibold rounded-full bg-teal-100 text-teal-800">
+                                                                        {prop_count} " props"
                                                                     </span>
-                                                                </td>
-                                                                <td class="px-6 py-4 whitespace-nowrap">
-                                                                    <code class="text-xs bg-gray-100 px-2 py-1 rounded font-mono text-teal-600">
+                                                                </div>
+                                                                <p class="text-sm text-gray-500 mb-4 line-clamp-2">
+                                                                    {schema.description.clone().unwrap_or_else(|| "No description".to_string())}
+                                                                </p>
+                                                                {(!tags.is_empty()).then(|| view! {
+                                                                    <div class="mb-4">
+                                                                        <TagBadges tags=tags.clone() />
+                                                                    </div>
+                                                                })}
+                                                                <div class="mb-4">
+                                                                    <code class="text-xs bg-gray-100 px-2 py-1 rounded font-mono text-teal-600 block truncate">
                                                                         {format!(r#"{{"$ref": "{}"}}"#, name)}
                                                                     </code>
-                                                                </td>
-                                                                <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                                                    <A href=format!("/schemas/edit/{}", name_for_edit) attr:class="text-teal-600 hover:text-teal-900 mr-4">"Edit"</A>
+                                                                </div>
+                                                                <div class="flex justify-end gap-2 pt-4 border-t border-gray-100">
+                                                                    <A href=format!("/schemas/edit/{}", name_for_edit) attr:class="px-3 py-1 text-sm text-teal-600 hover:bg-teal-50 rounded">"Edit"</A>
                                                                     <button
-                                                                        class="text-red-600 hover:text-red-900"
+                                                                        class="px-3 py-1 text-sm text-red-600 hover:bg-red-50 rounded"
                                                                         on:click=move |_| set_delete_target.set(Some(name_for_delete.clone()))
                                                                     >
                                                                         "Delete"
                                                                     </button>
-                                                                </td>
-                                                            </tr>
+                                                                </div>
+                                                            </div>
                                                         }
                                                     }).collect::<Vec<_>>()}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    }.into_any()
-                                } else {
-                                    view! {
-                                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                            {items.into_iter().map(|schema| {
-                                                let name = schema.name.clone();
-                                                let name_for_delete = schema.name.clone();
-                                                let name_for_edit = schema.name.clone();
-                                                let prop_count = schema.schema.get("properties")
-                                                    .and_then(|p| p.as_object())
-                                                    .map(|o| o.len())
-                                                    .unwrap_or(0);
-                                                view! {
-                                                    <div class="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow">
-                                                        <div class="flex justify-between items-start mb-4">
-                                                            <h3 class="text-lg font-semibold text-gray-900">{name.clone()}</h3>
-                                                            <span class="px-2 py-1 text-xs font-semibold rounded-full bg-teal-100 text-teal-800">
-                                                                {prop_count} " props"
-                                                            </span>
-                                                        </div>
-                                                        <p class="text-sm text-gray-500 mb-4 line-clamp-2">
-                                                            {schema.description.clone().unwrap_or_else(|| "No description".to_string())}
-                                                        </p>
-                                                        <div class="mb-4">
-                                                            <code class="text-xs bg-gray-100 px-2 py-1 rounded font-mono text-teal-600 block truncate">
-                                                                {format!(r#"{{"$ref": "{}"}}"#, name)}
-                                                            </code>
-                                                        </div>
-                                                        <div class="flex justify-end gap-2 pt-4 border-t border-gray-100">
-                                                            <A href=format!("/schemas/edit/{}", name_for_edit) attr:class="px-3 py-1 text-sm text-teal-600 hover:bg-teal-50 rounded">"Edit"</A>
-                                                            <button
-                                                                class="px-3 py-1 text-sm text-red-600 hover:bg-red-50 rounded"
-                                                                on:click=move |_| set_delete_target.set(Some(name_for_delete.clone()))
-                                                            >
-                                                                "Delete"
-                                                            </button>
-                                                        </div>
-                                                    </div>
-                                                }
-                                            }).collect::<Vec<_>>()}
-                                        </div>
-                                    }.into_any()
-                                }
+                                                </div>
+                                            }.into_any()
+                                        }}
+
+                                        // Pagination
+                                        <Pagination
+                                            current_page=current_page
+                                            total_pages=Signal::derive(move || pages)
+                                            total_items=Signal::derive(move || total_filtered)
+                                            items_per_page=items_per_page
+                                        />
+                                    </div>
+                                }.into_any()
                             }
                             _ => view! {
                                 <div class="bg-white rounded-lg shadow p-8 text-center">
@@ -261,16 +350,33 @@ pub fn Schemas() -> impl IntoView {
     }
 }
 
+#[component]
+fn NoResultsState() -> impl IntoView {
+    view! {
+        <div class="text-center py-12 bg-white rounded-lg shadow">
+            <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+            </svg>
+            <h3 class="mt-2 text-sm font-medium text-gray-900">"No matching schemas"</h3>
+            <p class="mt-1 text-sm text-gray-500">"Try adjusting your search or filter criteria."</p>
+        </div>
+    }
+}
+
 /// Schema create/edit form
 #[component]
 pub fn SchemaForm() -> impl IntoView {
     let (name, set_name) = signal(String::new());
     let (description, set_description) = signal(String::new());
+    let tags = RwSignal::new(Vec::<String>::new());
     let (properties, set_properties) = signal(Vec::<SchemaProperty>::new());
+    let (metadata, set_metadata) = signal(SchemaMetadata::default());
+    let (definitions, set_definitions) = signal(Vec::<SchemaDefinition>::new());
     let (json_mode, set_json_mode) = signal(false);
     let (json_text, set_json_text) = signal(String::new());
     let (saving, set_saving) = signal(false);
     let (error, set_error) = signal(Option::<String>::None);
+    let (show_metadata, set_show_metadata) = signal(false);
 
     let on_submit = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
@@ -291,12 +397,14 @@ pub fn SchemaForm() -> impl IntoView {
                 }
             }
         } else {
-            properties_to_schema(&properties.get())
+            // Use full schema with metadata and definitions
+            full_schema_to_value(&metadata.get(), &definitions.get(), &properties.get())
         };
 
         let schema = Schema {
             name: name_val,
             description: if desc_val.is_empty() { None } else { Some(desc_val) },
+            tags: tags.get(),
             schema: schema_value,
         };
 
@@ -365,6 +473,9 @@ pub fn SchemaForm() -> impl IntoView {
                         />
                     </div>
 
+                    // Tags
+                    <TagInput tags=tags />
+
                     // Mode toggle
                     <div class="flex items-center gap-4 border-b border-gray-200 pb-4">
                         <span class="text-sm font-medium text-gray-700">"Edit Mode:"</span>
@@ -380,6 +491,8 @@ pub fn SchemaForm() -> impl IntoView {
                                     if json_mode.get() {
                                         if let Ok(val) = serde_json::from_str::<serde_json::Value>(&json_text.get()) {
                                             set_properties.set(schema_to_properties(&val));
+                                            set_metadata.set(schema_to_metadata(&val));
+                                            set_definitions.set(schema_to_definitions(&val));
                                         }
                                     }
                                     set_json_mode.set(false);
@@ -396,7 +509,7 @@ pub fn SchemaForm() -> impl IntoView {
                                 on:click=move |_| {
                                     // Convert properties to JSON when switching to JSON
                                     if !json_mode.get() {
-                                        let schema = properties_to_schema(&properties.get());
+                                        let schema = full_schema_to_value(&metadata.get(), &definitions.get(), &properties.get());
                                         set_json_text.set(serde_json::to_string_pretty(&schema).unwrap_or_default());
                                     }
                                     set_json_mode.set(true);
@@ -413,6 +526,85 @@ pub fn SchemaForm() -> impl IntoView {
                         <Show
                             when=move || json_mode.get()
                             fallback=move || view! {
+                                // Metadata section (collapsible)
+                                <details class="mb-4" open=show_metadata>
+                                    <summary
+                                        class="text-sm font-medium text-gray-600 cursor-pointer hover:text-gray-800 select-none"
+                                        on:click=move |_| set_show_metadata.update(|v| *v = !*v)
+                                    >
+                                        "▶ Schema Metadata ($schema, $id, title)"
+                                    </summary>
+                                    <div class="mt-2 p-3 bg-blue-50 rounded border border-blue-200 space-y-3">
+                                        <div class="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <label class="block text-xs text-gray-600 mb-1">"$schema (JSON Schema version)"</label>
+                                                <select
+                                                    class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-teal-500"
+                                                    prop:value=move || metadata.get().schema_uri
+                                                    on:change=move |ev| {
+                                                        let value = event_target_value(&ev);
+                                                        set_metadata.update(|m| m.schema_uri = value);
+                                                    }
+                                                >
+                                                    <option value="">"(none)"</option>
+                                                    <option value="http://json-schema.org/draft-07/schema#">"Draft-07"</option>
+                                                    <option value="https://json-schema.org/draft/2019-09/schema">"Draft 2019-09"</option>
+                                                    <option value="https://json-schema.org/draft/2020-12/schema">"Draft 2020-12"</option>
+                                                </select>
+                                            </div>
+                                            <div>
+                                                <label class="block text-xs text-gray-600 mb-1">"$id (Schema URI)"</label>
+                                                <input
+                                                    type="text"
+                                                    class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-teal-500"
+                                                    placeholder="https://example.com/schemas/my-schema.json"
+                                                    prop:value=move || metadata.get().id
+                                                    on:input=move |ev| {
+                                                        let value = event_target_value(&ev);
+                                                        set_metadata.update(|m| m.id = value);
+                                                    }
+                                                />
+                                            </div>
+                                        </div>
+                                        <div class="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <label class="block text-xs text-gray-600 mb-1">"Title"</label>
+                                                <input
+                                                    type="text"
+                                                    class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-teal-500"
+                                                    placeholder="Schema Title"
+                                                    prop:value=move || metadata.get().title
+                                                    on:input=move |ev| {
+                                                        let value = event_target_value(&ev);
+                                                        set_metadata.update(|m| m.title = value);
+                                                    }
+                                                />
+                                            </div>
+                                            <div>
+                                                <label class="block text-xs text-gray-600 mb-1">"Description"</label>
+                                                <input
+                                                    type="text"
+                                                    class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-teal-500"
+                                                    placeholder="Schema description"
+                                                    prop:value=move || metadata.get().description
+                                                    on:input=move |ev| {
+                                                        let value = event_target_value(&ev);
+                                                        set_metadata.update(|m| m.description = value);
+                                                    }
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </details>
+
+                                // Definitions section (editable)
+                                <div class="mb-4">
+                                    <DefinitionsEditor
+                                        definitions=definitions
+                                        set_definitions=set_definitions
+                                    />
+                                </div>
+
                                 <JsonSchemaEditor
                                     properties=properties
                                     set_properties=set_properties
@@ -423,7 +615,7 @@ pub fn SchemaForm() -> impl IntoView {
                             }
                         >
                             <textarea
-                                class="w-full h-64 px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm focus:ring-teal-500 focus:border-teal-500"
+                                class="w-full h-96 px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm focus:ring-teal-500 focus:border-teal-500"
                                 placeholder=r#"{"type": "object", "properties": { ... }}"#
                                 prop:value=move || json_text.get()
                                 on:input=move |ev| set_json_text.set(event_target_value(&ev))
@@ -458,12 +650,16 @@ pub fn SchemaEditForm() -> impl IntoView {
 
     let (name, set_name) = signal(String::new());
     let (description, set_description) = signal(String::new());
+    let tags = RwSignal::new(Vec::<String>::new());
     let (properties, set_properties) = signal(Vec::<SchemaProperty>::new());
+    let (metadata, set_metadata) = signal(SchemaMetadata::default());
+    let (definitions, set_definitions) = signal(Vec::<SchemaDefinition>::new());
     let (json_mode, set_json_mode) = signal(false);
     let (json_text, set_json_text) = signal(String::new());
     let (saving, set_saving) = signal(false);
     let (error, set_error) = signal(Option::<String>::None);
     let (loaded, set_loaded) = signal(false);
+    let (show_metadata, set_show_metadata) = signal(false);
 
     // Load existing schema
     Effect::new(move |_| {
@@ -474,8 +670,16 @@ pub fn SchemaEditForm() -> impl IntoView {
                     Ok(schema) => {
                         set_name.set(schema.name);
                         set_description.set(schema.description.unwrap_or_default());
+                        tags.set(schema.tags.clone());
                         set_properties.set(schema_to_properties(&schema.schema));
+                        set_metadata.set(schema_to_metadata(&schema.schema));
+                        set_definitions.set(schema_to_definitions(&schema.schema));
                         set_json_text.set(serde_json::to_string_pretty(&schema.schema).unwrap_or_default());
+                        // Auto-expand metadata section if it has content
+                        let meta = schema_to_metadata(&schema.schema);
+                        if !meta.schema_uri.is_empty() || !meta.id.is_empty() || !meta.title.is_empty() {
+                            set_show_metadata.set(true);
+                        }
                         set_loaded.set(true);
                     }
                     Err(e) => {
@@ -506,12 +710,14 @@ pub fn SchemaEditForm() -> impl IntoView {
                 }
             }
         } else {
-            properties_to_schema(&properties.get())
+            // Use full schema with metadata and definitions
+            full_schema_to_value(&metadata.get(), &definitions.get(), &properties.get())
         };
 
         let schema = Schema {
             name: name_val,
             description: if desc_val.is_empty() { None } else { Some(desc_val) },
+            tags: tags.get(),
             schema: schema_value,
         };
 
@@ -546,13 +752,23 @@ pub fn SchemaEditForm() -> impl IntoView {
                 </div>
             </Show>
 
-            <Show
-                when=move || loaded.get()
-                fallback=|| view! { <div class="text-gray-500">"Loading schema..."</div> }
+            // Loading spinner
+            <div
+                class="flex items-center justify-center py-12"
+                style=move || if loaded.get() { "display: none" } else { "display: flex" }
             >
-                <form on:submit=on_submit class="bg-white rounded-lg shadow p-6">
-                    <div class="space-y-6">
-                        // Name
+                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-teal-600"></div>
+                <span class="ml-3 text-gray-500">"Loading schema..."</span>
+            </div>
+
+            // Form - always rendered but hidden while loading
+            <form
+                on:submit=on_submit
+                class="bg-white rounded-lg shadow p-6"
+                style=move || if loaded.get() { "display: block" } else { "display: none" }
+            >
+                <div class="space-y-6">
+                    // Name
                         <div>
                             <label class="block text-sm font-medium text-gray-700 mb-1">"Name"</label>
                             <input
@@ -581,6 +797,9 @@ pub fn SchemaEditForm() -> impl IntoView {
                             />
                         </div>
 
+                        // Tags
+                        <TagInput tags=tags />
+
                         // Mode toggle
                         <div class="flex items-center gap-4 border-b border-gray-200 pb-4">
                             <span class="text-sm font-medium text-gray-700">"Edit Mode:"</span>
@@ -595,6 +814,8 @@ pub fn SchemaEditForm() -> impl IntoView {
                                         if json_mode.get() {
                                             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&json_text.get()) {
                                                 set_properties.set(schema_to_properties(&val));
+                                                set_metadata.set(schema_to_metadata(&val));
+                                                set_definitions.set(schema_to_definitions(&val));
                                             }
                                         }
                                         set_json_mode.set(false);
@@ -610,7 +831,7 @@ pub fn SchemaEditForm() -> impl IntoView {
                                     )
                                     on:click=move |_| {
                                         if !json_mode.get() {
-                                            let schema = properties_to_schema(&properties.get());
+                                            let schema = full_schema_to_value(&metadata.get(), &definitions.get(), &properties.get());
                                             set_json_text.set(serde_json::to_string_pretty(&schema).unwrap_or_default());
                                         }
                                         set_json_mode.set(true);
@@ -627,6 +848,85 @@ pub fn SchemaEditForm() -> impl IntoView {
                             <Show
                                 when=move || json_mode.get()
                                 fallback=move || view! {
+                                    // Metadata section (collapsible)
+                                    <details class="mb-4" open=show_metadata>
+                                        <summary
+                                            class="text-sm font-medium text-gray-600 cursor-pointer hover:text-gray-800 select-none"
+                                            on:click=move |_| set_show_metadata.update(|v| *v = !*v)
+                                        >
+                                            "▶ Schema Metadata ($schema, $id, title)"
+                                        </summary>
+                                        <div class="mt-2 p-3 bg-blue-50 rounded border border-blue-200 space-y-3">
+                                            <div class="grid grid-cols-2 gap-3">
+                                                <div>
+                                                    <label class="block text-xs text-gray-600 mb-1">"$schema (JSON Schema version)"</label>
+                                                    <select
+                                                        class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-teal-500"
+                                                        prop:value=move || metadata.get().schema_uri
+                                                        on:change=move |ev| {
+                                                            let value = event_target_value(&ev);
+                                                            set_metadata.update(|m| m.schema_uri = value);
+                                                        }
+                                                    >
+                                                        <option value="">"(none)"</option>
+                                                        <option value="http://json-schema.org/draft-07/schema#">"Draft-07"</option>
+                                                        <option value="https://json-schema.org/draft/2019-09/schema">"Draft 2019-09"</option>
+                                                        <option value="https://json-schema.org/draft/2020-12/schema">"Draft 2020-12"</option>
+                                                    </select>
+                                                </div>
+                                                <div>
+                                                    <label class="block text-xs text-gray-600 mb-1">"$id (Schema URI)"</label>
+                                                    <input
+                                                        type="text"
+                                                        class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-teal-500"
+                                                        placeholder="https://example.com/schemas/my-schema.json"
+                                                        prop:value=move || metadata.get().id
+                                                        on:input=move |ev| {
+                                                            let value = event_target_value(&ev);
+                                                            set_metadata.update(|m| m.id = value);
+                                                        }
+                                                    />
+                                                </div>
+                                            </div>
+                                            <div class="grid grid-cols-2 gap-3">
+                                                <div>
+                                                    <label class="block text-xs text-gray-600 mb-1">"Title"</label>
+                                                    <input
+                                                        type="text"
+                                                        class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-teal-500"
+                                                        placeholder="Schema Title"
+                                                        prop:value=move || metadata.get().title
+                                                        on:input=move |ev| {
+                                                            let value = event_target_value(&ev);
+                                                            set_metadata.update(|m| m.title = value);
+                                                        }
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label class="block text-xs text-gray-600 mb-1">"Description"</label>
+                                                    <input
+                                                        type="text"
+                                                        class="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-teal-500"
+                                                        placeholder="Schema description"
+                                                        prop:value=move || metadata.get().description
+                                                        on:input=move |ev| {
+                                                            let value = event_target_value(&ev);
+                                                            set_metadata.update(|m| m.description = value);
+                                                        }
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </details>
+
+                                    // Definitions section (editable)
+                                    <div class="mb-4">
+                                        <DefinitionsEditor
+                                            definitions=definitions
+                                            set_definitions=set_definitions
+                                        />
+                                    </div>
+
                                     <JsonSchemaEditor
                                         properties=properties
                                         set_properties=set_properties
@@ -637,30 +937,29 @@ pub fn SchemaEditForm() -> impl IntoView {
                                 }
                             >
                                 <textarea
-                                    class="w-full h-64 px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm focus:ring-teal-500 focus:border-teal-500"
+                                    class="w-full h-96 px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm focus:ring-teal-500 focus:border-teal-500"
                                     placeholder=r#"{"type": "object", "properties": { ... }}"#
                                     prop:value=move || json_text.get()
                                     on:input=move |ev| set_json_text.set(event_target_value(&ev))
                                 />
                             </Show>
                         </div>
-                    </div>
+                </div>
 
-                    // Submit button
-                    <div class="flex justify-end gap-3 mt-6 pt-6 border-t border-gray-200">
-                        <A href="/schemas" attr:class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
-                            "Cancel"
-                        </A>
-                        <button
-                            type="submit"
-                            class="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50"
-                            disabled=move || saving.get()
-                        >
-                            {move || if saving.get() { "Saving..." } else { "Save Changes" }}
-                        </button>
-                    </div>
-                </form>
-            </Show>
+                // Submit button
+                <div class="flex justify-end gap-3 mt-6 pt-6 border-t border-gray-200">
+                    <A href="/schemas" attr:class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
+                        "Cancel"
+                    </A>
+                    <button
+                        type="submit"
+                        class="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 disabled:opacity-50"
+                        disabled=move || saving.get()
+                    >
+                        {move || if saving.get() { "Saving..." } else { "Save Changes" }}
+                    </button>
+                </div>
+            </form>
         </div>
     }
 }

@@ -1,11 +1,15 @@
 use leptos::prelude::*;
 use crate::api;
-use crate::types::ConfigOverview;
+use crate::types::{ConfigOverview, DatabaseStatus};
 
 #[component]
 pub fn Dashboard() -> impl IntoView {
     let config = LocalResource::new(|| async move {
         api::get_config().await.ok()
+    });
+
+    let db_status = LocalResource::new(|| async move {
+        api::get_database_status().await.ok()
     });
 
     view! {
@@ -16,6 +20,7 @@ pub fn Dashboard() -> impl IntoView {
                 {move || {
                     match config.get() {
                         Some(Some(overview)) => {
+                            let db = db_status.get().flatten();
                             if !overview.config_file_loaded {
                                 // No config file - show dashboard with info banner
                                 view! {
@@ -29,6 +34,7 @@ pub fn Dashboard() -> impl IntoView {
                                             </p>
                                         </div>
                                         <ServerInfoCard overview=overview.clone() />
+                                        <DatabaseStatusCard status=db />
                                         <StatsGrid overview=overview />
                                     </div>
                                 }.into_any()
@@ -37,6 +43,7 @@ pub fn Dashboard() -> impl IntoView {
                                 view! {
                                     <div>
                                         <ServerInfoCard overview=overview.clone() />
+                                        <DatabaseStatusCard status=db />
                                         <StatsGrid overview=overview />
                                     </div>
                                 }.into_any()
@@ -86,6 +93,80 @@ fn ServerInfoCard(overview: ConfigOverview) -> impl IntoView {
                 </div>
             </div>
         </div>
+    }
+}
+
+#[component]
+fn DatabaseStatusCard(status: Option<DatabaseStatus>) -> impl IntoView {
+    match status {
+        Some(db) if db.enabled => {
+            let (health_bg, health_text, health_label) = if db.healthy {
+                ("bg-green-100", "text-green-700", "Healthy")
+            } else {
+                ("bg-red-100", "text-red-700", "Unhealthy")
+            };
+
+            let backend = db.backend.clone().unwrap_or_else(|| "Unknown".to_string());
+            let head_info = db.head.as_ref().map(|h| {
+                let short_hash = if h.commit_hash.len() >= 8 {
+                    &h.commit_hash[..8]
+                } else {
+                    &h.commit_hash
+                };
+                format!("{} - {}", short_hash, h.message)
+            }).unwrap_or_else(|| "No commits yet".to_string());
+
+            view! {
+                <div class="bg-white p-4 rounded-lg shadow mb-6">
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="text-lg font-semibold text-gray-700">"Database Status"</h3>
+                        <span class=format!("px-2 py-1 rounded text-sm font-medium {} {}", health_bg, health_text)>
+                            {health_label}
+                        </span>
+                    </div>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                        <div>
+                            <span class="text-gray-500">"Backend: "</span>
+                            <span class="font-mono">{backend}</span>
+                        </div>
+                        <div>
+                            <span class="text-gray-500">"Commits: "</span>
+                            <span class="font-mono">{db.total_commits}</span>
+                        </div>
+                        <div>
+                            <span class="text-gray-500">"Tags: "</span>
+                            <span class="font-mono">{db.total_tags}</span>
+                        </div>
+                        <div class="md:col-span-1">
+                            <span class="text-gray-500">"HEAD: "</span>
+                            <span class="font-mono text-xs">{head_info}</span>
+                        </div>
+                    </div>
+                </div>
+            }.into_any()
+        }
+        Some(_) => {
+            // Database not enabled
+            view! {
+                <div class="bg-gray-50 p-4 rounded-lg border border-gray-200 mb-6">
+                    <div class="flex items-center">
+                        <span class="text-gray-500 text-sm">
+                            "Database persistence is not configured. Add a "
+                            <code class="bg-gray-200 px-1 rounded">"[database]"</code>
+                            " section to your config to enable version history."
+                        </span>
+                    </div>
+                </div>
+            }.into_any()
+        }
+        None => {
+            // Loading or error
+            view! {
+                <div class="bg-gray-50 p-4 rounded-lg border border-gray-200 mb-6 animate-pulse">
+                    <span class="text-gray-400 text-sm">"Loading database status..."</span>
+                </div>
+            }.into_any()
+        }
     }
 }
 

@@ -1,4 +1,4 @@
-mod common;
+use super::common;
 
 use common::test_server::TestServer;
 

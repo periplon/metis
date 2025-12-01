@@ -8,6 +8,7 @@ mod components;
 
 use components::dashboard::Dashboard;
 use components::config::Config;
+use components::data_lakes::{DataLakes, DataLakeForm, DataLakeEditForm, DataLakeRecords};
 use components::logs::Logs;
 use components::resources::{Resources, ResourceForm, ResourceEditForm};
 use components::resource_templates::{ResourceTemplates, ResourceTemplateForm, ResourceTemplateEditForm};
@@ -16,6 +17,7 @@ use components::prompts::{Prompts, PromptForm, PromptEditForm};
 use components::workflows::{Workflows, WorkflowForm, WorkflowEditForm};
 use components::agents::{Agents, AgentForm, AgentEditForm};
 use components::schemas::{Schemas, SchemaForm, SchemaEditForm};
+use components::version_history::VersionHistory;
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -34,8 +36,10 @@ pub fn App() -> impl IntoView {
                         <NavLink href="/workflows" label="Workflows" />
                         <NavLink href="/agents" label="AI Agents" />
                         <NavLink href="/schemas" label="Schemas" />
+                        <NavLink href="/data-lakes" label="Data Lakes" />
                         <div class="border-t border-gray-700 my-4"></div>
                         <NavLink href="/config" label="Configuration" />
+                        <NavLink href="/history" label="Version History" />
                         <NavLink href="/logs" label="Logs" />
                     </nav>
                     <div class="text-xs text-gray-500 mt-4">
@@ -68,7 +72,12 @@ pub fn App() -> impl IntoView {
                         <Route path=path!("/schemas/new") view=SchemaForm/>
                         <Route path=path!("/schemas/edit/:name") view=SchemaEditForm/>
                         <Route path=path!("/schemas") view=Schemas/>
+                        <Route path=path!("/data-lakes/new") view=DataLakeForm/>
+                        <Route path=path!("/data-lakes/edit/:name") view=DataLakeEditForm/>
+                        <Route path=path!("/data-lakes/:name/records") view=DataLakeRecords/>
+                        <Route path=path!("/data-lakes") view=DataLakes/>
                         <Route path=path!("/config") view=Config/>
+                        <Route path=path!("/history") view=VersionHistory/>
                         <Route path=path!("/logs") view=Logs/>
                     </Routes>
                 </div>

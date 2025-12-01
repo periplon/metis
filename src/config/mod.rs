@@ -4,18 +4,21 @@ use serde_json::Value;
 use std::path::PathBuf;
 use thiserror::Error;
 
+pub mod data_lake;
 pub mod s3;
 pub mod s3_watcher;
 pub mod schema;
 pub mod validator;
 pub mod watcher;
 
+pub use data_lake::{DataLakeConfig, DataLakeSchemaRef, DataRecord, GenerateRecordsRequest, ValidationResult, ValidationError};
 pub use s3::S3Config;
 pub use s3_watcher::S3Watcher;
 pub use schema::SchemaConfig;
 
 use crate::agents::config::{AgentConfig, OrchestrationConfig};
 use crate::cli::Cli;
+use crate::persistence::PersistenceConfig;
 
 /// Error returned when optimistic locking detects a version conflict
 #[derive(Debug, Error)]
@@ -54,6 +57,9 @@ pub struct Settings {
     /// Reusable JSON schema definitions that can be referenced via $ref
     #[serde(default)]
     pub schemas: Vec<SchemaConfig>,
+    /// Data Lakes for structured data management with schema-driven forms
+    #[serde(default)]
+    pub data_lakes: Vec<DataLakeConfig>,
     #[serde(default)]
     pub rate_limit: Option<RateLimitConfig>,
     #[serde(default)]
@@ -66,6 +72,11 @@ pub struct Settings {
     /// Encrypted values require METIS_SECRET_PASSPHRASE env var or --secret-passphrase flag
     #[serde(default)]
     pub secrets: SecretsConfig,
+    /// Database persistence configuration (optional)
+    /// When configured, the database becomes the primary source of truth for archetypes
+    /// Config files are used for initial seeding only
+    #[serde(default)]
+    pub database: Option<PersistenceConfig>,
 }
 
 /// Configuration for embedded secrets (can be encrypted with AGE)
@@ -164,6 +175,9 @@ pub struct ResourceConfig {
     pub name: String,
     pub description: Option<String>,
     pub mime_type: Option<String>,
+    /// Tags for categorization and filtering
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     /// JSON Schema for the expected output structure
     #[serde(default)]
     pub output_schema: Option<Value>,
@@ -181,6 +195,9 @@ pub struct ResourceTemplateConfig {
     pub name: String,
     pub description: Option<String>,
     pub mime_type: Option<String>,
+    /// Tags for categorization and filtering
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     /// JSON Schema for template input parameters (the {variables} in uri_template)
     #[serde(default)]
     pub input_schema: Option<Value>,
@@ -195,6 +212,9 @@ pub struct ResourceTemplateConfig {
 pub struct ToolConfig {
     pub name: String,
     pub description: String,
+    /// Tags for categorization and filtering
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     pub input_schema: Value,
     /// Optional JSON Schema defining the expected output structure
     #[serde(default)]
@@ -300,6 +320,9 @@ pub enum StateOperation {
 pub struct PromptConfig {
     pub name: String,
     pub description: String,
+    /// Tags for categorization and filtering
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     pub arguments: Option<Vec<PromptArgument>>,
     /// JSON Schema for prompt input parameters (more detailed than arguments)
     #[serde(default)]
@@ -331,6 +354,9 @@ pub struct WorkflowConfig {
     pub name: String,
     /// Description of what the workflow does
     pub description: String,
+    /// Tags for categorization and filtering
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     /// JSON schema for workflow inputs
     #[serde(default = "default_workflow_schema")]
     pub input_schema: Value,
@@ -516,6 +542,7 @@ impl Settings {
         self.load_agents_from_dir(&format!("{}/config/agents", root))?;
         self.load_orchestrations_from_dir(&format!("{}/config/orchestrations", root))?;
         self.load_schemas_from_dir(&format!("{}/config/schemas", root))?;
+        self.load_data_lakes_from_dir(&format!("{}/config/data_lakes", root))?;
         Ok(())
     }
 
@@ -556,6 +583,7 @@ impl Settings {
         Self::merge_vec_by_key(&mut self.agents, other.agents, |a| a.name.clone());
         Self::merge_vec_by_key(&mut self.orchestrations, other.orchestrations, |o| o.name.clone());
         Self::merge_vec_by_key(&mut self.schemas, other.schemas, |s| s.name.clone());
+        Self::merge_vec_by_key(&mut self.data_lakes, other.data_lakes, |d| d.name.clone());
         Self::merge_vec_by_key(&mut self.mcp_servers, other.mcp_servers, |m| m.name.clone());
     }
 
@@ -663,6 +691,8 @@ impl Settings {
             Some("agent")
         } else if key.contains("/workflows/") {
             Some("workflow")
+        } else if key.contains("/data_lakes/") {
+            Some("data_lake")
         } else {
             None
         };
@@ -803,6 +833,24 @@ impl Settings {
                     }
                     Err(e) => {
                         tracing::warn!("Failed to parse S3 workflow file {}: {}", key, e);
+                        false
+                    }
+                }
+            }
+            "data_lake" => {
+                let result: Result<DataLakeConfig, String> = if is_json {
+                    serde_json::from_str(content).map_err(|e| e.to_string())
+                } else {
+                    serde_yaml::from_str(content).map_err(|e| e.to_string())
+                };
+                match result {
+                    Ok(data_lake_config) => {
+                        tracing::info!("Loaded data lake '{}' from S3: {}", data_lake_config.name, key);
+                        Self::merge_vec_by_key(&mut self.data_lakes, vec![data_lake_config], |d| d.name.clone());
+                        true
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to parse S3 data lake file {}: {}", key, e);
                         false
                     }
                 }
@@ -986,6 +1034,29 @@ impl Settings {
                                 _ => serde_yaml::from_str(&content)?,
                             };
                             self.schemas.push(schema);
+                        }
+                    }
+                }
+                Err(e) => tracing::warn!("Failed to read glob entry: {}", e),
+            }
+        }
+        Ok(())
+    }
+
+    fn load_data_lakes_from_dir(&mut self, path: &str) -> Result<(), anyhow::Error> {
+        let pattern = format!("{}/*", path);
+        for entry in glob::glob(&pattern)? {
+            match entry {
+                Ok(path) => {
+                    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                        if matches!(ext, "json" | "yaml" | "yml" | "toml") {
+                            let content = std::fs::read_to_string(&path)?;
+                            let data_lake: DataLakeConfig = match ext {
+                                "json" => serde_json::from_str(&content)?,
+                                "toml" => toml::from_str(&content)?,
+                                _ => serde_yaml::from_str(&content)?,
+                            };
+                            self.data_lakes.push(data_lake);
                         }
                     }
                 }

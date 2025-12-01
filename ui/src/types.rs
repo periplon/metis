@@ -142,6 +142,29 @@ pub struct S3Config {
     pub poll_interval_secs: u64,
 }
 
+/// Database persistence configuration
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct DatabaseConfig {
+    /// Database connection URL (sqlite://, postgres://, mysql://)
+    pub url: String,
+    /// Maximum number of connections in the pool
+    #[serde(default = "default_max_connections")]
+    pub max_connections: u32,
+    /// Whether to run migrations automatically on startup
+    #[serde(default = "default_auto_migrate")]
+    pub auto_migrate: bool,
+    /// Whether to seed the database from config files on startup
+    #[serde(default)]
+    pub seed_on_startup: bool,
+    /// Create a full snapshot every N commits
+    #[serde(default = "default_snapshot_interval")]
+    pub snapshot_interval: u32,
+}
+
+fn default_max_connections() -> u32 { 5 }
+fn default_auto_migrate() -> bool { true }
+fn default_snapshot_interval() -> u32 { 10 }
+
 /// Server settings that can be edited via the UI
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ServerSettings {
@@ -150,6 +173,8 @@ pub struct ServerSettings {
     pub rate_limit: Option<RateLimitConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub s3: Option<S3Config>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub database: Option<DatabaseConfig>,
 }
 
 /// Static resource with fixed URI (no input variables, only output schema)
@@ -159,6 +184,9 @@ pub struct Resource {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Tags for categorization and filtering
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
     /// JSON Schema for the expected output structure
@@ -178,6 +206,9 @@ pub struct ResourceTemplate {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Tags for categorization and filtering
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
     /// JSON Schema for template input parameters (the {variables} in uri_template)
@@ -197,6 +228,9 @@ pub struct ResourceTemplate {
 pub struct Tool {
     pub name: String,
     pub description: String,
+    /// Tags for categorization and filtering
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     #[serde(default)]
     pub input_schema: Value,
     /// Optional JSON Schema defining the expected output structure
@@ -213,6 +247,9 @@ pub struct Tool {
 pub struct Prompt {
     pub name: String,
     pub description: String,
+    /// Tags for categorization and filtering
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub arguments: Option<Vec<PromptArgument>>,
     /// JSON Schema for prompt input parameters (more detailed than arguments)
@@ -241,6 +278,9 @@ pub struct PromptMessage {
 pub struct Workflow {
     pub name: String,
     pub description: String,
+    /// Tags for categorization and filtering
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     #[serde(default)]
     pub input_schema: Value,
     /// JSON Schema for the expected workflow output structure
@@ -311,7 +351,7 @@ pub struct MockConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm: Option<LLMConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub database: Option<DatabaseConfig>,
+    pub database: Option<MockDatabaseConfig>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -393,8 +433,9 @@ pub enum LLMProvider {
     Anthropic,
 }
 
+/// Database mock configuration for mock strategy
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
-pub struct DatabaseConfig {
+pub struct MockDatabaseConfig {
     pub url: String,
     pub query: String,
     #[serde(default)]
@@ -429,6 +470,9 @@ pub struct TestResult {
 pub struct Agent {
     pub name: String,
     pub description: String,
+    /// Tags for categorization and filtering
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     #[serde(default)]
     pub agent_type: AgentType,
     #[serde(default)]
@@ -567,6 +611,9 @@ pub enum MemoryStrategy {
 pub struct Orchestration {
     pub name: String,
     pub description: String,
+    /// Tags for categorization and filtering
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     pub pattern: OrchestrationPattern,
     #[serde(default)]
     pub input_schema: Value,
@@ -623,5 +670,155 @@ pub struct Schema {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Tags for categorization and filtering
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     pub schema: Value,
+}
+
+// ============================================================================
+// Database & Version History Types
+// ============================================================================
+
+/// Database status information
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct DatabaseStatus {
+    /// Whether database persistence is enabled
+    pub enabled: bool,
+    /// Database backend type (SQLite, PostgreSQL, MySQL)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
+    /// Whether the database connection is healthy
+    pub healthy: bool,
+    /// Current HEAD commit (if any)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub head: Option<Commit>,
+    /// Total number of commits
+    pub total_commits: usize,
+    /// Total number of tags
+    pub total_tags: usize,
+}
+
+/// Version history commit
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct Commit {
+    pub id: String,
+    pub commit_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_hash: Option<String>,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author: Option<String>,
+    pub committed_at: String,
+    pub is_snapshot: bool,
+    pub changes_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+}
+
+/// Changeset (individual change within a commit)
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct Changeset {
+    pub operation: String,
+    pub archetype_type: String,
+    pub archetype_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub old_definition: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_definition: Option<Value>,
+}
+
+/// Tag pointing to a commit
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct Tag {
+    pub name: String,
+    pub commit_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    pub created_at: String,
+}
+
+/// Request for creating a tag
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CreateTagRequest {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// Request for rollback
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RollbackRequest {
+    pub commit_hash: String,
+}
+
+// ============================================================================
+// Data Lake Types
+// ============================================================================
+
+/// Data Lake configuration (data model + records)
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct DataLake {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Tags for categorization and filtering
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub schemas: Vec<DataLakeSchemaRef>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
+}
+
+/// Reference to a schema within a data lake
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct DataLakeSchemaRef {
+    pub schema_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alias: Option<String>,
+}
+
+/// Data record stored in a data lake
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct DataRecord {
+    pub id: String,
+    pub data_lake: String,
+    pub schema_name: String,
+    pub data: Value,
+    pub created_at: String,
+    pub updated_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
+}
+
+/// Request to create a new record
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CreateRecordRequest {
+    pub schema_name: String,
+    pub data: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
+}
+
+/// Request to update a record
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct UpdateRecordRequest {
+    pub data: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
+}
+
+/// Request to generate records using a mock strategy
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct GenerateRecordsRequest {
+    pub schema_name: String,
+    pub count: usize,
+    pub strategy: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strategy_config: Option<Value>,
 }

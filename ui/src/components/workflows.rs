@@ -2,18 +2,20 @@ use leptos::prelude::*;
 use leptos::web_sys;
 use leptos_router::hooks::use_params_map;
 use wasm_bindgen::JsCast;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use crate::api;
 use crate::types::{Workflow, ErrorStrategy};
-use crate::components::schema_editor::{
-    JsonSchemaEditor, SchemaPreview, SchemaProperty,
-    properties_to_schema, schema_to_properties,
-};
+use crate::components::schema_editor::FullSchemaEditor;
 use crate::components::step_editor::{
     WorkflowStepsEditor, StepData,
     steps_data_to_workflow_steps, workflow_steps_to_steps_data,
 };
 use crate::components::artifact_selector::{ArtifactItem, ArtifactCategory};
+use crate::components::list_filter::{
+    ListFilterBar, Pagination, TagBadges, TagInput,
+    extract_tags, filter_items, paginate_items, total_pages,
+    SortField, SortOrder, sort_items,
+};
 
 #[derive(Clone, Copy, PartialEq)]
 enum ViewMode {
@@ -125,9 +127,26 @@ pub fn Workflows() -> impl IntoView {
     let (test_result, set_test_result) = signal(Option::<Result<crate::types::TestResult, String>>::None);
     let (testing, set_testing) = signal(false);
 
+    // Search and filter state
+    let search_query = RwSignal::new(String::new());
+    let selected_tags = RwSignal::new(HashSet::<String>::new());
+    let sort_field = RwSignal::new(SortField::Name);
+    let sort_order = RwSignal::new(SortOrder::Ascending);
+    let current_page = RwSignal::new(0usize);
+    let items_per_page = 10usize;
+
     let workflows = LocalResource::new(move || {
         let _ = refresh_trigger.get();
         async move { api::list_workflows().await.ok() }
+    });
+
+    // Reset page when filters change
+    Effect::new(move || {
+        let _ = search_query.get();
+        let _ = selected_tags.get();
+        let _ = sort_field.get();
+        let _ = sort_order.get();
+        current_page.set(0);
     });
 
     let on_delete_confirm = move |_| {
@@ -469,11 +488,78 @@ pub fn Workflows() -> impl IntoView {
                     workflows.get().map(|data| {
                         match data {
                             Some(list) if !list.is_empty() => {
-                                if view_mode.get() == ViewMode::Table {
-                                    view! { <WorkflowTable workflows=list set_delete_target=set_delete_target set_test_target=set_test_target /> }.into_any()
-                                } else {
-                                    view! { <WorkflowCards workflows=list set_delete_target=set_delete_target set_test_target=set_test_target /> }.into_any()
-                                }
+                                // Extract all available tags
+                                let available_tags = extract_tags(&list, |w: &Workflow| w.tags.as_slice());
+
+                                // Filter workflows
+                                let query = search_query.get();
+                                let tags = selected_tags.get();
+                                let mut filtered = filter_items(
+                                    &list,
+                                    &query,
+                                    &tags,
+                                    |w: &Workflow| format!("{} {}", w.name, w.description),
+                                    |w: &Workflow| w.tags.as_slice(),
+                                );
+
+                                // Sort the filtered items
+                                sort_items(&mut filtered, sort_field.get(), sort_order.get(), |w: &Workflow| &w.name);
+
+                                // Paginate
+                                let page = current_page.get();
+                                let total_count = filtered.len();
+                                let total = total_pages(total_count, items_per_page);
+                                let paginated = paginate_items(&filtered, page, items_per_page);
+
+                                view! {
+                                    <div>
+                                        // Filter bar
+                                        <ListFilterBar
+                                            search_query=search_query
+                                            selected_tags=selected_tags
+                                            available_tags=available_tags.clone()
+                                            sort_field=sort_field
+                                            sort_order=sort_order
+                                            placeholder="Search workflows..."
+                                        />
+
+                                        // Results count when filtered
+                                        {move || {
+                                            if !query.is_empty() || !tags.is_empty() {
+                                                view! {
+                                                    <div class="mb-4 text-sm text-gray-600">
+                                                        {format!("Found {} workflow{}", total_count, if total_count == 1 { "" } else { "s" })}
+                                                    </div>
+                                                }.into_any()
+                                            } else {
+                                                view! { <div></div> }.into_any()
+                                            }
+                                        }}
+
+                                        {if paginated.is_empty() {
+                                            view! { <NoResultsState /> }.into_any()
+                                        } else {
+                                            if view_mode.get() == ViewMode::Table {
+                                                view! { <WorkflowTable workflows=paginated set_delete_target=set_delete_target set_test_target=set_test_target /> }.into_any()
+                                            } else {
+                                                view! { <WorkflowCards workflows=paginated set_delete_target=set_delete_target set_test_target=set_test_target /> }.into_any()
+                                            }
+                                        }}
+
+                                        // Pagination
+                                        {if total > 1 {
+                                            view! {
+                                                <Pagination
+                                                    current_page=current_page
+                                                    total_pages=total
+                                                    total_items=total_count
+                                                />
+                                            }.into_any()
+                                        } else {
+                                            view! { <div></div> }.into_any()
+                                        }}
+                                    </div>
+                                }.into_any()
                             },
                             Some(_) => view! { <EmptyState /> }.into_any(),
                             None => view! { <ErrorState /> }.into_any(),
@@ -530,6 +616,19 @@ fn ErrorState() -> impl IntoView {
 }
 
 #[component]
+fn NoResultsState() -> impl IntoView {
+    view! {
+        <div class="text-center py-12 bg-white rounded-lg shadow">
+            <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+            </svg>
+            <h3 class="mt-2 text-sm font-medium text-gray-900">"No matching workflows"</h3>
+            <p class="mt-1 text-sm text-gray-500">"Try adjusting your search or filter criteria."</p>
+        </div>
+    }
+}
+
+#[component]
 fn WorkflowTable(
     workflows: Vec<Workflow>,
     set_delete_target: WriteSignal<Option<String>>,
@@ -542,6 +641,7 @@ fn WorkflowTable(
                     <tr>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Name"</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Description"</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Tags"</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Steps"</th>
                         <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">"Actions"</th>
                     </tr>
@@ -552,6 +652,7 @@ fn WorkflowTable(
                         let name_for_delete = workflow.name.clone();
                         let workflow_for_test = workflow.clone();
                         let steps_count = workflow.steps.len();
+                        let tags = workflow.tags.clone();
 
                         view! {
                             <tr class="hover:bg-gray-50">
@@ -561,6 +662,7 @@ fn WorkflowTable(
                                 <td class="px-6 py-4">
                                     <div class="text-sm text-gray-500 truncate max-w-md">{workflow.description.clone()}</div>
                                 </td>
+                                <td class="px-6 py-4"><TagBadges tags=tags /></td>
                                 <td class="px-6 py-4 whitespace-nowrap">
                                     <span class="px-2 py-1 text-xs font-semibold rounded-full bg-orange-100 text-orange-800">
                                         {format!("{} steps", steps_count)}
@@ -608,6 +710,7 @@ fn WorkflowCards(
                 let name_for_delete = workflow.name.clone();
                 let workflow_for_test = workflow.clone();
                 let steps_count = workflow.steps.len();
+                let tags = workflow.tags.clone();
 
                 view! {
                     <div class="bg-white rounded-lg shadow hover:shadow-md transition-shadow p-4">
@@ -620,6 +723,16 @@ fn WorkflowCards(
                                 {format!("{} steps", steps_count)}
                             </span>
                         </div>
+                        // Tags
+                        {if !tags.is_empty() {
+                            view! {
+                                <div class="mb-3">
+                                    <TagBadges tags=tags />
+                                </div>
+                            }.into_any()
+                        } else {
+                            view! { <div></div> }.into_any()
+                        }}
                         // Visual step flow
                         <div class="flex items-center space-x-1 overflow-x-auto pb-2 mb-3">
                             {workflow.steps.iter().enumerate().map(|(i, step)| {
@@ -669,8 +782,14 @@ fn WorkflowCards(
 pub fn WorkflowForm() -> impl IntoView {
     let (name, set_name) = signal(String::new());
     let (description, set_description) = signal(String::new());
-    let (schema_properties, set_schema_properties) = signal(Vec::<SchemaProperty>::new());
-    let (output_schema_properties, set_output_schema_properties) = signal(Vec::<SchemaProperty>::new());
+    let tags = RwSignal::new(Vec::<String>::new());
+    // Schema signals - using Value for full JSON schema support
+    let default_schema = serde_json::json!({
+        "type": "object",
+        "properties": {}
+    });
+    let (input_schema, set_input_schema) = signal(default_schema.clone());
+    let (output_schema, set_output_schema) = signal(default_schema);
     let (steps_data, set_steps_data) = signal(Vec::<StepData>::new());
     let (error, set_error) = signal(Option::<String>::None);
     let (saving, set_saving) = signal(false);
@@ -758,12 +877,17 @@ pub fn WorkflowForm() -> impl IntoView {
             return;
         }
 
-        let input_schema = properties_to_schema(&schema_properties.get());
-        let output_props = output_schema_properties.get();
-        let output_schema = if output_props.is_empty() {
+        // Get schemas
+        let in_schema = input_schema.get();
+        let out_schema = output_schema.get();
+        let output_schema_opt = if out_schema.get("properties")
+            .and_then(|p| p.as_object())
+            .map(|o| o.is_empty())
+            .unwrap_or(true)
+        {
             None
         } else {
-            Some(properties_to_schema(&output_props))
+            Some(out_schema)
         };
 
         let steps = match steps_data_to_workflow_steps(&steps_data.get()) {
@@ -784,8 +908,9 @@ pub fn WorkflowForm() -> impl IntoView {
         let workflow = Workflow {
             name: name.get(),
             description: description.get(),
-            input_schema,
-            output_schema,
+            tags: tags.get(),
+            input_schema: in_schema,
+            output_schema: output_schema_opt,
             steps,
             on_error: ErrorStrategy::Fail,
         };
@@ -859,23 +984,27 @@ pub fn WorkflowForm() -> impl IntoView {
                     </div>
 
                     <div>
-                        <JsonSchemaEditor
-                            properties=schema_properties
-                            set_properties=set_schema_properties
-                            label="Input Schema"
-                            color="orange"
-                        />
-                        <SchemaPreview properties=schema_properties />
+                        <TagInput tags=tags />
                     </div>
 
                     <div>
-                        <JsonSchemaEditor
-                            properties=output_schema_properties
-                            set_properties=set_output_schema_properties
+                        <FullSchemaEditor
+                            label="Input Schema"
+                            color="orange"
+                            schema=input_schema
+                            set_schema=set_input_schema
+                            show_definitions=true
+                        />
+                    </div>
+
+                    <div>
+                        <FullSchemaEditor
                             label="Output Schema"
                             color="blue"
+                            schema=output_schema
+                            set_schema=set_output_schema
+                            show_definitions=true
                         />
-                        <SchemaPreview properties=output_schema_properties />
                     </div>
 
                     <div>
@@ -919,13 +1048,20 @@ pub fn WorkflowEditForm() -> impl IntoView {
 
     let (name, set_name) = signal(String::new());
     let (description, set_description) = signal(String::new());
-    let (schema_properties, set_schema_properties) = signal(Vec::<SchemaProperty>::new());
-    let (output_schema_properties, set_output_schema_properties) = signal(Vec::<SchemaProperty>::new());
+    let tags = RwSignal::new(Vec::<String>::new());
+    // Schema signals - using Value for full JSON schema support
+    let default_schema_edit = serde_json::json!({
+        "type": "object",
+        "properties": {}
+    });
+    let (input_schema, set_input_schema) = signal(default_schema_edit.clone());
+    let (output_schema, set_output_schema) = signal(default_schema_edit);
     let (steps_data, set_steps_data) = signal(Vec::<StepData>::new());
     let (error, set_error) = signal(Option::<String>::None);
     let (saving, set_saving) = signal(false);
     let (loading, set_loading) = signal(true);
     let (original_name, set_original_name) = signal(String::new());
+    let (has_loaded, set_has_loaded) = signal(false);
 
     // Load available artifacts for dropdown (tools, workflows, agents, resources)
     let available_artifacts = LocalResource::new(move || async move {
@@ -990,11 +1126,15 @@ pub fn WorkflowEditForm() -> impl IntoView {
         all_artifacts
     });
 
-    // Load existing workflow
+    // Load existing workflow (only once)
     Effect::new(move |_| {
         let name_param = workflow_name();
         // Skip if name is empty (params not ready yet)
         if name_param.is_empty() {
+            return;
+        }
+        // Skip if already loaded to prevent overwriting user changes
+        if has_loaded.get() {
             return;
         }
         set_loading.set(true);
@@ -1004,12 +1144,14 @@ pub fn WorkflowEditForm() -> impl IntoView {
                     set_original_name.set(workflow.name.clone());
                     set_name.set(workflow.name.clone());
                     set_description.set(workflow.description.clone());
-                    set_schema_properties.set(schema_to_properties(&workflow.input_schema));
+                    tags.set(workflow.tags.clone());
+                    set_input_schema.set(workflow.input_schema.clone());
                     // Load output schema if present
-                    if let Some(output_schema) = &workflow.output_schema {
-                        set_output_schema_properties.set(schema_to_properties(output_schema));
+                    if let Some(out_schema) = &workflow.output_schema {
+                        set_output_schema.set(out_schema.clone());
                     }
                     set_steps_data.set(workflow_steps_to_steps_data(&workflow.steps));
+                    set_has_loaded.set(true);
                 }
                 Err(e) => {
                     set_error.set(Some(format!("Failed to load workflow: {}", e)));
@@ -1040,12 +1182,17 @@ pub fn WorkflowEditForm() -> impl IntoView {
 
         let orig_name = original_name.get();
 
-        let input_schema = properties_to_schema(&schema_properties.get());
-        let output_props = output_schema_properties.get();
-        let output_schema = if output_props.is_empty() {
+        // Get schemas
+        let in_schema = input_schema.get();
+        let out_schema = output_schema.get();
+        let output_schema_opt = if out_schema.get("properties")
+            .and_then(|p| p.as_object())
+            .map(|o| o.is_empty())
+            .unwrap_or(true)
+        {
             None
         } else {
-            Some(properties_to_schema(&output_props))
+            Some(out_schema)
         };
 
         let steps = match steps_data_to_workflow_steps(&steps_data.get()) {
@@ -1066,8 +1213,9 @@ pub fn WorkflowEditForm() -> impl IntoView {
         let workflow = Workflow {
             name: name.get(),
             description: description.get(),
-            input_schema,
-            output_schema,
+            tags: tags.get(),
+            input_schema: in_schema,
+            output_schema: output_schema_opt,
             steps,
             on_error: ErrorStrategy::Fail,
         };
@@ -1100,16 +1248,21 @@ pub fn WorkflowEditForm() -> impl IntoView {
 
             <h2 class="text-2xl font-bold mb-6">"Edit Workflow"</h2>
 
-            {move || if loading.get() {
-                view! {
-                    <div class="flex items-center justify-center py-12">
-                        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500"></div>
-                        <span class="ml-3 text-gray-500">"Loading workflow..."</span>
-                    </div>
-                }.into_any()
-            } else {
-                view! {
-                    <form on:submit=on_submit class="bg-white rounded-lg shadow p-6 max-w-2xl">
+            // Loading spinner
+            <div
+                class="flex items-center justify-center py-12"
+                style=move || if loading.get() { "display: flex" } else { "display: none" }
+            >
+                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-orange-500"></div>
+                <span class="ml-3 text-gray-500">"Loading workflow..."</span>
+            </div>
+
+            // Form - always rendered but hidden while loading
+            <form
+                on:submit=on_submit
+                class="bg-white rounded-lg shadow p-6 max-w-2xl"
+                style=move || if loading.get() { "display: none" } else { "display: block" }
+            >
                         {move || error.get().map(|e| view! {
                             <div class="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
                                 {e}
@@ -1150,23 +1303,27 @@ pub fn WorkflowEditForm() -> impl IntoView {
                             </div>
 
                             <div>
-                                <JsonSchemaEditor
-                                    properties=schema_properties
-                                    set_properties=set_schema_properties
-                                    label="Input Schema"
-                                    color="orange"
-                                />
-                                <SchemaPreview properties=schema_properties />
+                                <TagInput tags=tags />
                             </div>
 
                             <div>
-                                <JsonSchemaEditor
-                                    properties=output_schema_properties
-                                    set_properties=set_output_schema_properties
+                                <FullSchemaEditor
+                                    label="Input Schema"
+                                    color="orange"
+                                    schema=input_schema
+                                    set_schema=set_input_schema
+                                    show_definitions=true
+                                />
+                            </div>
+
+                            <div>
+                                <FullSchemaEditor
                                     label="Output Schema"
                                     color="blue"
+                                    schema=output_schema
+                                    set_schema=set_output_schema
+                                    show_definitions=true
                                 />
-                                <SchemaPreview properties=output_schema_properties />
                             </div>
 
                             <div>
@@ -1199,8 +1356,6 @@ pub fn WorkflowEditForm() -> impl IntoView {
                             </a>
                         </div>
                     </form>
-                }.into_any()
-            }}
         </div>
     }
 }

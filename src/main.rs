@@ -9,6 +9,7 @@ use metis::adapters::state_manager::StateManager;
 use metis::adapters::tool_handler::BasicToolHandler;
 use metis::cli::{Cli, Commands};
 use metis::config::{watcher::ConfigWatcher, s3_watcher::AwsCredentials, S3Watcher, Settings};
+use metis::persistence::DataStore;
 use std::io::{self, Write};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -22,7 +23,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Handle subcommands first (these don't need the full server setup)
     if let Some(cmd) = &cli.command {
-        return handle_command(cmd);
+        return handle_command(cmd, &cli).await;
     }
 
     // Initialize tracing (only for server mode)
@@ -239,8 +240,39 @@ async fn main() -> anyhow::Result<()> {
         prompt_handler,
     );
 
+    // Initialize database if configured
+    let data_store: Option<Arc<DataStore>> = {
+        let settings_read = settings.read().await;
+        if let Some(db_config) = &settings_read.database {
+            info!("Initializing database connection: {}", db_config.url);
+            match DataStore::new(db_config).await {
+                Ok(store) => {
+                    info!("Database connection established");
+
+                    // Seed from settings if enabled
+                    if db_config.seed_on_startup {
+                        if let Err(e) = store.seed_from_settings(&settings_read).await {
+                            warn!("Failed to seed database from config: {}", e);
+                        } else {
+                            info!("Database seeded from configuration");
+                        }
+                    }
+
+                    Some(Arc::new(store))
+                }
+                Err(e) => {
+                    error!("Failed to initialize database: {}", e);
+                    None
+                }
+            }
+        } else {
+            info!("No database configured, running in config-only mode");
+            None
+        }
+    };
+
     // Create application using the library function
-    let app = metis::create_app(metis_server, health_handler, metrics_handler, settings, state_manager, secrets_store, passphrase_store, tool_handler).await;
+    let app = metis::create_app(metis_server, health_handler, metrics_handler, settings, state_manager, secrets_store, passphrase_store, tool_handler, data_store).await;
 
     // Start server
     let addr: SocketAddr = format!("{}:{}", host, port).parse()?;
@@ -252,7 +284,9 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// Handle CLI subcommands
-fn handle_command(cmd: &Commands) -> anyhow::Result<()> {
+async fn handle_command(cmd: &Commands, cli: &Cli) -> anyhow::Result<()> {
+    use metis::persistence::{ArchetypeRepository, CommitRepository, DataStore, PersistenceConfig};
+
     match cmd {
         Commands::EncryptSecret { value, passphrase } => {
             let pass = get_passphrase(passphrase.as_deref(), "Enter passphrase for encryption: ")?;
@@ -279,6 +313,314 @@ fn handle_command(cmd: &Commands) -> anyhow::Result<()> {
                     std::process::exit(1);
                 }
             }
+        }
+        Commands::Migrate { database_url } => {
+            let db_url = get_database_url(database_url.as_deref(), cli)?;
+            let config = PersistenceConfig {
+                url: db_url,
+                ..Default::default()
+            };
+
+            println!("Running database migrations...");
+            let store = DataStore::new(&config).await?;
+            let result = store.migrate().await?;
+            println!("Migrations completed: {} applied, {} skipped", result.applied, result.skipped);
+            Ok(())
+        }
+        Commands::MigrateStatus { database_url } => {
+            let db_url = get_database_url(database_url.as_deref(), cli)?;
+            let config = PersistenceConfig {
+                url: db_url,
+                ..Default::default()
+            };
+
+            let store = DataStore::new(&config).await?;
+            let statuses = store.migration_status().await?;
+
+            println!("Migration Status:");
+            println!("{:-<60}", "");
+            for status in statuses {
+                let applied_marker = if status.applied { "[x]" } else { "[ ]" };
+                let applied_at = status.applied_at.as_deref().unwrap_or("-");
+                println!("{} {} (applied: {})", applied_marker, status.name, applied_at);
+            }
+            Ok(())
+        }
+        Commands::Export {
+            output,
+            format,
+            from_database,
+        } => {
+            // Load settings
+            let settings = Settings::new_with_cli(cli)?;
+
+            let export_data = if *from_database {
+                // Export from database
+                if let Some(db_config) = &settings.database {
+                    let store = DataStore::new(db_config).await?;
+                    let archetypes = store.archetypes().export_all().await?;
+
+                    // Export archetypes as a simple JSON object
+                    // We can't easily construct Settings without all required fields
+                    // Instead, export the archetypes directly
+                    let json_data = serde_json::to_value(&archetypes)?;
+
+                    // Return as a pseudo-Settings by wrapping archetypes appropriately
+                    let export_value = serde_json::json!({
+                        "server": { "host": "0.0.0.0", "port": 8080 },
+                        "resources": archetypes.get("resource").unwrap_or(&vec![]),
+                        "resource_templates": archetypes.get("resource_template").unwrap_or(&vec![]),
+                        "tools": archetypes.get("tool").unwrap_or(&vec![]),
+                        "prompts": archetypes.get("prompt").unwrap_or(&vec![]),
+                        "workflows": archetypes.get("workflow").unwrap_or(&vec![]),
+                        "agents": archetypes.get("agent").unwrap_or(&vec![]),
+                        "orchestrations": archetypes.get("orchestration").unwrap_or(&vec![]),
+                        "schemas": archetypes.get("schema").unwrap_or(&vec![]),
+                    });
+                    drop(json_data); // not needed anymore
+
+                    // Output format-specific content and return early
+                    let content = match format.to_lowercase().as_str() {
+                        "toml" => {
+                            // TOML from serde_json value
+                            let val: toml::Value = serde_json::from_value(export_value)?;
+                            toml::to_string_pretty(&val)?
+                        }
+                        "json" => serde_json::to_string_pretty(&export_value)?,
+                        "yaml" | "yml" => serde_yaml::to_string(&export_value)?,
+                        _ => {
+                            eprintln!("Unknown format: {}. Use toml, json, or yaml.", format);
+                            std::process::exit(1);
+                        }
+                    };
+
+                    if let Some(path) = output {
+                        std::fs::write(path, &content)?;
+                        println!("Configuration exported to: {}", path.display());
+                    } else {
+                        println!("{}", content);
+                    }
+                    return Ok(());
+                } else {
+                    eprintln!("Database not configured. Use --from-database only when database is configured.");
+                    std::process::exit(1);
+                }
+            } else {
+                settings
+            };
+
+            let content = match format.to_lowercase().as_str() {
+                "toml" => toml::to_string_pretty(&export_data)?,
+                "json" => serde_json::to_string_pretty(&export_data)?,
+                "yaml" | "yml" => serde_yaml::to_string(&export_data)?,
+                _ => {
+                    eprintln!("Unknown format: {}. Use toml, json, or yaml.", format);
+                    std::process::exit(1);
+                }
+            };
+
+            if let Some(path) = output {
+                std::fs::write(path, &content)?;
+                println!("Configuration exported to: {}", path.display());
+            } else {
+                println!("{}", content);
+            }
+            Ok(())
+        }
+        Commands::Import {
+            input,
+            format,
+            target,
+            merge,
+        } => {
+            // Detect format from extension if not specified
+            let fmt = format.clone().unwrap_or_else(|| {
+                input
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|s| s.to_lowercase())
+                    .unwrap_or_else(|| "toml".to_string())
+            });
+
+            let content = std::fs::read_to_string(input)?;
+            let import_settings: Settings = match fmt.as_str() {
+                "toml" => toml::from_str(&content)?,
+                "json" => serde_json::from_str(&content)?,
+                "yaml" | "yml" => serde_yaml::from_str(&content)?,
+                _ => {
+                    eprintln!("Unknown format: {}. Use toml, json, or yaml.", fmt);
+                    std::process::exit(1);
+                }
+            };
+
+            match target.as_str() {
+                "database" => {
+                    let settings = Settings::new_with_cli(cli)?;
+                    if let Some(db_config) = &settings.database {
+                        let store = DataStore::new(db_config).await?;
+
+                        if !*merge {
+                            // TODO: Clear existing data before import
+                            println!("Warning: Replace mode not yet implemented. Using merge mode.");
+                        }
+
+                        let count = store.seed_from_settings(&import_settings).await?;
+                        println!("Imported {} archetypes to database", count);
+                    } else {
+                        eprintln!("Database not configured. Configure database in settings first.");
+                        std::process::exit(1);
+                    }
+                }
+                "config-file" => {
+                    // Export to the config file location
+                    let config_path = &cli.config;
+                    let content = toml::to_string_pretty(&import_settings)?;
+                    std::fs::write(config_path, content)?;
+                    println!("Configuration written to: {}", config_path.display());
+                }
+                _ => {
+                    eprintln!("Unknown target: {}. Use 'database' or 'config-file'.", target);
+                    std::process::exit(1);
+                }
+            }
+            Ok(())
+        }
+        Commands::VersionList {
+            database_url,
+            limit,
+            verbose,
+        } => {
+            let db_url = get_database_url(database_url.as_deref(), cli)?;
+            let config = PersistenceConfig {
+                url: db_url,
+                ..Default::default()
+            };
+
+            let store = DataStore::new(&config).await?;
+            let commits = store.commits().list_commits(*limit, 0).await?;
+
+            if commits.is_empty() {
+                println!("No version history found.");
+                return Ok(());
+            }
+
+            println!("Version History:");
+            println!("{:-<80}", "");
+
+            for commit in commits {
+                let tag_str = commit.tag.as_ref().map(|t| format!(" ({})", t)).unwrap_or_default();
+                let snapshot_str = if commit.is_snapshot { " [snapshot]" } else { "" };
+                let author_str = commit.author.as_ref().map(|a| format!(" by {}", a)).unwrap_or_default();
+
+                println!(
+                    "{} {} - {}{}{} ({} changes){}",
+                    &commit.commit_hash[..8],
+                    commit.committed_at,
+                    commit.message,
+                    author_str,
+                    tag_str,
+                    commit.changes_count,
+                    snapshot_str
+                );
+
+                if *verbose {
+                    let changesets = store.commits().get_changesets(&commit.id).await?;
+                    for cs in changesets {
+                        println!("  {} {} {}", cs.operation, cs.archetype_type, cs.archetype_name);
+                    }
+                    println!();
+                }
+            }
+            Ok(())
+        }
+        Commands::TagList { database_url } => {
+            let db_url = get_database_url(database_url.as_deref(), cli)?;
+            let config = PersistenceConfig {
+                url: db_url,
+                ..Default::default()
+            };
+
+            let store = DataStore::new(&config).await?;
+            let tags = store.commits().list_tags().await?;
+
+            if tags.is_empty() {
+                println!("No tags found.");
+                return Ok(());
+            }
+
+            println!("Tags:");
+            println!("{:-<60}", "");
+
+            for tag in tags {
+                let msg = tag.message.as_ref().map(|m| format!(" - {}", m)).unwrap_or_default();
+                println!("{} -> {}{}  ({})", tag.name, &tag.commit_hash[..8], msg, tag.created_at);
+            }
+            Ok(())
+        }
+        Commands::TagCreate {
+            name,
+            message,
+            database_url,
+        } => {
+            let db_url = get_database_url(database_url.as_deref(), cli)?;
+            let config = PersistenceConfig {
+                url: db_url,
+                ..Default::default()
+            };
+
+            let store = DataStore::new(&config).await?;
+
+            // Get current HEAD
+            let head = store.commits().get_head().await?;
+            if let Some(head) = head {
+                let tag = store
+                    .commits()
+                    .create_tag(name, &head.commit_hash, message.as_deref())
+                    .await?;
+                println!("Created tag '{}' at commit {}", tag.name, &tag.commit_hash[..8]);
+            } else {
+                eprintln!("No commits found. Create some changes first.");
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        Commands::Rollback {
+            commit_hash,
+            database_url,
+        } => {
+            let db_url = get_database_url(database_url.as_deref(), cli)?;
+            let config = PersistenceConfig {
+                url: db_url,
+                ..Default::default()
+            };
+
+            let store = DataStore::new(&config).await?;
+
+            println!("Rolling back to commit {}...", &commit_hash[..8.min(commit_hash.len())]);
+            let rollback_commit = store.commits().rollback_to(commit_hash).await?;
+            println!("Rollback completed. Created rollback commit: {}", &rollback_commit.commit_hash[..8]);
+            Ok(())
+        }
+    }
+}
+
+/// Get database URL from CLI arg, config, or error
+fn get_database_url(cli_url: Option<&str>, cli: &Cli) -> anyhow::Result<String> {
+    if let Some(url) = cli_url {
+        return Ok(url.to_string());
+    }
+
+    // Try to load from config
+    match Settings::new_with_cli(cli) {
+        Ok(settings) => {
+            if let Some(db) = settings.database {
+                Ok(db.url)
+            } else {
+                anyhow::bail!("No database URL provided. Use --database-url or configure [database] in config file.")
+            }
+        }
+        Err(_) => {
+            anyhow::bail!("No database URL provided. Use --database-url or configure [database] in config file.")
         }
     }
 }

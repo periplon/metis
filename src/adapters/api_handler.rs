@@ -31,6 +31,9 @@ use crate::config::{
     ResourceTemplateConfig, SchemaConfig, SecretsConfig, Settings, ToolConfig, WorkflowConfig, WorkflowStep,
 };
 use crate::domain::ToolPort;
+use crate::persistence::models::{ArchetypeType, Changeset, Commit, Tag};
+use crate::persistence::repository::{ArchetypeRepository, CommitRepository};
+use crate::persistence::DataStore;
 
 /// Shared application state for API handlers
 #[derive(Clone)]
@@ -49,6 +52,8 @@ pub struct ApiState {
     pub broadcaster: Option<SharedNotificationBroadcaster>,
     /// Tool handler to reinitialize agents when agents are created/updated/deleted
     pub tool_handler: Option<Arc<crate::adapters::tool_handler::BasicToolHandler>>,
+    /// Database store for archetypes (when database persistence is enabled)
+    pub data_store: Option<Arc<DataStore>>,
 }
 
 /// Tool handler for workflow testing that uses mock strategies
@@ -141,7 +146,7 @@ impl ToolPort for TestToolHandler {
 // Response Types
 // ============================================================================
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct ApiResponse<T> {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -250,6 +255,9 @@ pub struct ResourceDto {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
+    /// Tags for categorization and filtering
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     /// JSON Schema for the expected output structure
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_schema: Option<Value>,
@@ -266,6 +274,7 @@ impl From<&ResourceConfig> for ResourceDto {
             name: r.name.clone(),
             description: r.description.clone(),
             mime_type: r.mime_type.clone(),
+            tags: r.tags.clone(),
             output_schema: r.output_schema.clone(),
             content: r.content.clone(),
             mock: r.mock.clone(),
@@ -280,6 +289,7 @@ impl From<ResourceDto> for ResourceConfig {
             name: dto.name,
             description: dto.description,
             mime_type: dto.mime_type,
+            tags: dto.tags,
             output_schema: dto.output_schema,
             content: dto.content,
             mock: dto.mock,
@@ -297,6 +307,9 @@ pub struct ResourceTemplateDto {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
+    /// Tags for categorization and filtering
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     /// JSON Schema for template input parameters (the {variables} in uri_template)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub input_schema: Option<Value>,
@@ -316,6 +329,7 @@ impl From<&ResourceTemplateConfig> for ResourceTemplateDto {
             name: r.name.clone(),
             description: r.description.clone(),
             mime_type: r.mime_type.clone(),
+            tags: r.tags.clone(),
             input_schema: r.input_schema.clone(),
             output_schema: r.output_schema.clone(),
             content: r.content.clone(),
@@ -331,6 +345,7 @@ impl From<ResourceTemplateDto> for ResourceTemplateConfig {
             name: dto.name,
             description: dto.description,
             mime_type: dto.mime_type,
+            tags: dto.tags,
             input_schema: dto.input_schema,
             output_schema: dto.output_schema,
             content: dto.content,
@@ -343,6 +358,9 @@ impl From<ResourceTemplateDto> for ResourceTemplateConfig {
 pub struct ToolDto {
     pub name: String,
     pub description: String,
+    /// Tags for categorization and filtering
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     pub input_schema: Value,
     /// Optional JSON Schema defining the expected output structure
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -358,6 +376,7 @@ impl From<&ToolConfig> for ToolDto {
         Self {
             name: t.name.clone(),
             description: t.description.clone(),
+            tags: t.tags.clone(),
             input_schema: t.input_schema.clone(),
             output_schema: t.output_schema.clone(),
             static_response: t.static_response.clone(),
@@ -371,6 +390,7 @@ impl From<ToolDto> for ToolConfig {
         Self {
             name: dto.name,
             description: dto.description,
+            tags: dto.tags,
             input_schema: dto.input_schema,
             output_schema: dto.output_schema,
             static_response: dto.static_response,
@@ -383,6 +403,9 @@ impl From<ToolDto> for ToolConfig {
 pub struct PromptDto {
     pub name: String,
     pub description: String,
+    /// Tags for categorization and filtering
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub arguments: Option<Vec<PromptArgumentDto>>,
     /// JSON Schema for prompt input parameters (more detailed than arguments)
@@ -411,6 +434,7 @@ impl From<&PromptConfig> for PromptDto {
         Self {
             name: p.name.clone(),
             description: p.description.clone(),
+            tags: p.tags.clone(),
             arguments: p.arguments.as_ref().map(|args| {
                 args.iter()
                     .map(|a| PromptArgumentDto {
@@ -438,6 +462,7 @@ impl From<PromptDto> for PromptConfig {
         Self {
             name: dto.name,
             description: dto.description,
+            tags: dto.tags,
             arguments: dto.arguments.map(|args| {
                 args.into_iter()
                     .map(|a| PromptArgument {
@@ -464,6 +489,9 @@ impl From<PromptDto> for PromptConfig {
 pub struct WorkflowDto {
     pub name: String,
     pub description: String,
+    /// Tags for categorization and filtering
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     pub input_schema: Value,
     /// JSON Schema for the expected workflow output structure
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -507,6 +535,7 @@ impl From<&WorkflowConfig> for WorkflowDto {
         Self {
             name: w.name.clone(),
             description: w.description.clone(),
+            tags: w.tags.clone(),
             input_schema: w.input_schema.clone(),
             output_schema: w.output_schema.clone(),
             steps: w.steps.iter().map(WorkflowStepDto::from).collect(),
@@ -536,6 +565,7 @@ impl From<WorkflowDto> for WorkflowConfig {
         Self {
             name: dto.name,
             description: dto.description,
+            tags: dto.tags,
             input_schema: dto.input_schema,
             output_schema: dto.output_schema,
             steps: dto.steps.into_iter().map(WorkflowStep::from).collect(),
@@ -682,6 +712,36 @@ impl From<&crate::config::s3::S3Config> for S3ConfigDto {
     }
 }
 
+/// Database configuration DTO
+#[derive(Serialize, Deserialize, Clone)]
+pub struct DatabaseConfigDto {
+    pub url: String,
+    #[serde(default = "default_max_connections")]
+    pub max_connections: u32,
+    #[serde(default = "default_auto_migrate")]
+    pub auto_migrate: bool,
+    #[serde(default)]
+    pub seed_on_startup: bool,
+    #[serde(default = "default_snapshot_interval")]
+    pub snapshot_interval: u32,
+}
+
+fn default_max_connections() -> u32 { 5 }
+fn default_auto_migrate() -> bool { true }
+fn default_snapshot_interval() -> u32 { 10 }
+
+impl From<&crate::persistence::PersistenceConfig> for DatabaseConfigDto {
+    fn from(c: &crate::persistence::PersistenceConfig) -> Self {
+        Self {
+            url: c.url.clone(),
+            max_connections: c.max_connections,
+            auto_migrate: c.auto_migrate,
+            seed_on_startup: c.seed_on_startup,
+            snapshot_interval: c.snapshot_interval,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ServerSettingsDto {
     pub auth: AuthConfigDto,
@@ -689,6 +749,8 @@ pub struct ServerSettingsDto {
     pub rate_limit: Option<RateLimitConfigDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub s3: Option<S3ConfigDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub database: Option<DatabaseConfigDto>,
 }
 
 /// GET /api/config/settings - Get editable server settings
@@ -713,6 +775,7 @@ pub async fn get_server_settings(
         auth: AuthConfigDto::from(&settings.auth),
         rate_limit: settings.rate_limit.as_ref().map(RateLimitConfigDto::from),
         s3: Some(s3_dto),
+        database: settings.database.as_ref().map(DatabaseConfigDto::from),
     };
 
     (StatusCode::OK, Json(ApiResponse::success(dto)))
@@ -776,10 +839,27 @@ pub async fn update_server_settings(
         }
     }
 
+    // Update database settings
+    if let Some(db_dto) = dto.database {
+        if !db_dto.url.is_empty() {
+            settings.database = Some(crate::persistence::PersistenceConfig {
+                url: db_dto.url,
+                max_connections: db_dto.max_connections,
+                auto_migrate: db_dto.auto_migrate,
+                seed_on_startup: db_dto.seed_on_startup,
+                snapshot_interval: db_dto.snapshot_interval,
+            });
+        } else {
+            // Empty URL means disable database
+            settings.database = None;
+        }
+    }
+
     let response_dto = ServerSettingsDto {
         auth: AuthConfigDto::from(&settings.auth),
         rate_limit: settings.rate_limit.as_ref().map(RateLimitConfigDto::from),
         s3: settings.s3.as_ref().map(S3ConfigDto::from),
+        database: settings.database.as_ref().map(DatabaseConfigDto::from),
     };
 
     (StatusCode::OK, Json(ApiResponse::success(response_dto)))
@@ -810,6 +890,26 @@ pub async fn get_metrics_json(
 pub async fn list_resources(
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        match store.archetypes().list(ArchetypeType::Resource.as_str()).await {
+            Ok(resources) => {
+                let dtos: Vec<ResourceDto> = resources
+                    .into_iter()
+                    .filter_map(|v| serde_json::from_value(v).ok())
+                    .collect();
+                return (StatusCode::OK, Json(ApiResponse::success(dtos)));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<Vec<ResourceDto>>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let settings = state.settings.read().await;
     let resources: Vec<ResourceDto> = settings.resources.iter().map(ResourceDto::from).collect();
     (StatusCode::OK, Json(ApiResponse::success(resources)))
@@ -820,9 +920,36 @@ pub async fn get_resource(
     State(state): State<ApiState>,
     Path(uri): Path<String>,
 ) -> impl IntoResponse {
-    let settings = state.settings.read().await;
-    let decoded_uri = urlencoding::decode(&uri).map(|s| s.into_owned()).unwrap_or(uri);
+    let decoded_uri = urlencoding::decode(&uri).map(|s| s.into_owned()).unwrap_or(uri.clone());
 
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        match store.archetypes().get(ArchetypeType::Resource.as_str(), &decoded_uri).await {
+            Ok(Some(resource)) => {
+                match serde_json::from_value::<ResourceDto>(resource) {
+                    Ok(dto) => return (StatusCode::OK, Json(ApiResponse::success(dto))),
+                    Err(e) => {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ApiResponse::<ResourceDto>::error(format!("Failed to parse resource: {}", e))),
+                        );
+                    }
+                }
+            }
+            Ok(None) => {
+                return (StatusCode::NOT_FOUND, Json(ApiResponse::<ResourceDto>::error("Resource not found")));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<ResourceDto>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
+    let settings = state.settings.read().await;
     if let Some(resource) = settings.resources.iter().find(|r| r.uri == decoded_uri) {
         (StatusCode::OK, Json(ApiResponse::success(ResourceDto::from(resource))))
     } else {
@@ -835,6 +962,43 @@ pub async fn create_resource(
     State(state): State<ApiState>,
     Json(dto): Json<ResourceDto>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        let definition = match serde_json::to_value(&dto) {
+            Ok(v) => v,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiResponse::<ResourceDto>::error(format!("Invalid resource data: {}", e))),
+                );
+            }
+        };
+
+        // Use URI as the name for resources
+        match store.archetypes().create(ArchetypeType::Resource.as_str(), &dto.uri, &definition).await {
+            Ok(()) => {
+                if let Some(broadcaster) = &state.broadcaster {
+                    broadcaster.notify_resources_changed().await;
+                    broadcaster.notify_tools_changed().await;
+                }
+                return (StatusCode::CREATED, Json(ApiResponse::success(dto)));
+            }
+            Err(crate::persistence::error::PersistenceError::Duplicate { .. }) => {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(ApiResponse::<ResourceDto>::error("Resource with this URI already exists")),
+                );
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<ResourceDto>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let mut settings = state.settings.write().await;
 
     // Check for duplicate URI
@@ -865,13 +1029,48 @@ pub async fn update_resource(
     Path(uri): Path<String>,
     Json(dto): Json<ResourceDto>,
 ) -> impl IntoResponse {
+    let decoded_uri = urlencoding::decode(&uri).map(|s| s.into_owned()).unwrap_or(uri.clone());
+
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        let definition = match serde_json::to_value(&dto) {
+            Ok(v) => v,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiResponse::<ResourceDto>::error(format!("Invalid resource data: {}", e))),
+                );
+            }
+        };
+
+        match store.archetypes().update(ArchetypeType::Resource.as_str(), &decoded_uri, &definition, None).await {
+            Ok(_) => {
+                if let Some(broadcaster) = &state.broadcaster {
+                    broadcaster.notify_resources_changed().await;
+                    broadcaster.notify_tools_changed().await;
+                }
+                return (StatusCode::OK, Json(ApiResponse::success(dto)));
+            }
+            Err(crate::persistence::error::PersistenceError::NotFound { .. }) => {
+                return (StatusCode::NOT_FOUND, Json(ApiResponse::<ResourceDto>::error("Resource not found")));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<ResourceDto>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let mut settings = state.settings.write().await;
-    let decoded_uri = urlencoding::decode(&uri).map(|s| s.into_owned()).unwrap_or(uri);
 
     if let Some(resource) = settings.resources.iter_mut().find(|r| r.uri == decoded_uri) {
         resource.name = dto.name.clone();
         resource.description = dto.description.clone();
         resource.mime_type = dto.mime_type.clone();
+        resource.tags = dto.tags.clone();
         resource.output_schema = dto.output_schema.clone();
         resource.content = dto.content.clone();
         resource.mock = dto.mock.clone();
@@ -895,8 +1094,32 @@ pub async fn delete_resource(
     State(state): State<ApiState>,
     Path(uri): Path<String>,
 ) -> impl IntoResponse {
+    let decoded_uri = urlencoding::decode(&uri).map(|s| s.into_owned()).unwrap_or(uri.clone());
+
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        match store.archetypes().delete(ArchetypeType::Resource.as_str(), &decoded_uri).await {
+            Ok(true) => {
+                if let Some(broadcaster) = &state.broadcaster {
+                    broadcaster.notify_resources_changed().await;
+                    broadcaster.notify_tools_changed().await;
+                }
+                return (StatusCode::OK, Json(ApiResponse::<()>::ok()));
+            }
+            Ok(false) => {
+                return (StatusCode::NOT_FOUND, Json(ApiResponse::<()>::error("Resource not found")));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<()>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let mut settings = state.settings.write().await;
-    let decoded_uri = urlencoding::decode(&uri).map(|s| s.into_owned()).unwrap_or(uri);
 
     let initial_len = settings.resources.len();
     settings.resources.retain(|r| r.uri != decoded_uri);
@@ -925,6 +1148,26 @@ pub async fn delete_resource(
 pub async fn list_tools(
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        match store.archetypes().list(ArchetypeType::Tool.as_str()).await {
+            Ok(tools) => {
+                let dtos: Vec<ToolDto> = tools
+                    .into_iter()
+                    .filter_map(|v| serde_json::from_value(v).ok())
+                    .collect();
+                return (StatusCode::OK, Json(ApiResponse::success(dtos)));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<Vec<ToolDto>>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let settings = state.settings.read().await;
     let tools: Vec<ToolDto> = settings.tools.iter().map(ToolDto::from).collect();
     (StatusCode::OK, Json(ApiResponse::success(tools)))
@@ -935,8 +1178,34 @@ pub async fn get_tool(
     State(state): State<ApiState>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
-    let settings = state.settings.read().await;
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        match store.archetypes().get(ArchetypeType::Tool.as_str(), &name).await {
+            Ok(Some(tool)) => {
+                match serde_json::from_value::<ToolDto>(tool) {
+                    Ok(dto) => return (StatusCode::OK, Json(ApiResponse::success(dto))),
+                    Err(e) => {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ApiResponse::<ToolDto>::error(format!("Failed to parse tool: {}", e))),
+                        );
+                    }
+                }
+            }
+            Ok(None) => {
+                return (StatusCode::NOT_FOUND, Json(ApiResponse::<ToolDto>::error("Tool not found")));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<ToolDto>::error(e.to_string())),
+                );
+            }
+        }
+    }
 
+    // Fallback to in-memory settings
+    let settings = state.settings.read().await;
     if let Some(tool) = settings.tools.iter().find(|t| t.name == name) {
         (StatusCode::OK, Json(ApiResponse::success(ToolDto::from(tool))))
     } else {
@@ -949,6 +1218,42 @@ pub async fn create_tool(
     State(state): State<ApiState>,
     Json(dto): Json<ToolDto>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        let definition = match serde_json::to_value(&dto) {
+            Ok(v) => v,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiResponse::<ToolDto>::error(format!("Invalid tool data: {}", e))),
+                );
+            }
+        };
+
+        match store.archetypes().create(ArchetypeType::Tool.as_str(), &dto.name, &definition).await {
+            Ok(()) => {
+                // Notify connected MCP clients about the tool list change
+                if let Some(broadcaster) = &state.broadcaster {
+                    broadcaster.notify_tools_changed().await;
+                }
+                return (StatusCode::CREATED, Json(ApiResponse::success(dto)));
+            }
+            Err(crate::persistence::error::PersistenceError::Duplicate { .. }) => {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(ApiResponse::<ToolDto>::error("Tool with this name already exists")),
+                );
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<ToolDto>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let mut settings = state.settings.write().await;
 
     // Check for duplicate name
@@ -977,10 +1282,44 @@ pub async fn update_tool(
     Path(name): Path<String>,
     Json(dto): Json<ToolDto>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        let definition = match serde_json::to_value(&dto) {
+            Ok(v) => v,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiResponse::<ToolDto>::error(format!("Invalid tool data: {}", e))),
+                );
+            }
+        };
+
+        match store.archetypes().update(ArchetypeType::Tool.as_str(), &name, &definition, None).await {
+            Ok(_) => {
+                // Notify connected MCP clients about the tool list change
+                if let Some(broadcaster) = &state.broadcaster {
+                    broadcaster.notify_tools_changed().await;
+                }
+                return (StatusCode::OK, Json(ApiResponse::success(dto)));
+            }
+            Err(crate::persistence::error::PersistenceError::NotFound { .. }) => {
+                return (StatusCode::NOT_FOUND, Json(ApiResponse::<ToolDto>::error("Tool not found")));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<ToolDto>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let mut settings = state.settings.write().await;
 
     if let Some(tool) = settings.tools.iter_mut().find(|t| t.name == name) {
         tool.description = dto.description.clone();
+        tool.tags = dto.tags.clone();
         tool.input_schema = dto.input_schema.clone();
         tool.static_response = dto.static_response.clone();
         tool.mock = dto.mock.clone();
@@ -1002,6 +1341,29 @@ pub async fn delete_tool(
     State(state): State<ApiState>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        match store.archetypes().delete(ArchetypeType::Tool.as_str(), &name).await {
+            Ok(true) => {
+                // Notify connected MCP clients about the tool list change
+                if let Some(broadcaster) = &state.broadcaster {
+                    broadcaster.notify_tools_changed().await;
+                }
+                return (StatusCode::OK, Json(ApiResponse::<()>::ok()));
+            }
+            Ok(false) => {
+                return (StatusCode::NOT_FOUND, Json(ApiResponse::<()>::error("Tool not found")));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<()>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let mut settings = state.settings.write().await;
 
     let initial_len = settings.tools.len();
@@ -1029,6 +1391,26 @@ pub async fn delete_tool(
 pub async fn list_prompts(
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        match store.archetypes().list(ArchetypeType::Prompt.as_str()).await {
+            Ok(prompts) => {
+                let dtos: Vec<PromptDto> = prompts
+                    .into_iter()
+                    .filter_map(|v| serde_json::from_value(v).ok())
+                    .collect();
+                return (StatusCode::OK, Json(ApiResponse::success(dtos)));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<Vec<PromptDto>>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let settings = state.settings.read().await;
     let prompts: Vec<PromptDto> = settings.prompts.iter().map(PromptDto::from).collect();
     (StatusCode::OK, Json(ApiResponse::success(prompts)))
@@ -1039,8 +1421,34 @@ pub async fn get_prompt(
     State(state): State<ApiState>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
-    let settings = state.settings.read().await;
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        match store.archetypes().get(ArchetypeType::Prompt.as_str(), &name).await {
+            Ok(Some(prompt)) => {
+                match serde_json::from_value::<PromptDto>(prompt) {
+                    Ok(dto) => return (StatusCode::OK, Json(ApiResponse::success(dto))),
+                    Err(e) => {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ApiResponse::<PromptDto>::error(format!("Failed to parse prompt: {}", e))),
+                        );
+                    }
+                }
+            }
+            Ok(None) => {
+                return (StatusCode::NOT_FOUND, Json(ApiResponse::<PromptDto>::error("Prompt not found")));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<PromptDto>::error(e.to_string())),
+                );
+            }
+        }
+    }
 
+    // Fallback to in-memory settings
+    let settings = state.settings.read().await;
     if let Some(prompt) = settings.prompts.iter().find(|p| p.name == name) {
         (StatusCode::OK, Json(ApiResponse::success(PromptDto::from(prompt))))
     } else {
@@ -1053,6 +1461,41 @@ pub async fn create_prompt(
     State(state): State<ApiState>,
     Json(dto): Json<PromptDto>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        let definition = match serde_json::to_value(&dto) {
+            Ok(v) => v,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiResponse::<PromptDto>::error(format!("Invalid prompt data: {}", e))),
+                );
+            }
+        };
+
+        match store.archetypes().create(ArchetypeType::Prompt.as_str(), &dto.name, &definition).await {
+            Ok(()) => {
+                if let Some(broadcaster) = &state.broadcaster {
+                    broadcaster.notify_prompts_changed().await;
+                }
+                return (StatusCode::CREATED, Json(ApiResponse::success(dto)));
+            }
+            Err(crate::persistence::error::PersistenceError::Duplicate { .. }) => {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(ApiResponse::<PromptDto>::error("Prompt with this name already exists")),
+                );
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<PromptDto>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let mut settings = state.settings.write().await;
 
     // Check for duplicate name
@@ -1081,10 +1524,43 @@ pub async fn update_prompt(
     Path(name): Path<String>,
     Json(dto): Json<PromptDto>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        let definition = match serde_json::to_value(&dto) {
+            Ok(v) => v,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiResponse::<PromptDto>::error(format!("Invalid prompt data: {}", e))),
+                );
+            }
+        };
+
+        match store.archetypes().update(ArchetypeType::Prompt.as_str(), &name, &definition, None).await {
+            Ok(_) => {
+                if let Some(broadcaster) = &state.broadcaster {
+                    broadcaster.notify_prompts_changed().await;
+                }
+                return (StatusCode::OK, Json(ApiResponse::success(dto)));
+            }
+            Err(crate::persistence::error::PersistenceError::NotFound { .. }) => {
+                return (StatusCode::NOT_FOUND, Json(ApiResponse::<PromptDto>::error("Prompt not found")));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<PromptDto>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let mut settings = state.settings.write().await;
 
     if let Some(prompt) = settings.prompts.iter_mut().find(|p| p.name == name) {
         prompt.description = dto.description.clone();
+        prompt.tags = dto.tags.clone();
         prompt.arguments = dto.arguments.clone().map(|args| {
             args.into_iter()
                 .map(|a| PromptArgument {
@@ -1120,6 +1596,28 @@ pub async fn delete_prompt(
     State(state): State<ApiState>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        match store.archetypes().delete(ArchetypeType::Prompt.as_str(), &name).await {
+            Ok(true) => {
+                if let Some(broadcaster) = &state.broadcaster {
+                    broadcaster.notify_prompts_changed().await;
+                }
+                return (StatusCode::OK, Json(ApiResponse::<()>::ok()));
+            }
+            Ok(false) => {
+                return (StatusCode::NOT_FOUND, Json(ApiResponse::<()>::error("Prompt not found")));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<()>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let mut settings = state.settings.write().await;
 
     let initial_len = settings.prompts.len();
@@ -1147,6 +1645,26 @@ pub async fn delete_prompt(
 pub async fn list_workflows(
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        match store.archetypes().list(ArchetypeType::Workflow.as_str()).await {
+            Ok(workflows) => {
+                let dtos: Vec<WorkflowDto> = workflows
+                    .into_iter()
+                    .filter_map(|v| serde_json::from_value(v).ok())
+                    .collect();
+                return (StatusCode::OK, Json(ApiResponse::success(dtos)));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<Vec<WorkflowDto>>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let settings = state.settings.read().await;
     let workflows: Vec<WorkflowDto> = settings.workflows.iter().map(WorkflowDto::from).collect();
     (StatusCode::OK, Json(ApiResponse::success(workflows)))
@@ -1157,8 +1675,34 @@ pub async fn get_workflow(
     State(state): State<ApiState>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
-    let settings = state.settings.read().await;
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        match store.archetypes().get(ArchetypeType::Workflow.as_str(), &name).await {
+            Ok(Some(workflow)) => {
+                match serde_json::from_value::<WorkflowDto>(workflow) {
+                    Ok(dto) => return (StatusCode::OK, Json(ApiResponse::success(dto))),
+                    Err(e) => {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ApiResponse::<WorkflowDto>::error(format!("Failed to parse workflow: {}", e))),
+                        );
+                    }
+                }
+            }
+            Ok(None) => {
+                return (StatusCode::NOT_FOUND, Json(ApiResponse::<WorkflowDto>::error("Workflow not found")));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<WorkflowDto>::error(e.to_string())),
+                );
+            }
+        }
+    }
 
+    // Fallback to in-memory settings
+    let settings = state.settings.read().await;
     if let Some(workflow) = settings.workflows.iter().find(|w| w.name == name) {
         (StatusCode::OK, Json(ApiResponse::success(WorkflowDto::from(workflow))))
     } else {
@@ -1171,6 +1715,41 @@ pub async fn create_workflow(
     State(state): State<ApiState>,
     Json(dto): Json<WorkflowDto>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        let definition = match serde_json::to_value(&dto) {
+            Ok(v) => v,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiResponse::<WorkflowDto>::error(format!("Invalid workflow data: {}", e))),
+                );
+            }
+        };
+
+        match store.archetypes().create(ArchetypeType::Workflow.as_str(), &dto.name, &definition).await {
+            Ok(()) => {
+                if let Some(broadcaster) = &state.broadcaster {
+                    broadcaster.notify_tools_changed().await;
+                }
+                return (StatusCode::CREATED, Json(ApiResponse::success(dto)));
+            }
+            Err(crate::persistence::error::PersistenceError::Duplicate { .. }) => {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(ApiResponse::<WorkflowDto>::error("Workflow with this name already exists")),
+                );
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<WorkflowDto>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let mut settings = state.settings.write().await;
 
     // Check for duplicate name
@@ -1199,11 +1778,44 @@ pub async fn update_workflow(
     Path(name): Path<String>,
     Json(dto): Json<WorkflowDto>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        let definition = match serde_json::to_value(&dto) {
+            Ok(v) => v,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiResponse::<WorkflowDto>::error(format!("Invalid workflow data: {}", e))),
+                );
+            }
+        };
+
+        match store.archetypes().update(ArchetypeType::Workflow.as_str(), &name, &definition, None).await {
+            Ok(_) => {
+                if let Some(broadcaster) = &state.broadcaster {
+                    broadcaster.notify_tools_changed().await;
+                }
+                return (StatusCode::OK, Json(ApiResponse::success(dto)));
+            }
+            Err(crate::persistence::error::PersistenceError::NotFound { .. }) => {
+                return (StatusCode::NOT_FOUND, Json(ApiResponse::<WorkflowDto>::error("Workflow not found")));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<WorkflowDto>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let mut settings = state.settings.write().await;
 
     if let Some(workflow) = settings.workflows.iter_mut().find(|w| w.name == name) {
         workflow.name = dto.name.clone();
         workflow.description = dto.description.clone();
+        workflow.tags = dto.tags.clone();
         workflow.input_schema = dto.input_schema.clone();
         workflow.steps = dto.steps.clone().into_iter().map(WorkflowStep::from).collect();
         workflow.on_error = dto.on_error.clone();
@@ -1225,6 +1837,28 @@ pub async fn delete_workflow(
     State(state): State<ApiState>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        match store.archetypes().delete(ArchetypeType::Workflow.as_str(), &name).await {
+            Ok(true) => {
+                if let Some(broadcaster) = &state.broadcaster {
+                    broadcaster.notify_tools_changed().await;
+                }
+                return (StatusCode::OK, Json(ApiResponse::<()>::ok()));
+            }
+            Ok(false) => {
+                return (StatusCode::NOT_FOUND, Json(ApiResponse::<()>::error("Workflow not found")));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<()>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let mut settings = state.settings.write().await;
 
     let initial_len = settings.workflows.len();
@@ -1252,6 +1886,26 @@ pub async fn delete_workflow(
 pub async fn list_resource_templates(
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        match store.archetypes().list(ArchetypeType::ResourceTemplate.as_str()).await {
+            Ok(templates) => {
+                let dtos: Vec<ResourceTemplateDto> = templates
+                    .into_iter()
+                    .filter_map(|v| serde_json::from_value(v).ok())
+                    .collect();
+                return (StatusCode::OK, Json(ApiResponse::success(dtos)));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<Vec<ResourceTemplateDto>>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let settings = state.settings.read().await;
     let templates: Vec<ResourceTemplateDto> = settings
         .resource_templates
@@ -1266,11 +1920,38 @@ pub async fn get_resource_template(
     State(state): State<ApiState>,
     Path(uri_template): Path<String>,
 ) -> impl IntoResponse {
-    let settings = state.settings.read().await;
     let decoded_uri = urlencoding::decode(&uri_template)
         .map(|s| s.into_owned())
-        .unwrap_or(uri_template);
+        .unwrap_or(uri_template.clone());
 
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        match store.archetypes().get(ArchetypeType::ResourceTemplate.as_str(), &decoded_uri).await {
+            Ok(Some(template)) => {
+                match serde_json::from_value::<ResourceTemplateDto>(template) {
+                    Ok(dto) => return (StatusCode::OK, Json(ApiResponse::success(dto))),
+                    Err(e) => {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ApiResponse::<ResourceTemplateDto>::error(format!("Failed to parse resource template: {}", e))),
+                        );
+                    }
+                }
+            }
+            Ok(None) => {
+                return (StatusCode::NOT_FOUND, Json(ApiResponse::<ResourceTemplateDto>::error("Resource template not found")));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<ResourceTemplateDto>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
+    let settings = state.settings.read().await;
     if let Some(template) = settings
         .resource_templates
         .iter()
@@ -1293,6 +1974,43 @@ pub async fn create_resource_template(
     State(state): State<ApiState>,
     Json(dto): Json<ResourceTemplateDto>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        let definition = match serde_json::to_value(&dto) {
+            Ok(v) => v,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiResponse::<ResourceTemplateDto>::error(format!("Invalid resource template data: {}", e))),
+                );
+            }
+        };
+
+        // Use uri_template as the name
+        match store.archetypes().create(ArchetypeType::ResourceTemplate.as_str(), &dto.uri_template, &definition).await {
+            Ok(()) => {
+                if let Some(broadcaster) = &state.broadcaster {
+                    broadcaster.notify_resources_changed().await;
+                    broadcaster.notify_tools_changed().await;
+                }
+                return (StatusCode::CREATED, Json(ApiResponse::success(dto)));
+            }
+            Err(crate::persistence::error::PersistenceError::Duplicate { .. }) => {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(ApiResponse::<ResourceTemplateDto>::error("Resource template with this URI template already exists")),
+                );
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<ResourceTemplateDto>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let mut settings = state.settings.write().await;
 
     // Check for duplicate URI template
@@ -1328,10 +2046,44 @@ pub async fn update_resource_template(
     Path(uri_template): Path<String>,
     Json(dto): Json<ResourceTemplateDto>,
 ) -> impl IntoResponse {
-    let mut settings = state.settings.write().await;
     let decoded_uri = urlencoding::decode(&uri_template)
         .map(|s| s.into_owned())
-        .unwrap_or(uri_template);
+        .unwrap_or(uri_template.clone());
+
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        let definition = match serde_json::to_value(&dto) {
+            Ok(v) => v,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiResponse::<ResourceTemplateDto>::error(format!("Invalid resource template data: {}", e))),
+                );
+            }
+        };
+
+        match store.archetypes().update(ArchetypeType::ResourceTemplate.as_str(), &decoded_uri, &definition, None).await {
+            Ok(_) => {
+                if let Some(broadcaster) = &state.broadcaster {
+                    broadcaster.notify_resources_changed().await;
+                    broadcaster.notify_tools_changed().await;
+                }
+                return (StatusCode::OK, Json(ApiResponse::success(dto)));
+            }
+            Err(crate::persistence::error::PersistenceError::NotFound { .. }) => {
+                return (StatusCode::NOT_FOUND, Json(ApiResponse::<ResourceTemplateDto>::error("Resource template not found")));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<ResourceTemplateDto>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
+    let mut settings = state.settings.write().await;
 
     if let Some(template) = settings
         .resource_templates
@@ -1341,6 +2093,7 @@ pub async fn update_resource_template(
         template.name = dto.name.clone();
         template.description = dto.description.clone();
         template.mime_type = dto.mime_type.clone();
+        template.tags = dto.tags.clone();
         template.input_schema = dto.input_schema.clone();
         template.output_schema = dto.output_schema.clone();
         template.content = dto.content.clone();
@@ -1367,10 +2120,34 @@ pub async fn delete_resource_template(
     State(state): State<ApiState>,
     Path(uri_template): Path<String>,
 ) -> impl IntoResponse {
-    let mut settings = state.settings.write().await;
     let decoded_uri = urlencoding::decode(&uri_template)
         .map(|s| s.into_owned())
-        .unwrap_or(uri_template);
+        .unwrap_or(uri_template.clone());
+
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        match store.archetypes().delete(ArchetypeType::ResourceTemplate.as_str(), &decoded_uri).await {
+            Ok(true) => {
+                if let Some(broadcaster) = &state.broadcaster {
+                    broadcaster.notify_resources_changed().await;
+                    broadcaster.notify_tools_changed().await;
+                }
+                return (StatusCode::OK, Json(ApiResponse::<()>::ok()));
+            }
+            Ok(false) => {
+                return (StatusCode::NOT_FOUND, Json(ApiResponse::<()>::error("Resource template not found")));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<()>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
+    let mut settings = state.settings.write().await;
 
     let initial_len = settings.resource_templates.len();
     settings
@@ -2386,6 +3163,9 @@ pub async fn test_workflow(
 pub struct AgentDto {
     pub name: String,
     pub description: String,
+    /// Tags for categorization and filtering
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     #[serde(default)]
     pub agent_type: AgentType,
     #[serde(default)]
@@ -2474,6 +3254,7 @@ impl From<&AgentConfig> for AgentDto {
         Self {
             name: a.name.clone(),
             description: a.description.clone(),
+            tags: a.tags.clone(),
             agent_type: a.agent_type,
             input_schema: a.input_schema.clone(),
             output_schema: a.output_schema.clone(),
@@ -2513,6 +3294,7 @@ impl From<AgentDto> for AgentConfig {
         Self {
             name: dto.name,
             description: dto.description,
+            tags: dto.tags,
             agent_type: dto.agent_type,
             input_schema: dto.input_schema,
             output_schema: dto.output_schema,
@@ -2552,6 +3334,9 @@ impl From<AgentDto> for AgentConfig {
 pub struct OrchestrationDto {
     pub name: String,
     pub description: String,
+    /// Tags for categorization and filtering
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     pub pattern: OrchestrationPattern,
     #[serde(default)]
     pub input_schema: Value,
@@ -2586,6 +3371,7 @@ impl From<&OrchestrationConfig> for OrchestrationDto {
         Self {
             name: o.name.clone(),
             description: o.description.clone(),
+            tags: o.tags.clone(),
             pattern: o.pattern,
             input_schema: o.input_schema.clone(),
             output_schema: o.output_schema.clone(),
@@ -2607,6 +3393,7 @@ impl From<OrchestrationDto> for OrchestrationConfig {
         Self {
             name: dto.name,
             description: dto.description,
+            tags: dto.tags,
             pattern: dto.pattern,
             input_schema: dto.input_schema,
             output_schema: dto.output_schema,
@@ -2631,6 +3418,26 @@ impl From<OrchestrationDto> for OrchestrationConfig {
 pub async fn list_agents(
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        match store.archetypes().list(ArchetypeType::Agent.as_str()).await {
+            Ok(agents) => {
+                let dtos: Vec<AgentDto> = agents
+                    .into_iter()
+                    .filter_map(|v| serde_json::from_value(v).ok())
+                    .collect();
+                return (StatusCode::OK, Json(ApiResponse::success(dtos)));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<Vec<AgentDto>>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let settings = state.settings.read().await;
     let agents: Vec<AgentDto> = settings.agents.iter().map(AgentDto::from).collect();
     (StatusCode::OK, Json(ApiResponse::success(agents)))
@@ -2641,8 +3448,34 @@ pub async fn get_agent(
     State(state): State<ApiState>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
-    let settings = state.settings.read().await;
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        match store.archetypes().get(ArchetypeType::Agent.as_str(), &name).await {
+            Ok(Some(agent)) => {
+                match serde_json::from_value::<AgentDto>(agent) {
+                    Ok(dto) => return (StatusCode::OK, Json(ApiResponse::success(dto))),
+                    Err(e) => {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ApiResponse::<AgentDto>::error(format!("Failed to parse agent: {}", e))),
+                        );
+                    }
+                }
+            }
+            Ok(None) => {
+                return (StatusCode::NOT_FOUND, Json(ApiResponse::<AgentDto>::error("Agent not found")));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<AgentDto>::error(e.to_string())),
+                );
+            }
+        }
+    }
 
+    // Fallback to in-memory settings
+    let settings = state.settings.read().await;
     if let Some(agent) = settings.agents.iter().find(|a| a.name == name) {
         (StatusCode::OK, Json(ApiResponse::success(AgentDto::from(agent))))
     } else {
@@ -2655,6 +3488,47 @@ pub async fn create_agent(
     State(state): State<ApiState>,
     Json(dto): Json<AgentDto>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        let definition = match serde_json::to_value(&dto) {
+            Ok(v) => v,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiResponse::<AgentDto>::error(format!("Invalid agent data: {}", e))),
+                );
+            }
+        };
+
+        match store.archetypes().create(ArchetypeType::Agent.as_str(), &dto.name, &definition).await {
+            Ok(()) => {
+                *state.test_agent_handler.write().await = None;
+                if let Some(tool_handler) = &state.tool_handler {
+                    if let Err(e) = tool_handler.reinitialize_agents().await {
+                        tracing::warn!("Failed to reinitialize agents after creating agent: {}", e);
+                    }
+                }
+                if let Some(broadcaster) = &state.broadcaster {
+                    broadcaster.notify_tools_changed().await;
+                }
+                return (StatusCode::CREATED, Json(ApiResponse::success(dto)));
+            }
+            Err(crate::persistence::error::PersistenceError::Duplicate { .. }) => {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(ApiResponse::<AgentDto>::error("Agent with this name already exists")),
+                );
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<AgentDto>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let mut settings = state.settings.write().await;
 
     // Check for duplicate name
@@ -2693,6 +3567,44 @@ pub async fn update_agent(
     Path(name): Path<String>,
     Json(dto): Json<AgentDto>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        let definition = match serde_json::to_value(&dto) {
+            Ok(v) => v,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiResponse::<AgentDto>::error(format!("Invalid agent data: {}", e))),
+                );
+            }
+        };
+
+        match store.archetypes().update(ArchetypeType::Agent.as_str(), &name, &definition, None).await {
+            Ok(_) => {
+                *state.test_agent_handler.write().await = None;
+                if let Some(tool_handler) = &state.tool_handler {
+                    if let Err(e) = tool_handler.reinitialize_agents().await {
+                        tracing::warn!("Failed to reinitialize agents after updating agent: {}", e);
+                    }
+                }
+                if let Some(broadcaster) = &state.broadcaster {
+                    broadcaster.notify_tools_changed().await;
+                }
+                return (StatusCode::OK, Json(ApiResponse::success(dto)));
+            }
+            Err(crate::persistence::error::PersistenceError::NotFound { .. }) => {
+                return (StatusCode::NOT_FOUND, Json(ApiResponse::<AgentDto>::error("Agent not found")));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<AgentDto>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let mut settings = state.settings.write().await;
 
     if let Some(agent) = settings.agents.iter_mut().find(|a| a.name == name) {
@@ -2726,6 +3638,34 @@ pub async fn delete_agent(
     State(state): State<ApiState>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        match store.archetypes().delete(ArchetypeType::Agent.as_str(), &name).await {
+            Ok(true) => {
+                *state.test_agent_handler.write().await = None;
+                if let Some(tool_handler) = &state.tool_handler {
+                    if let Err(e) = tool_handler.reinitialize_agents().await {
+                        tracing::warn!("Failed to reinitialize agents after deleting agent: {}", e);
+                    }
+                }
+                if let Some(broadcaster) = &state.broadcaster {
+                    broadcaster.notify_tools_changed().await;
+                }
+                return (StatusCode::OK, Json(ApiResponse::ok()));
+            }
+            Ok(false) => {
+                return (StatusCode::NOT_FOUND, Json(ApiResponse::<()>::error("Agent not found")));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<()>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let mut settings = state.settings.write().await;
 
     let initial_len = settings.agents.len();
@@ -2859,6 +3799,26 @@ pub async fn test_agent(
 pub async fn list_orchestrations(
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        match store.archetypes().list(ArchetypeType::Orchestration.as_str()).await {
+            Ok(orchestrations) => {
+                let dtos: Vec<OrchestrationDto> = orchestrations
+                    .into_iter()
+                    .filter_map(|v| serde_json::from_value(v).ok())
+                    .collect();
+                return (StatusCode::OK, Json(ApiResponse::success(dtos)));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<Vec<OrchestrationDto>>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let settings = state.settings.read().await;
     let orchestrations: Vec<OrchestrationDto> = settings.orchestrations.iter().map(OrchestrationDto::from).collect();
     (StatusCode::OK, Json(ApiResponse::success(orchestrations)))
@@ -2869,8 +3829,34 @@ pub async fn get_orchestration(
     State(state): State<ApiState>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
-    let settings = state.settings.read().await;
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        match store.archetypes().get(ArchetypeType::Orchestration.as_str(), &name).await {
+            Ok(Some(orchestration)) => {
+                match serde_json::from_value::<OrchestrationDto>(orchestration) {
+                    Ok(dto) => return (StatusCode::OK, Json(ApiResponse::success(dto))),
+                    Err(e) => {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ApiResponse::<OrchestrationDto>::error(format!("Failed to parse orchestration: {}", e))),
+                        );
+                    }
+                }
+            }
+            Ok(None) => {
+                return (StatusCode::NOT_FOUND, Json(ApiResponse::<OrchestrationDto>::error("Orchestration not found")));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<OrchestrationDto>::error(e.to_string())),
+                );
+            }
+        }
+    }
 
+    // Fallback to in-memory settings
+    let settings = state.settings.read().await;
     if let Some(orchestration) = settings.orchestrations.iter().find(|o| o.name == name) {
         (StatusCode::OK, Json(ApiResponse::success(OrchestrationDto::from(orchestration))))
     } else {
@@ -2883,6 +3869,38 @@ pub async fn create_orchestration(
     State(state): State<ApiState>,
     Json(dto): Json<OrchestrationDto>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        let definition = match serde_json::to_value(&dto) {
+            Ok(v) => v,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiResponse::<OrchestrationDto>::error(format!("Invalid orchestration data: {}", e))),
+                );
+            }
+        };
+
+        match store.archetypes().create(ArchetypeType::Orchestration.as_str(), &dto.name, &definition).await {
+            Ok(()) => {
+                return (StatusCode::CREATED, Json(ApiResponse::success(dto)));
+            }
+            Err(crate::persistence::error::PersistenceError::Duplicate { .. }) => {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(ApiResponse::<OrchestrationDto>::error("Orchestration with this name already exists")),
+                );
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<OrchestrationDto>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let mut settings = state.settings.write().await;
 
     // Check for duplicate name
@@ -2904,6 +3922,35 @@ pub async fn update_orchestration(
     Path(name): Path<String>,
     Json(dto): Json<OrchestrationDto>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        let definition = match serde_json::to_value(&dto) {
+            Ok(v) => v,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiResponse::<OrchestrationDto>::error(format!("Invalid orchestration data: {}", e))),
+                );
+            }
+        };
+
+        match store.archetypes().update(ArchetypeType::Orchestration.as_str(), &name, &definition, None).await {
+            Ok(_) => {
+                return (StatusCode::OK, Json(ApiResponse::success(dto)));
+            }
+            Err(crate::persistence::error::PersistenceError::NotFound { .. }) => {
+                return (StatusCode::NOT_FOUND, Json(ApiResponse::<OrchestrationDto>::error("Orchestration not found")));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<OrchestrationDto>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let mut settings = state.settings.write().await;
 
     if let Some(orchestration) = settings.orchestrations.iter_mut().find(|o| o.name == name) {
@@ -2919,6 +3966,25 @@ pub async fn delete_orchestration(
     State(state): State<ApiState>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        match store.archetypes().delete(ArchetypeType::Orchestration.as_str(), &name).await {
+            Ok(true) => {
+                return (StatusCode::OK, Json(ApiResponse::ok()));
+            }
+            Ok(false) => {
+                return (StatusCode::NOT_FOUND, Json(ApiResponse::<()>::error("Orchestration not found")));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<()>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let mut settings = state.settings.write().await;
 
     let initial_len = settings.orchestrations.len();
@@ -3493,6 +4559,9 @@ pub struct SchemaDto {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Tags for categorization and filtering
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     pub schema: Value,
 }
 
@@ -3501,6 +4570,7 @@ impl From<&SchemaConfig> for SchemaDto {
         Self {
             name: s.name.clone(),
             description: s.description.clone(),
+            tags: s.tags.clone(),
             schema: s.schema.clone(),
         }
     }
@@ -3511,6 +4581,7 @@ impl From<SchemaDto> for SchemaConfig {
         Self {
             name: dto.name,
             description: dto.description,
+            tags: dto.tags,
             schema: dto.schema,
         }
     }
@@ -3520,6 +4591,26 @@ impl From<SchemaDto> for SchemaConfig {
 pub async fn list_schemas(
     State(state): State<ApiState>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        match store.archetypes().list(ArchetypeType::Schema.as_str()).await {
+            Ok(schemas) => {
+                let dtos: Vec<SchemaDto> = schemas
+                    .into_iter()
+                    .filter_map(|v| serde_json::from_value(v).ok())
+                    .collect();
+                return (StatusCode::OK, Json(ApiResponse::success(dtos)));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<Vec<SchemaDto>>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let settings = state.settings.read().await;
     let schemas: Vec<SchemaDto> = settings.schemas.iter().map(SchemaDto::from).collect();
     (StatusCode::OK, Json(ApiResponse::success(schemas)))
@@ -3530,8 +4621,34 @@ pub async fn get_schema(
     State(state): State<ApiState>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
-    let settings = state.settings.read().await;
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        match store.archetypes().get(ArchetypeType::Schema.as_str(), &name).await {
+            Ok(Some(schema)) => {
+                match serde_json::from_value::<SchemaDto>(schema) {
+                    Ok(dto) => return (StatusCode::OK, Json(ApiResponse::success(dto))),
+                    Err(e) => {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(ApiResponse::<SchemaDto>::error(format!("Failed to parse schema: {}", e))),
+                        );
+                    }
+                }
+            }
+            Ok(None) => {
+                return (StatusCode::NOT_FOUND, Json(ApiResponse::<SchemaDto>::error("Schema not found")));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<SchemaDto>::error(e.to_string())),
+                );
+            }
+        }
+    }
 
+    // Fallback to in-memory settings
+    let settings = state.settings.read().await;
     if let Some(schema) = settings.schemas.iter().find(|s| s.name == name) {
         (StatusCode::OK, Json(ApiResponse::success(SchemaDto::from(schema))))
     } else {
@@ -3544,6 +4661,38 @@ pub async fn create_schema(
     State(state): State<ApiState>,
     Json(dto): Json<SchemaDto>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        let definition = match serde_json::to_value(&dto) {
+            Ok(v) => v,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiResponse::<SchemaDto>::error(format!("Invalid schema data: {}", e))),
+                );
+            }
+        };
+
+        match store.archetypes().create(ArchetypeType::Schema.as_str(), &dto.name, &definition).await {
+            Ok(()) => {
+                return (StatusCode::CREATED, Json(ApiResponse::success(dto)));
+            }
+            Err(crate::persistence::error::PersistenceError::Duplicate { .. }) => {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(ApiResponse::<SchemaDto>::error("Schema with this name already exists")),
+                );
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<SchemaDto>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let mut settings = state.settings.write().await;
 
     // Check for duplicate name
@@ -3567,6 +4716,35 @@ pub async fn update_schema(
     Path(name): Path<String>,
     Json(dto): Json<SchemaDto>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        let definition = match serde_json::to_value(&dto) {
+            Ok(v) => v,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiResponse::<SchemaDto>::error(format!("Invalid schema data: {}", e))),
+                );
+            }
+        };
+
+        match store.archetypes().update(ArchetypeType::Schema.as_str(), &name, &definition, None).await {
+            Ok(_) => {
+                return (StatusCode::OK, Json(ApiResponse::success(dto)));
+            }
+            Err(crate::persistence::error::PersistenceError::NotFound { .. }) => {
+                return (StatusCode::NOT_FOUND, Json(ApiResponse::<SchemaDto>::error("Schema not found")));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<SchemaDto>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let mut settings = state.settings.write().await;
 
     // Check if name is being changed and would conflict
@@ -3597,6 +4775,25 @@ pub async fn delete_schema(
     State(state): State<ApiState>,
     Path(name): Path<String>,
 ) -> impl IntoResponse {
+    // Use database if available
+    if let Some(store) = &state.data_store {
+        match store.archetypes().delete(ArchetypeType::Schema.as_str(), &name).await {
+            Ok(true) => {
+                return (StatusCode::OK, Json(ApiResponse::<()>::ok()));
+            }
+            Ok(false) => {
+                return (StatusCode::NOT_FOUND, Json(ApiResponse::<()>::error("Schema not found")));
+            }
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiResponse::<()>::error(e.to_string())),
+                );
+            }
+        }
+    }
+
+    // Fallback to in-memory settings
     let mut settings = state.settings.write().await;
 
     let initial_len = settings.schemas.len();
@@ -3606,5 +4803,342 @@ pub async fn delete_schema(
         (StatusCode::OK, Json(ApiResponse::<()>::ok()))
     } else {
         (StatusCode::NOT_FOUND, Json(ApiResponse::<()>::error("Schema not found")))
+    }
+}
+
+// ==================== Version History Endpoints ====================
+
+/// Request for listing commits with pagination
+#[derive(Debug, Clone, Deserialize)]
+pub struct ListCommitsRequest {
+    /// Maximum number of commits to return (default: 50)
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+    /// Offset for pagination (default: 0)
+    #[serde(default)]
+    pub offset: usize,
+}
+
+fn default_limit() -> usize {
+    50
+}
+
+/// Request for creating a tag
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateTagRequest {
+    /// Tag name (e.g., "v1.0", "production")
+    pub name: String,
+    /// Optional message describing the tag
+    pub message: Option<String>,
+}
+
+/// Request for rollback
+#[derive(Debug, Clone, Deserialize)]
+pub struct RollbackRequest {
+    /// Commit hash to rollback to
+    pub commit_hash: String,
+}
+
+/// Database status response
+#[derive(Debug, Clone, Serialize)]
+pub struct DatabaseStatus {
+    /// Whether database is enabled
+    pub enabled: bool,
+    /// Database backend type (sqlite, postgres, mysql)
+    pub backend: Option<String>,
+    /// Whether the database connection is healthy
+    pub healthy: bool,
+    /// Current HEAD commit (if any)
+    pub head: Option<Commit>,
+    /// Total number of commits
+    pub total_commits: usize,
+    /// Total number of tags
+    pub total_tags: usize,
+}
+
+/// Get database status
+pub async fn get_database_status(
+    State(state): State<ApiState>,
+) -> impl IntoResponse {
+    if let Some(store) = &state.data_store {
+        // Check health
+        let healthy = store.pool().health_check().await.is_ok();
+        let backend = store.pool().backend().name().to_string();
+
+        // Get HEAD commit
+        let head = match store.commits().get_head().await {
+            Ok(h) => h,
+            Err(_) => None,
+        };
+
+        // Get counts
+        let total_commits = match store.commits().list_commits(10000, 0).await {
+            Ok(commits) => commits.len(),
+            Err(_) => 0,
+        };
+
+        let total_tags = match store.commits().list_tags().await {
+            Ok(tags) => tags.len(),
+            Err(_) => 0,
+        };
+
+        (
+            StatusCode::OK,
+            Json(ApiResponse::success(DatabaseStatus {
+                enabled: true,
+                backend: Some(backend),
+                healthy,
+                head,
+                total_commits,
+                total_tags,
+            })),
+        )
+    } else {
+        (
+            StatusCode::OK,
+            Json(ApiResponse::success(DatabaseStatus {
+                enabled: false,
+                backend: None,
+                healthy: false,
+                head: None,
+                total_commits: 0,
+                total_tags: 0,
+            })),
+        )
+    }
+}
+
+/// List commits with pagination
+pub async fn list_commits(
+    State(state): State<ApiState>,
+    axum::extract::Query(params): axum::extract::Query<ListCommitsRequest>,
+) -> impl IntoResponse {
+    if let Some(store) = &state.data_store {
+        match store.commits().list_commits(params.limit, params.offset).await {
+            Ok(commits) => (StatusCode::OK, Json(ApiResponse::success(commits))),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::<Vec<Commit>>::error(e.to_string())),
+            ),
+        }
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ApiResponse::<Vec<Commit>>::error(
+                "Database not configured. Version history requires database persistence.",
+            )),
+        )
+    }
+}
+
+/// Get a specific commit by hash
+pub async fn get_commit(
+    State(state): State<ApiState>,
+    Path(commit_hash): Path<String>,
+) -> impl IntoResponse {
+    if let Some(store) = &state.data_store {
+        match store.commits().get_commit(&commit_hash).await {
+            Ok(Some(commit)) => (StatusCode::OK, Json(ApiResponse::success(commit))),
+            Ok(None) => (
+                StatusCode::NOT_FOUND,
+                Json(ApiResponse::<Commit>::error(format!(
+                    "Commit not found: {}",
+                    commit_hash
+                ))),
+            ),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::<Commit>::error(e.to_string())),
+            ),
+        }
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ApiResponse::<Commit>::error(
+                "Database not configured. Version history requires database persistence.",
+            )),
+        )
+    }
+}
+
+/// Get changesets for a commit
+pub async fn get_commit_changesets(
+    State(state): State<ApiState>,
+    Path(commit_hash): Path<String>,
+) -> impl IntoResponse {
+    if let Some(store) = &state.data_store {
+        // First get the commit to get its ID
+        match store.commits().get_commit(&commit_hash).await {
+            Ok(Some(commit)) => {
+                match store.commits().get_changesets(&commit.id).await {
+                    Ok(changesets) => (StatusCode::OK, Json(ApiResponse::success(changesets))),
+                    Err(e) => (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ApiResponse::<Vec<Changeset>>::error(e.to_string())),
+                    ),
+                }
+            }
+            Ok(None) => (
+                StatusCode::NOT_FOUND,
+                Json(ApiResponse::<Vec<Changeset>>::error(format!(
+                    "Commit not found: {}",
+                    commit_hash
+                ))),
+            ),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::<Vec<Changeset>>::error(e.to_string())),
+            ),
+        }
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ApiResponse::<Vec<Changeset>>::error(
+                "Database not configured. Version history requires database persistence.",
+            )),
+        )
+    }
+}
+
+/// Rollback to a specific commit
+pub async fn rollback_to_commit(
+    State(state): State<ApiState>,
+    Json(request): Json<RollbackRequest>,
+) -> impl IntoResponse {
+    if let Some(store) = &state.data_store {
+        match store.commits().rollback_to(&request.commit_hash).await {
+            Ok(rollback_commit) => {
+                // Notify MCP clients that lists have changed
+                if let Some(broadcaster) = &state.broadcaster {
+                    // Notify about all archetype types that may have changed
+                    broadcaster.notify_tools_changed().await;
+                    broadcaster.notify_resources_changed().await;
+                    broadcaster.notify_prompts_changed().await;
+                }
+                (StatusCode::OK, Json(ApiResponse::success(rollback_commit)))
+            }
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::<Commit>::error(e.to_string())),
+            ),
+        }
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ApiResponse::<Commit>::error(
+                "Database not configured. Version history requires database persistence.",
+            )),
+        )
+    }
+}
+
+/// List all tags
+pub async fn list_tags(
+    State(state): State<ApiState>,
+) -> impl IntoResponse {
+    if let Some(store) = &state.data_store {
+        match store.commits().list_tags().await {
+            Ok(tags) => (StatusCode::OK, Json(ApiResponse::success(tags))),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::<Vec<Tag>>::error(e.to_string())),
+            ),
+        }
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ApiResponse::<Vec<Tag>>::error(
+                "Database not configured. Version history requires database persistence.",
+            )),
+        )
+    }
+}
+
+/// Get a tag by name
+pub async fn get_tag(
+    State(state): State<ApiState>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    if let Some(store) = &state.data_store {
+        match store.commits().get_tag(&name).await {
+            Ok(Some(tag)) => (StatusCode::OK, Json(ApiResponse::success(tag))),
+            Ok(None) => (
+                StatusCode::NOT_FOUND,
+                Json(ApiResponse::<Tag>::error(format!("Tag not found: {}", name))),
+            ),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::<Tag>::error(e.to_string())),
+            ),
+        }
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ApiResponse::<Tag>::error(
+                "Database not configured. Version history requires database persistence.",
+            )),
+        )
+    }
+}
+
+/// Create a tag for a commit
+pub async fn create_tag(
+    State(state): State<ApiState>,
+    Path(commit_hash): Path<String>,
+    Json(request): Json<CreateTagRequest>,
+) -> impl IntoResponse {
+    if let Some(store) = &state.data_store {
+        match store
+            .commits()
+            .create_tag(&request.name, &commit_hash, request.message.as_deref())
+            .await
+        {
+            Ok(tag) => (StatusCode::CREATED, Json(ApiResponse::success(tag))),
+            Err(e) => {
+                // Check for specific error types
+                let status = if e.to_string().contains("already exists") {
+                    StatusCode::CONFLICT
+                } else if e.to_string().contains("not found") {
+                    StatusCode::NOT_FOUND
+                } else {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                };
+                (status, Json(ApiResponse::<Tag>::error(e.to_string())))
+            }
+        }
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ApiResponse::<Tag>::error(
+                "Database not configured. Version history requires database persistence.",
+            )),
+        )
+    }
+}
+
+/// Delete a tag
+pub async fn delete_tag(
+    State(state): State<ApiState>,
+    Path(name): Path<String>,
+) -> impl IntoResponse {
+    if let Some(store) = &state.data_store {
+        match store.commits().delete_tag(&name).await {
+            Ok(true) => (StatusCode::OK, Json(ApiResponse::<()>::ok())),
+            Ok(false) => (
+                StatusCode::NOT_FOUND,
+                Json(ApiResponse::<()>::error(format!("Tag not found: {}", name))),
+            ),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiResponse::<()>::error(e.to_string())),
+            ),
+        }
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ApiResponse::<()>::error(
+                "Database not configured. Version history requires database persistence.",
+            )),
+        )
     }
 }

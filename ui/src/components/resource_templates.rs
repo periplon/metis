@@ -8,14 +8,17 @@ use leptos::prelude::*;
 use leptos::web_sys;
 use leptos_router::hooks::use_params_map;
 use wasm_bindgen::JsCast;
+use std::collections::HashSet;
 use crate::api;
 use crate::types::{
     ResourceTemplate, MockConfig, MockStrategyType, StatefulConfig, StateOperation,
-    FileConfig, ScriptLang, LLMConfig, LLMProvider, DatabaseConfig,
+    FileConfig, ScriptLang, LLMConfig, LLMProvider, MockDatabaseConfig,
 };
-use crate::components::schema_editor::{
-    JsonSchemaEditor, SchemaPreview, SchemaProperty,
-    properties_to_schema, schema_to_properties,
+use crate::components::schema_editor::FullSchemaEditor;
+use crate::components::list_filter::{
+    ListFilterBar, Pagination, TagBadges, TagInput,
+    extract_tags, filter_items, paginate_items, total_pages,
+    SortField, SortOrder, sort_items,
 };
 
 #[derive(Clone, Copy, PartialEq)]
@@ -37,9 +40,26 @@ pub fn ResourceTemplates() -> impl IntoView {
     let (test_result, set_test_result) = signal(Option::<Result<crate::types::TestResult, String>>::None);
     let (testing, set_testing) = signal(false);
 
+    // Search and filter state
+    let search_query = RwSignal::new(String::new());
+    let selected_tags = RwSignal::new(HashSet::<String>::new());
+    let sort_field = RwSignal::new(SortField::Name);
+    let sort_order = RwSignal::new(SortOrder::Ascending);
+    let current_page = RwSignal::new(0usize);
+    let items_per_page = 10usize;
+
     let templates = LocalResource::new(move || {
         let _ = refresh_trigger.get();
         async move { api::list_resource_templates().await.ok() }
+    });
+
+    // Reset page when filters change
+    Effect::new(move || {
+        let _ = search_query.get();
+        let _ = selected_tags.get();
+        let _ = sort_field.get();
+        let _ = sort_order.get();
+        current_page.set(0);
     });
 
     let on_delete_confirm = move |_| {
@@ -274,11 +294,74 @@ pub fn ResourceTemplates() -> impl IntoView {
                     templates.get().map(|data| {
                         match data {
                             Some(list) if !list.is_empty() => {
-                                if view_mode.get() == ViewMode::Table {
-                                    view! { <ResourceTemplateTable templates=list set_delete_target=set_delete_target set_test_target=set_test_target /> }.into_any()
-                                } else {
-                                    view! { <ResourceTemplateCards templates=list set_delete_target=set_delete_target set_test_target=set_test_target /> }.into_any()
-                                }
+                                // Extract available tags
+                                let available_tags = extract_tags(&list, |t: &ResourceTemplate| t.tags.as_slice());
+
+                                // Filter items
+                                let mut filtered_list = filter_items(
+                                    &list,
+                                    &search_query.get(),
+                                    &selected_tags.get(),
+                                    |t: &ResourceTemplate| format!("{} {} {}",
+                                        t.name,
+                                        t.uri_template,
+                                        t.description.as_ref().unwrap_or(&String::new())
+                                    ),
+                                    |t: &ResourceTemplate| t.tags.as_slice()
+                                );
+
+                                // Sort the filtered items
+                                sort_items(&mut filtered_list, sort_field.get(), sort_order.get(), |t: &ResourceTemplate| &t.name);
+
+                                // Paginate filtered results
+                                let total_count = filtered_list.len();
+                                let total_pages_count = total_pages(total_count, items_per_page);
+                                let paginated_list = paginate_items(&filtered_list, current_page.get(), items_per_page);
+
+                                view! {
+                                    <div>
+                                        // Filter bar
+                                        <ListFilterBar
+                                            search_query=search_query
+                                            selected_tags=selected_tags
+                                            available_tags=available_tags.clone()
+                                            sort_field=sort_field
+                                            sort_order=sort_order
+                                            placeholder="Search templates by name, URI template, or description..."
+                                        />
+
+                                        // Results count when filtered
+                                        {move || {
+                                            let is_filtered = !search_query.get().is_empty() || !selected_tags.get().is_empty();
+                                            if is_filtered {
+                                                view! {
+                                                    <div class="mb-4 text-sm text-gray-600">
+                                                        {format!("Showing {} of {} templates", total_count, list.len())}
+                                                    </div>
+                                                }.into_any()
+                                            } else {
+                                                view! { <div></div> }.into_any()
+                                            }
+                                        }}
+
+                                        // Content (table or cards)
+                                        {if paginated_list.is_empty() {
+                                            view! { <NoResultsState /> }.into_any()
+                                        } else if view_mode.get() == ViewMode::Table {
+                                            view! { <ResourceTemplateTable templates=paginated_list set_delete_target=set_delete_target set_test_target=set_test_target /> }.into_any()
+                                        } else {
+                                            view! { <ResourceTemplateCards templates=paginated_list set_delete_target=set_delete_target set_test_target=set_test_target /> }.into_any()
+                                        }}
+
+                                        // Pagination
+                                        <Pagination
+                                            current_page=current_page
+                                            total_pages=total_pages_count
+                                            total_items=total_count
+                                            items_per_page=items_per_page
+                                        />
+                                    </div>
+                                }.into_any()
                             },
                             Some(_) => view! { <EmptyState /> }.into_any(),
                             None => view! { <ErrorState /> }.into_any(),
@@ -322,6 +405,19 @@ fn EmptyState() -> impl IntoView {
 }
 
 #[component]
+fn NoResultsState() -> impl IntoView {
+    view! {
+        <div class="text-center py-12 bg-white rounded-lg shadow">
+            <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+            </svg>
+            <h3 class="mt-2 text-sm font-medium text-gray-900">"No matching templates"</h3>
+            <p class="mt-1 text-sm text-gray-500">"Try adjusting your search or filter criteria."</p>
+        </div>
+    }
+}
+
+#[component]
 fn ErrorState() -> impl IntoView {
     view! {
         <div class="text-center py-12 bg-red-50 rounded-lg border border-red-200">
@@ -349,6 +445,7 @@ fn ResourceTemplateTable(
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"URI Template"</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Type"</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Strategy"</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Tags"</th>
                         <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">"Actions"</th>
                     </tr>
                 </thead>
@@ -361,6 +458,7 @@ fn ResourceTemplateTable(
                             .map(|m| format!("{:?}", m.strategy))
                             .unwrap_or_else(|| if template.content.is_some() { "Static".to_string() } else { "-".to_string() });
                         let mime = template.mime_type.clone().unwrap_or_else(|| "-".to_string());
+                        let tags = template.tags.clone();
 
                         view! {
                             <tr class="hover:bg-gray-50">
@@ -379,6 +477,7 @@ fn ResourceTemplateTable(
                                         {strategy}
                                     </span>
                                 </td>
+                                <td class="px-6 py-4"><TagBadges tags=tags /></td>
                                 <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                     <button
                                         class="text-purple-600 hover:text-purple-900 mr-3"
@@ -424,6 +523,7 @@ fn ResourceTemplateCards(
                     .map(|m| format!("{:?}", m.strategy))
                     .unwrap_or_else(|| if template.content.is_some() { "Static".to_string() } else { "-".to_string() });
                 let mime = template.mime_type.clone().unwrap_or_else(|| "-".to_string());
+                let tags = template.tags.clone();
 
                 view! {
                     <div class="bg-white rounded-lg shadow hover:shadow-md transition-shadow p-4 border-l-4 border-purple-500">
@@ -445,6 +545,16 @@ fn ResourceTemplateCards(
                                 <span class="text-gray-500 w-20">"Type:"</span>
                                 <span class="text-gray-700">{mime}</span>
                             </div>
+                            {if !tags.is_empty() {
+                                view! {
+                                    <div class="text-sm">
+                                        <span class="text-gray-500">"Tags: "</span>
+                                        <TagBadges tags=tags />
+                                    </div>
+                                }.into_any()
+                            } else {
+                                view! { <div></div> }.into_any()
+                            }}
                         </div>
                         <div class="flex justify-end gap-2 pt-3 border-t border-gray-100">
                             <button
@@ -513,10 +623,15 @@ pub fn ResourceTemplateForm() -> impl IntoView {
     let (content, set_content) = signal(String::new());
     let (error, set_error) = signal(Option::<String>::None);
     let (saving, set_saving) = signal(false);
+    let tags = RwSignal::new(Vec::new());
 
-    // Schema signals (templates have both input and output schemas)
-    let (input_schema_properties, set_input_schema_properties) = signal(Vec::<SchemaProperty>::new());
-    let (output_schema_properties, set_output_schema_properties) = signal(Vec::<SchemaProperty>::new());
+    // Schema signals - using Value for full JSON schema support
+    let default_schema = serde_json::json!({
+        "type": "object",
+        "properties": {}
+    });
+    let (input_schema, set_input_schema) = signal(default_schema.clone());
+    let (output_schema, set_output_schema) = signal(default_schema);
 
     // Mock strategy signals
     let (mock_strategy, set_mock_strategy) = signal("none".to_string());
@@ -613,7 +728,7 @@ pub fn ResourceTemplateForm() -> impl IntoView {
                 });
             }
             "database" => {
-                config.database = Some(DatabaseConfig {
+                config.database = Some(MockDatabaseConfig {
                     url: mock_db_url.get(),
                     query: mock_db_query.get(),
                     params: vec![],
@@ -630,28 +745,37 @@ pub fn ResourceTemplateForm() -> impl IntoView {
         set_saving.set(true);
         set_error.set(None);
 
-        // Build schemas from properties
-        let input_props = input_schema_properties.get();
-        let input_schema = if input_props.is_empty() {
+        // Get schemas
+        let in_schema = input_schema.get();
+        let input_schema_opt = if in_schema.get("properties")
+            .and_then(|p| p.as_object())
+            .map(|o| o.is_empty())
+            .unwrap_or(true)
+        {
             None
         } else {
-            Some(properties_to_schema(&input_props))
+            Some(in_schema)
         };
 
-        let output_props = output_schema_properties.get();
-        let output_schema = if output_props.is_empty() {
+        let out_schema = output_schema.get();
+        let output_schema_opt = if out_schema.get("properties")
+            .and_then(|p| p.as_object())
+            .map(|o| o.is_empty())
+            .unwrap_or(true)
+        {
             None
         } else {
-            Some(properties_to_schema(&output_props))
+            Some(out_schema)
         };
 
         let template = ResourceTemplate {
             name: name.get(),
             uri_template: uri_template.get(),
             description: if description.get().is_empty() { None } else { Some(description.get()) },
+            tags: tags.get(),
             mime_type: if mime_type.get().is_empty() { None } else { Some(mime_type.get()) },
-            input_schema,
-            output_schema,
+            input_schema: input_schema_opt,
+            output_schema: output_schema_opt,
             content: if content.get().is_empty() { None } else { Some(content.get()) },
             mock: build_mock_config(),
         };
@@ -697,10 +821,10 @@ pub fn ResourceTemplateForm() -> impl IntoView {
                     description=description set_description=set_description
                     mime_type=mime_type set_mime_type=set_mime_type
                     content=content set_content=set_content
-                    input_schema_properties=input_schema_properties
-                    set_input_schema_properties=set_input_schema_properties
-                    output_schema_properties=output_schema_properties
-                    set_output_schema_properties=set_output_schema_properties
+                    input_schema=input_schema
+                    set_input_schema=set_input_schema
+                    output_schema=output_schema
+                    set_output_schema=set_output_schema
                     mock_strategy=mock_strategy set_mock_strategy=set_mock_strategy
                     mock_template=mock_template set_mock_template=set_mock_template
                     mock_faker_type=mock_faker_type set_mock_faker_type=set_mock_faker_type
@@ -718,6 +842,11 @@ pub fn ResourceTemplateForm() -> impl IntoView {
                     mock_db_url=mock_db_url set_mock_db_url=set_mock_db_url
                     mock_db_query=mock_db_query set_mock_db_query=set_mock_db_query
                 />
+
+                // Tags - directly in the form to avoid signal propagation issues
+                <div class="mt-4">
+                    <TagInput tags=tags />
+                </div>
 
                 <div class="mt-6 flex gap-3">
                     <button
@@ -752,10 +881,10 @@ fn ResourceTemplateFormFields(
     set_mime_type: WriteSignal<String>,
     content: ReadSignal<String>,
     set_content: WriteSignal<String>,
-    input_schema_properties: ReadSignal<Vec<SchemaProperty>>,
-    set_input_schema_properties: WriteSignal<Vec<SchemaProperty>>,
-    output_schema_properties: ReadSignal<Vec<SchemaProperty>>,
-    set_output_schema_properties: WriteSignal<Vec<SchemaProperty>>,
+    input_schema: ReadSignal<serde_json::Value>,
+    set_input_schema: WriteSignal<serde_json::Value>,
+    output_schema: ReadSignal<serde_json::Value>,
+    set_output_schema: WriteSignal<serde_json::Value>,
     mock_strategy: ReadSignal<String>,
     set_mock_strategy: WriteSignal<String>,
     mock_template: ReadSignal<String>,
@@ -864,22 +993,22 @@ fn ResourceTemplateFormFields(
                     <div class="bg-purple-50 border border-purple-200 rounded-lg p-4">
                         <h4 class="font-medium text-purple-800 mb-2">"Input Variables (URI Template Parameters)"</h4>
                         <p class="text-sm text-purple-600 mb-4">"Define the schema for the {placeholder} variables in your URI template."</p>
-                        <JsonSchemaEditor
-                            properties=input_schema_properties
-                            set_properties=set_input_schema_properties
+                        <FullSchemaEditor
                             label="Input Parameters"
                             color="purple"
+                            schema=input_schema
+                            set_schema=set_input_schema
+                            show_definitions=true
                         />
-                        <SchemaPreview properties=input_schema_properties />
                     </div>
                     <div>
-                        <JsonSchemaEditor
-                            properties=output_schema_properties
-                            set_properties=set_output_schema_properties
+                        <FullSchemaEditor
                             label="Output Schema"
                             color="green"
+                            schema=output_schema
+                            set_schema=set_output_schema
+                            show_definitions=true
                         />
-                        <SchemaPreview properties=output_schema_properties />
                     </div>
                 </div>
             </div>
@@ -1289,10 +1418,16 @@ pub fn ResourceTemplateEditForm() -> impl IntoView {
     let (saving, set_saving) = signal(false);
     let (loading, set_loading) = signal(true);
     let (original_uri_template, set_original_uri_template) = signal(String::new());
+    let tags = RwSignal::new(Vec::new());
+    let (has_loaded, set_has_loaded) = signal(false);
 
-    // Schema signals
-    let (input_schema_properties, set_input_schema_properties) = signal(Vec::<SchemaProperty>::new());
-    let (output_schema_properties, set_output_schema_properties) = signal(Vec::<SchemaProperty>::new());
+    // Schema signals - using Value for full JSON schema support
+    let default_schema_edit = serde_json::json!({
+        "type": "object",
+        "properties": {}
+    });
+    let (input_schema, set_input_schema) = signal(default_schema_edit.clone());
+    let (output_schema, set_output_schema) = signal(default_schema_edit);
 
     // Mock strategy signals
     let (mock_strategy, set_mock_strategy) = signal("none".to_string());
@@ -1312,10 +1447,14 @@ pub fn ResourceTemplateEditForm() -> impl IntoView {
     let (mock_db_url, set_mock_db_url) = signal(String::new());
     let (mock_db_query, set_mock_db_query) = signal(String::new());
 
-    // Load existing template
+    // Load existing template (only once)
     Effect::new(move |_| {
         let param = uri_template_param();
         if param.is_empty() {
+            return;
+        }
+        // Skip if already loaded to prevent overwriting user changes
+        if has_loaded.get() {
             return;
         }
         let decoded = urlencoding::decode(&param);
@@ -1329,13 +1468,14 @@ pub fn ResourceTemplateEditForm() -> impl IntoView {
                     set_description.set(template.description.clone().unwrap_or_default());
                     set_mime_type.set(template.mime_type.clone().unwrap_or_default());
                     set_content.set(template.content.clone().unwrap_or_default());
+                    tags.set(template.tags.clone());
 
-                    // Load schemas
-                    if let Some(input_schema) = &template.input_schema {
-                        set_input_schema_properties.set(schema_to_properties(input_schema));
+                    // Load schemas directly
+                    if let Some(in_schema) = &template.input_schema {
+                        set_input_schema.set(in_schema.clone());
                     }
-                    if let Some(output_schema) = &template.output_schema {
-                        set_output_schema_properties.set(schema_to_properties(output_schema));
+                    if let Some(out_schema) = &template.output_schema {
+                        set_output_schema.set(out_schema.clone());
                     }
 
                     // Load mock config
@@ -1409,6 +1549,7 @@ pub fn ResourceTemplateEditForm() -> impl IntoView {
                             set_mock_db_query.set(db.query.clone());
                         }
                     }
+                    set_has_loaded.set(true);
                 }
                 Err(e) => {
                     set_error.set(Some(format!("Failed to load template: {}", e)));
@@ -1495,7 +1636,7 @@ pub fn ResourceTemplateEditForm() -> impl IntoView {
                 });
             }
             "database" => {
-                config.database = Some(DatabaseConfig {
+                config.database = Some(MockDatabaseConfig {
                     url: mock_db_url.get(),
                     query: mock_db_query.get(),
                     params: vec![],
@@ -1514,28 +1655,37 @@ pub fn ResourceTemplateEditForm() -> impl IntoView {
 
         let orig = original_uri_template.get();
 
-        // Build schemas
-        let input_props = input_schema_properties.get();
-        let input_schema = if input_props.is_empty() {
+        // Get schemas
+        let in_schema = input_schema.get();
+        let input_schema_opt = if in_schema.get("properties")
+            .and_then(|p| p.as_object())
+            .map(|o| o.is_empty())
+            .unwrap_or(true)
+        {
             None
         } else {
-            Some(properties_to_schema(&input_props))
+            Some(in_schema)
         };
 
-        let output_props = output_schema_properties.get();
-        let output_schema = if output_props.is_empty() {
+        let out_schema = output_schema.get();
+        let output_schema_opt = if out_schema.get("properties")
+            .and_then(|p| p.as_object())
+            .map(|o| o.is_empty())
+            .unwrap_or(true)
+        {
             None
         } else {
-            Some(properties_to_schema(&output_props))
+            Some(out_schema)
         };
 
         let template = ResourceTemplate {
             name: name.get(),
             uri_template: uri_template.get(),
             description: if description.get().is_empty() { None } else { Some(description.get()) },
+            tags: tags.get(),
             mime_type: if mime_type.get().is_empty() { None } else { Some(mime_type.get()) },
-            input_schema,
-            output_schema,
+            input_schema: input_schema_opt,
+            output_schema: output_schema_opt,
             content: if content.get().is_empty() { None } else { Some(content.get()) },
             mock: build_mock_config(),
         };
@@ -1568,68 +1718,76 @@ pub fn ResourceTemplateEditForm() -> impl IntoView {
 
             <h2 class="text-2xl font-bold mb-6">"Edit Resource Template"</h2>
 
-            {move || if loading.get() {
-                view! {
-                    <div class="flex items-center justify-center py-12">
-                        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500"></div>
-                        <span class="ml-3 text-gray-500">"Loading template..."</span>
+            // Loading spinner
+            <div
+                class="flex items-center justify-center py-12"
+                style=move || if loading.get() { "display: flex" } else { "display: none" }
+            >
+                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500"></div>
+                <span class="ml-3 text-gray-500">"Loading template..."</span>
+            </div>
+
+            // Form - always rendered but hidden while loading
+            <form
+                on:submit=on_submit
+                class="bg-white rounded-lg shadow p-6 max-w-3xl"
+                style=move || if loading.get() { "display: none" } else { "display: block" }
+            >
+                {move || error.get().map(|e| view! {
+                    <div class="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+                        {e}
                     </div>
-                }.into_any()
-            } else {
-                view! {
-                    <form on:submit=on_submit class="bg-white rounded-lg shadow p-6 max-w-3xl">
-                        {move || error.get().map(|e| view! {
-                            <div class="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
-                                {e}
-                            </div>
-                        })}
+                })}
 
-                        <ResourceTemplateFormFields
-                            name=name set_name=set_name
-                            uri_template=uri_template set_uri_template=set_uri_template
-                            description=description set_description=set_description
-                            mime_type=mime_type set_mime_type=set_mime_type
-                            content=content set_content=set_content
-                            input_schema_properties=input_schema_properties
-                            set_input_schema_properties=set_input_schema_properties
-                            output_schema_properties=output_schema_properties
-                            set_output_schema_properties=set_output_schema_properties
-                            mock_strategy=mock_strategy set_mock_strategy=set_mock_strategy
-                            mock_template=mock_template set_mock_template=set_mock_template
-                            mock_faker_type=mock_faker_type set_mock_faker_type=set_mock_faker_type
-                            mock_state_key=mock_state_key set_mock_state_key=set_mock_state_key
-                            mock_state_operation=mock_state_operation set_mock_state_operation=set_mock_state_operation
-                            mock_script=mock_script set_mock_script=set_mock_script
-                            mock_script_lang=mock_script_lang set_mock_script_lang=set_mock_script_lang
-                            mock_file_path=mock_file_path set_mock_file_path=set_mock_file_path
-                            mock_file_selection=mock_file_selection set_mock_file_selection=set_mock_file_selection
-                            mock_pattern=mock_pattern set_mock_pattern=set_mock_pattern
-                            mock_llm_provider=mock_llm_provider set_mock_llm_provider=set_mock_llm_provider
-                            mock_llm_model=mock_llm_model set_mock_llm_model=set_mock_llm_model
-                            mock_llm_api_key_env=mock_llm_api_key_env set_mock_llm_api_key_env=set_mock_llm_api_key_env
-                            mock_llm_system_prompt=mock_llm_system_prompt set_mock_llm_system_prompt=set_mock_llm_system_prompt
-                            mock_db_url=mock_db_url set_mock_db_url=set_mock_db_url
-                            mock_db_query=mock_db_query set_mock_db_query=set_mock_db_query
-                        />
+                <ResourceTemplateFormFields
+                    name=name set_name=set_name
+                    uri_template=uri_template set_uri_template=set_uri_template
+                    description=description set_description=set_description
+                    mime_type=mime_type set_mime_type=set_mime_type
+                    content=content set_content=set_content
+                    input_schema=input_schema
+                    set_input_schema=set_input_schema
+                    output_schema=output_schema
+                    set_output_schema=set_output_schema
+                    mock_strategy=mock_strategy set_mock_strategy=set_mock_strategy
+                    mock_template=mock_template set_mock_template=set_mock_template
+                    mock_faker_type=mock_faker_type set_mock_faker_type=set_mock_faker_type
+                    mock_state_key=mock_state_key set_mock_state_key=set_mock_state_key
+                    mock_state_operation=mock_state_operation set_mock_state_operation=set_mock_state_operation
+                    mock_script=mock_script set_mock_script=set_mock_script
+                    mock_script_lang=mock_script_lang set_mock_script_lang=set_mock_script_lang
+                    mock_file_path=mock_file_path set_mock_file_path=set_mock_file_path
+                    mock_file_selection=mock_file_selection set_mock_file_selection=set_mock_file_selection
+                    mock_pattern=mock_pattern set_mock_pattern=set_mock_pattern
+                    mock_llm_provider=mock_llm_provider set_mock_llm_provider=set_mock_llm_provider
+                    mock_llm_model=mock_llm_model set_mock_llm_model=set_mock_llm_model
+                    mock_llm_api_key_env=mock_llm_api_key_env set_mock_llm_api_key_env=set_mock_llm_api_key_env
+                    mock_llm_system_prompt=mock_llm_system_prompt set_mock_llm_system_prompt=set_mock_llm_system_prompt
+                    mock_db_url=mock_db_url set_mock_db_url=set_mock_db_url
+                    mock_db_query=mock_db_query set_mock_db_query=set_mock_db_query
+                />
 
-                        <div class="mt-6 flex gap-3">
-                            <button
-                                type="submit"
-                                disabled=move || saving.get()
-                                class="px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                                {move || if saving.get() { "Saving..." } else { "Save Changes" }}
-                            </button>
-                            <a
-                                href="/resource-templates"
-                                class="px-4 py-2 border border-gray-300 text-gray-700 rounded hover:bg-gray-50"
-                            >
-                                "Cancel"
-                            </a>
-                        </div>
-                    </form>
-                }.into_any()
-            }}
+                // Tags - directly in the form to avoid signal propagation issues
+                <div class="mt-4">
+                    <TagInput tags=tags />
+                </div>
+
+                <div class="mt-6 flex gap-3">
+                    <button
+                        type="submit"
+                        disabled=move || saving.get()
+                        class="px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {move || if saving.get() { "Saving..." } else { "Save Changes" }}
+                    </button>
+                    <a
+                        href="/resource-templates"
+                        class="px-4 py-2 border border-gray-300 text-gray-700 rounded hover:bg-gray-50"
+                    >
+                        "Cancel"
+                    </a>
+                </div>
+            </form>
         </div>
     }
 }

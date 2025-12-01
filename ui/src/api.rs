@@ -410,6 +410,140 @@ pub async fn delete_schema(name: &str) -> Result<(), String> {
 }
 
 // ============================================================================
+// Data Lakes
+// ============================================================================
+
+pub async fn list_data_lakes() -> Result<Vec<DataLake>, String> {
+    let url = format!("{}/data-lakes", API_BASE);
+    fetch_json::<Vec<DataLake>>(&url).await
+}
+
+pub async fn get_data_lake(name: &str) -> Result<DataLake, String> {
+    let url = format!("{}/data-lakes/{}", API_BASE, name);
+    fetch_json::<DataLake>(&url).await
+}
+
+pub async fn create_data_lake(data_lake: &DataLake) -> Result<DataLake, String> {
+    let url = format!("{}/data-lakes", API_BASE);
+    post_json::<DataLake, DataLake>(&url, data_lake).await
+}
+
+pub async fn update_data_lake(name: &str, data_lake: &DataLake) -> Result<DataLake, String> {
+    let url = format!("{}/data-lakes/{}", API_BASE, name);
+    put_json::<DataLake, DataLake>(&url, data_lake).await
+}
+
+pub async fn delete_data_lake(name: &str) -> Result<(), String> {
+    let url = format!("{}/data-lakes/{}", API_BASE, name);
+    delete_request(&url).await
+}
+
+// ============================================================================
+// Data Records (within Data Lakes)
+// ============================================================================
+
+/// Response for paginated record listing
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ListRecordsResponse {
+    pub records: Vec<DataRecord>,
+    pub total: usize,
+    pub limit: usize,
+    pub offset: usize,
+}
+
+/// Response for record count
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct CountRecordsResponse {
+    pub count: usize,
+}
+
+/// Response for generate records
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct GenerateRecordsResponse {
+    pub generated: usize,
+    pub records: Vec<DataRecord>,
+}
+
+/// List records in a data lake with optional filtering
+pub async fn list_records(
+    data_lake: &str,
+    schema_name: Option<&str>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+) -> Result<ListRecordsResponse, String> {
+    let mut url = format!("{}/data-lakes/{}/records", API_BASE, data_lake);
+
+    let mut params = Vec::new();
+    if let Some(schema) = schema_name {
+        params.push(format!("schema={}", urlencoding_encode(schema)));
+    }
+    if let Some(l) = limit {
+        params.push(format!("limit={}", l));
+    }
+    if let Some(o) = offset {
+        params.push(format!("offset={}", o));
+    }
+
+    if !params.is_empty() {
+        url = format!("{}?{}", url, params.join("&"));
+    }
+
+    fetch_json::<ListRecordsResponse>(&url).await
+}
+
+/// Get a specific record by ID
+pub async fn get_record(data_lake: &str, id: &str) -> Result<DataRecord, String> {
+    let url = format!("{}/data-lakes/{}/records/{}", API_BASE, data_lake, id);
+    fetch_json::<DataRecord>(&url).await
+}
+
+/// Create a new record
+pub async fn create_record(data_lake: &str, request: &CreateRecordRequest) -> Result<DataRecord, String> {
+    let url = format!("{}/data-lakes/{}/records", API_BASE, data_lake);
+    post_json::<CreateRecordRequest, DataRecord>(&url, request).await
+}
+
+/// Update an existing record
+pub async fn update_record(data_lake: &str, id: &str, request: &UpdateRecordRequest) -> Result<DataRecord, String> {
+    let url = format!("{}/data-lakes/{}/records/{}", API_BASE, data_lake, id);
+    put_json::<UpdateRecordRequest, DataRecord>(&url, request).await
+}
+
+/// Delete a record
+pub async fn delete_record(data_lake: &str, id: &str) -> Result<(), String> {
+    let url = format!("{}/data-lakes/{}/records/{}", API_BASE, data_lake, id);
+    delete_request(&url).await
+}
+
+/// Count records in a data lake
+pub async fn count_records(data_lake: &str, schema_name: Option<&str>) -> Result<CountRecordsResponse, String> {
+    let mut url = format!("{}/data-lakes/{}/records/count", API_BASE, data_lake);
+
+    if let Some(schema) = schema_name {
+        url = format!("{}?schema={}", url, urlencoding_encode(schema));
+    }
+
+    fetch_json::<CountRecordsResponse>(&url).await
+}
+
+/// Generate records using a mock strategy
+pub async fn generate_records(data_lake: &str, request: &GenerateRecordsRequest) -> Result<GenerateRecordsResponse, String> {
+    let url = format!("{}/data-lakes/{}/records/generate", API_BASE, data_lake);
+    post_json::<GenerateRecordsRequest, GenerateRecordsResponse>(&url, request).await
+}
+
+/// Delete all records in a data lake (optionally filtered by schema)
+pub async fn delete_all_records(data_lake: &str, schema_name: Option<&str>) -> Result<(), String> {
+    let mut url = format!("{}/data-lakes/{}/records", API_BASE, data_lake);
+
+    if let Some(schema) = schema_name {
+        url = format!("{}?schema={}", url, urlencoding_encode(schema));
+    }
+
+    delete_request(&url).await
+}
+
+// ============================================================================
 // State Management
 // ============================================================================
 
@@ -621,4 +755,69 @@ async fn post_empty<T: serde::Serialize>(url: &str, body: &T) -> Result<(), Stri
     } else {
         Err(api_response.error.unwrap_or_else(|| "Unknown error".to_string()))
     }
+}
+
+// ============================================================================
+// Database & Version History
+// ============================================================================
+
+/// Get database status
+pub async fn get_database_status() -> Result<DatabaseStatus, String> {
+    let url = format!("{}/database/status", API_BASE);
+    fetch_json::<DatabaseStatus>(&url).await
+}
+
+/// List commits with pagination
+pub async fn list_commits(limit: usize, offset: usize) -> Result<Vec<Commit>, String> {
+    let url = format!("{}/commits?limit={}&offset={}", API_BASE, limit, offset);
+    fetch_json::<Vec<Commit>>(&url).await
+}
+
+/// Get a specific commit
+pub async fn get_commit(commit_hash: &str) -> Result<Commit, String> {
+    let url = format!("{}/commits/{}", API_BASE, commit_hash);
+    fetch_json::<Commit>(&url).await
+}
+
+/// Get changesets for a commit
+pub async fn get_commit_changesets(commit_hash: &str) -> Result<Vec<Changeset>, String> {
+    let url = format!("{}/commits/{}/changesets", API_BASE, commit_hash);
+    fetch_json::<Vec<Changeset>>(&url).await
+}
+
+/// Rollback to a specific commit
+pub async fn rollback_to_commit(commit_hash: &str) -> Result<Commit, String> {
+    let url = format!("{}/commits/rollback", API_BASE);
+    let req = RollbackRequest {
+        commit_hash: commit_hash.to_string(),
+    };
+    post_json::<RollbackRequest, Commit>(&url, &req).await
+}
+
+/// List all tags
+pub async fn list_tags() -> Result<Vec<Tag>, String> {
+    let url = format!("{}/tags", API_BASE);
+    fetch_json::<Vec<Tag>>(&url).await
+}
+
+/// Get a tag by name
+pub async fn get_tag(name: &str) -> Result<Tag, String> {
+    let url = format!("{}/tags/{}", API_BASE, name);
+    fetch_json::<Tag>(&url).await
+}
+
+/// Create a tag for a commit
+pub async fn create_tag(commit_hash: &str, name: &str, message: Option<&str>) -> Result<Tag, String> {
+    let url = format!("{}/commits/{}/tags", API_BASE, commit_hash);
+    let req = CreateTagRequest {
+        name: name.to_string(),
+        message: message.map(|s| s.to_string()),
+    };
+    post_json::<CreateTagRequest, Tag>(&url, &req).await
+}
+
+/// Delete a tag
+pub async fn delete_tag(name: &str) -> Result<(), String> {
+    let url = format!("{}/tags/{}", API_BASE, name);
+    delete_request(&url).await
 }

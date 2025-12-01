@@ -2,28 +2,65 @@ use leptos::prelude::*;
 use leptos::web_sys;
 use leptos_router::hooks::use_params_map;
 use wasm_bindgen::JsCast;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use crate::api;
 use crate::types::{Prompt, PromptArgument, PromptMessage};
-use crate::components::schema_editor::{JsonSchemaEditor, SchemaPreview, SchemaProperty, properties_to_schema};
+use crate::components::schema_editor::FullSchemaEditor;
+use crate::components::list_filter::{
+    ListFilterBar, Pagination, TagBadges, TagInput,
+    extract_tags, filter_items, paginate_items, total_pages,
+    SortField, SortOrder, sort_items,
+};
 
-/// Convert SchemaProperty to PromptArgument
-fn schema_property_to_argument(prop: &SchemaProperty) -> PromptArgument {
-    PromptArgument {
-        name: prop.name.clone(),
-        description: if prop.description.is_empty() { None } else { Some(prop.description.clone()) },
-        required: prop.required,
+/// Extract PromptArguments from a JSON Schema Value
+fn schema_to_arguments(schema: &serde_json::Value) -> Vec<PromptArgument> {
+    let mut args = Vec::new();
+
+    let required_fields: Vec<String> = schema
+        .get("required")
+        .and_then(|r| r.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
+
+    if let Some(properties) = schema.get("properties").and_then(|p| p.as_object()) {
+        for (name, prop) in properties {
+            args.push(PromptArgument {
+                name: name.clone(),
+                description: prop.get("description").and_then(|d| d.as_str()).map(|s| s.to_string()),
+                required: required_fields.contains(name),
+            });
+        }
     }
+
+    args
 }
 
-/// Convert PromptArgument to SchemaProperty
-fn argument_to_schema_property(arg: &PromptArgument) -> SchemaProperty {
-    let mut prop = SchemaProperty::new();
-    prop.name = arg.name.clone();
-    prop.description = arg.description.clone().unwrap_or_default();
-    prop.required = arg.required;
-    prop.prop_type = "string".to_string(); // MCP prompt arguments are strings
-    prop
+/// Convert PromptArguments to a JSON Schema Value
+fn arguments_to_schema(args: &[PromptArgument]) -> serde_json::Value {
+    let mut properties = serde_json::Map::new();
+    let mut required = Vec::new();
+
+    for arg in args {
+        let mut prop = serde_json::Map::new();
+        prop.insert("type".to_string(), serde_json::Value::String("string".to_string()));
+        if let Some(desc) = &arg.description {
+            prop.insert("description".to_string(), serde_json::Value::String(desc.clone()));
+        }
+        properties.insert(arg.name.clone(), serde_json::Value::Object(prop));
+
+        if arg.required {
+            required.push(serde_json::Value::String(arg.name.clone()));
+        }
+    }
+
+    let mut schema = serde_json::Map::new();
+    schema.insert("type".to_string(), serde_json::Value::String("object".to_string()));
+    schema.insert("properties".to_string(), serde_json::Value::Object(properties));
+    if !required.is_empty() {
+        schema.insert("required".to_string(), serde_json::Value::Array(required));
+    }
+
+    serde_json::Value::Object(schema)
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -56,9 +93,26 @@ pub fn Prompts() -> impl IntoView {
     let (test_result, set_test_result) = signal(Option::<Result<crate::types::TestResult, String>>::None);
     let (testing, set_testing) = signal(false);
 
+    // Search and filter state
+    let search_query = RwSignal::new(String::new());
+    let selected_tags = RwSignal::new(HashSet::<String>::new());
+    let sort_field = RwSignal::new(SortField::Name);
+    let sort_order = RwSignal::new(SortOrder::Ascending);
+    let current_page = RwSignal::new(0usize);
+    let items_per_page = 10usize;
+
     let prompts = LocalResource::new(move || {
         let _ = refresh_trigger.get();
         async move { api::list_prompts().await.ok() }
+    });
+
+    // Reset page when filters change
+    Effect::new(move || {
+        let _ = search_query.get();
+        let _ = selected_tags.get();
+        let _ = sort_field.get();
+        let _ = sort_order.get();
+        current_page.set(0);
     });
 
     let on_delete_confirm = move |_| {
@@ -321,11 +375,79 @@ pub fn Prompts() -> impl IntoView {
                     prompts.get().map(|data| {
                         match data {
                             Some(list) if !list.is_empty() => {
-                                if view_mode.get() == ViewMode::Table {
-                                    view! { <PromptTable prompts=list set_delete_target=set_delete_target set_test_target=set_test_target /> }.into_any()
-                                } else {
-                                    view! { <PromptCards prompts=list set_delete_target=set_delete_target set_test_target=set_test_target /> }.into_any()
-                                }
+                                // Extract tags
+                                let available_tags = extract_tags(&list, |p: &Prompt| p.tags.as_slice());
+
+                                // Filter items based on search and tags
+                                let mut filtered = filter_items(
+                                    &list,
+                                    &search_query.get(),
+                                    &selected_tags.get(),
+                                    |p: &Prompt| format!("{} {}", p.name, p.description),
+                                    |p: &Prompt| p.tags.as_slice(),
+                                );
+
+                                // Sort the filtered items
+                                sort_items(&mut filtered, sort_field.get(), sort_order.get(), |p: &Prompt| &p.name);
+
+                                let total = total_pages(filtered.len(), items_per_page);
+                                let paginated = paginate_items(&filtered, current_page.get(), items_per_page);
+
+                                let show_filter_bar = !available_tags.is_empty() || !search_query.get().is_empty();
+                                let has_filters = !search_query.get().is_empty() || !selected_tags.get().is_empty();
+
+                                view! {
+                                    <div>
+                                        {show_filter_bar.then(|| view! {
+                                            <ListFilterBar
+                                                search_query=search_query
+                                                selected_tags=selected_tags
+                                                available_tags=available_tags.clone()
+                                                sort_field=sort_field
+                                                sort_order=sort_order
+                                                placeholder="Search prompts..."
+                                            />
+                                        })}
+
+                                        {(has_filters && !filtered.is_empty()).then(|| view! {
+                                            <div class="mb-4 text-sm text-gray-600">
+                                                {format!("Showing {} of {} prompts", filtered.len(), list.len())}
+                                            </div>
+                                        })}
+
+                                        {if paginated.is_empty() && has_filters {
+                                            view! { <NoResultsState /> }.into_any()
+                                        } else if paginated.is_empty() {
+                                            view! { <EmptyState /> }.into_any()
+                                        } else if view_mode.get() == ViewMode::Table {
+                                            view! {
+                                                <div>
+                                                    <PromptTable prompts=paginated set_delete_target=set_delete_target set_test_target=set_test_target />
+                                                    {(total > 1).then(|| view! {
+                                                        <Pagination
+                                                            current_page=current_page
+                                                            total_pages=total
+                                                            total_items=filtered.len()
+                                                        />
+                                                    })}
+                                                </div>
+                                            }.into_any()
+                                        } else {
+                                            view! {
+                                                <div>
+                                                    <PromptCards prompts=paginated set_delete_target=set_delete_target set_test_target=set_test_target />
+                                                    {(total > 1).then(|| view! {
+                                                        <Pagination
+                                                            current_page=current_page
+                                                            total_pages=total
+                                                            total_items=filtered.len()
+                                                        />
+                                                    })}
+                                                </div>
+                                            }.into_any()
+                                        }}
+                                    </div>
+                                }.into_any()
                             },
                             Some(_) => view! { <EmptyState /> }.into_any(),
                             None => view! { <ErrorState /> }.into_any(),
@@ -369,6 +491,19 @@ fn EmptyState() -> impl IntoView {
 }
 
 #[component]
+fn NoResultsState() -> impl IntoView {
+    view! {
+        <div class="text-center py-12 bg-white rounded-lg shadow">
+            <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+            </svg>
+            <h3 class="mt-2 text-sm font-medium text-gray-900">"No matching prompts"</h3>
+            <p class="mt-1 text-sm text-gray-500">"Try adjusting your search or filter criteria."</p>
+        </div>
+    }
+}
+
+#[component]
 fn ErrorState() -> impl IntoView {
     view! {
         <div class="text-center py-12 bg-red-50 rounded-lg border border-red-200">
@@ -394,6 +529,7 @@ fn PromptTable(
                     <tr>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Name"</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Description"</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Tags"</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Arguments"</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Messages"</th>
                         <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">"Actions"</th>
@@ -404,6 +540,7 @@ fn PromptTable(
                         let name_for_edit = prompt.name.clone();
                         let name_for_delete = prompt.name.clone();
                         let prompt_for_test = prompt.clone();
+                        let tags = prompt.tags.clone();
                         let args_count = prompt.arguments.as_ref().map(|a| a.len()).unwrap_or(0);
                         let msgs_count = prompt.messages.as_ref().map(|m| m.len()).unwrap_or(0);
 
@@ -415,6 +552,7 @@ fn PromptTable(
                                 <td class="px-6 py-4">
                                     <div class="text-sm text-gray-500 truncate max-w-md">{prompt.description.clone()}</div>
                                 </td>
+                                <td class="px-6 py-4"><TagBadges tags=tags /></td>
                                 <td class="px-6 py-4 whitespace-nowrap">
                                     <span class="px-2 py-1 text-xs font-semibold rounded-full bg-purple-100 text-purple-800">
                                         {format!("{} args", args_count)}
@@ -466,6 +604,7 @@ fn PromptCards(
                 let name_for_edit = prompt.name.clone();
                 let name_for_delete = prompt.name.clone();
                 let prompt_for_test = prompt.clone();
+                let tags = prompt.tags.clone();
                 let args_count = prompt.arguments.as_ref().map(|a| a.len()).unwrap_or(0);
                 let msgs_count = prompt.messages.as_ref().map(|m| m.len()).unwrap_or(0);
 
@@ -477,6 +616,11 @@ fn PromptCards(
                                 <p class="text-sm text-gray-500 line-clamp-2">{prompt.description.clone()}</p>
                             </div>
                         </div>
+                        {(!tags.is_empty()).then(|| view! {
+                            <div class="mb-3">
+                                <TagBadges tags=tags />
+                            </div>
+                        })}
                         <div class="flex gap-2 mb-4">
                             <span class="px-2 py-1 text-xs font-semibold rounded-full bg-purple-100 text-purple-800">
                                 {format!("{} args", args_count)}
@@ -516,7 +660,13 @@ fn PromptCards(
 pub fn PromptForm() -> impl IntoView {
     let (name, set_name) = signal(String::new());
     let (description, set_description) = signal(String::new());
-    let (args_properties, set_args_properties) = signal(Vec::<SchemaProperty>::new());
+    let tags = RwSignal::new(Vec::<String>::new());
+    // Use Value signals for full JSON schema support
+    let default_schema = serde_json::json!({
+        "type": "object",
+        "properties": {}
+    });
+    let (args_schema, set_args_schema) = signal(default_schema);
     let (messages_json, set_messages_json) = signal(String::new());
     let (error, set_error) = signal(Option::<String>::None);
     let (saving, set_saving) = signal(false);
@@ -541,22 +691,23 @@ pub fn PromptForm() -> impl IntoView {
             return;
         }
 
-        // Convert schema properties to prompt arguments
-        let props = args_properties.get();
-        let arguments: Option<Vec<PromptArgument>> = if props.is_empty() {
+        // Extract arguments from schema
+        let schema = args_schema.get();
+        let args_list = schema_to_arguments(&schema);
+        let arguments: Option<Vec<PromptArgument>> = if args_list.is_empty() {
             None
         } else {
-            Some(props.iter()
-                .filter(|p| !p.name.is_empty())
-                .map(schema_property_to_argument)
-                .collect())
+            Some(args_list)
         };
 
-        // Also generate input_schema from the properties
-        let input_schema = if props.is_empty() {
+        // Use the schema if it has properties
+        let input_schema = if schema.get("properties")
+            .and_then(|p| p.as_object())
+            .map(|o| o.is_empty())
+            .unwrap_or(true)
+        {
             None
         } else {
-            let schema = properties_to_schema(&props);
             Some(schema)
         };
 
@@ -576,6 +727,7 @@ pub fn PromptForm() -> impl IntoView {
         let prompt = Prompt {
             name: name.get(),
             description: description.get(),
+            tags: tags.get(),
             arguments,
             input_schema,
             messages,
@@ -645,13 +797,19 @@ pub fn PromptForm() -> impl IntoView {
                     </div>
 
                     <div>
-                        <JsonSchemaEditor
-                            properties=args_properties
-                            set_properties=set_args_properties
+                        <label class="block text-sm font-medium text-gray-700 mb-1">"Tags"</label>
+                        <TagInput tags=tags />
+                        <p class="mt-1 text-xs text-gray-500">"Press Enter or comma to add tags"</p>
+                    </div>
+
+                    <div>
+                        <FullSchemaEditor
                             label="Arguments"
                             color="purple"
+                            schema=args_schema
+                            set_schema=set_args_schema
+                            show_definitions=true
                         />
-                        <SchemaPreview properties=args_properties />
                     </div>
 
                     <div>
@@ -698,18 +856,29 @@ pub fn PromptEditForm() -> impl IntoView {
 
     let (name, set_name) = signal(String::new());
     let (description, set_description) = signal(String::new());
-    let (args_properties, set_args_properties) = signal(Vec::<SchemaProperty>::new());
+    let tags = RwSignal::new(Vec::<String>::new());
+    // Use Value signals for full JSON schema support
+    let default_schema_edit = serde_json::json!({
+        "type": "object",
+        "properties": {}
+    });
+    let (args_schema, set_args_schema) = signal(default_schema_edit);
     let (messages_json, set_messages_json) = signal(String::new());
     let (error, set_error) = signal(Option::<String>::None);
     let (saving, set_saving) = signal(false);
     let (loading, set_loading) = signal(true);
     let (original_name, set_original_name) = signal(String::new());
+    let (has_loaded, set_has_loaded) = signal(false);
 
-    // Load existing prompt
+    // Load existing prompt (only once)
     Effect::new(move |_| {
         let name_param = prompt_name();
         // Skip if name is empty (params not ready yet)
         if name_param.is_empty() {
+            return;
+        }
+        // Skip if already loaded to prevent overwriting user changes
+        if has_loaded.get() {
             return;
         }
         set_loading.set(true);
@@ -719,16 +888,17 @@ pub fn PromptEditForm() -> impl IntoView {
                     set_original_name.set(prompt.name.clone());
                     set_name.set(prompt.name.clone());
                     set_description.set(prompt.description.clone());
-                    // Convert arguments to schema properties
-                    if let Some(args) = &prompt.arguments {
-                        let properties: Vec<SchemaProperty> = args.iter()
-                            .map(argument_to_schema_property)
-                            .collect();
-                        set_args_properties.set(properties);
+                    tags.set(prompt.tags.clone());
+                    // Convert arguments to schema or use input_schema if available
+                    if let Some(input_schema) = &prompt.input_schema {
+                        set_args_schema.set(input_schema.clone());
+                    } else if let Some(args) = &prompt.arguments {
+                        set_args_schema.set(arguments_to_schema(args));
                     }
                     if let Some(msgs) = &prompt.messages {
                         set_messages_json.set(serde_json::to_string_pretty(msgs).unwrap_or_default());
                     }
+                    set_has_loaded.set(true);
                 }
                 Err(e) => {
                     set_error.set(Some(format!("Failed to load prompt: {}", e)));
@@ -759,22 +929,23 @@ pub fn PromptEditForm() -> impl IntoView {
 
         let orig_name = original_name.get();
 
-        // Convert schema properties to prompt arguments
-        let props = args_properties.get();
-        let arguments: Option<Vec<PromptArgument>> = if props.is_empty() {
+        // Extract arguments from schema
+        let schema = args_schema.get();
+        let args_list = schema_to_arguments(&schema);
+        let arguments: Option<Vec<PromptArgument>> = if args_list.is_empty() {
             None
         } else {
-            Some(props.iter()
-                .filter(|p| !p.name.is_empty())
-                .map(schema_property_to_argument)
-                .collect())
+            Some(args_list)
         };
 
-        // Also generate input_schema from the properties
-        let input_schema = if props.is_empty() {
+        // Use the schema if it has properties
+        let input_schema = if schema.get("properties")
+            .and_then(|p| p.as_object())
+            .map(|o| o.is_empty())
+            .unwrap_or(true)
+        {
             None
         } else {
-            let schema = properties_to_schema(&props);
             Some(schema)
         };
 
@@ -794,6 +965,7 @@ pub fn PromptEditForm() -> impl IntoView {
         let prompt = Prompt {
             name: name.get(),
             description: description.get(),
+            tags: tags.get(),
             arguments,
             input_schema,
             messages,
@@ -827,100 +999,109 @@ pub fn PromptEditForm() -> impl IntoView {
 
             <h2 class="text-2xl font-bold mb-6">"Edit Prompt"</h2>
 
-            {move || if loading.get() {
-                view! {
-                    <div class="flex items-center justify-center py-12">
-                        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500"></div>
-                        <span class="ml-3 text-gray-500">"Loading prompt..."</span>
+            // Loading spinner
+            <div
+                class="flex items-center justify-center py-12"
+                style=move || if loading.get() { "display: flex" } else { "display: none" }
+            >
+                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-500"></div>
+                <span class="ml-3 text-gray-500">"Loading prompt..."</span>
+            </div>
+
+            // Form - always rendered but hidden while loading
+            <form
+                on:submit=on_submit
+                class="bg-white rounded-lg shadow p-6 max-w-2xl"
+                style=move || if loading.get() { "display: none" } else { "display: block" }
+            >
+                {move || error.get().map(|e| view! {
+                    <div class="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+                        {e}
                     </div>
-                }.into_any()
-            } else {
-                view! {
-                    <form on:submit=on_submit class="bg-white rounded-lg shadow p-6 max-w-2xl">
-                        {move || error.get().map(|e| view! {
-                            <div class="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
-                                {e}
-                            </div>
-                        })}
+                })}
 
-                        <div class="space-y-4">
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">"Name *"</label>
-                                <input
-                                    type="text"
-                                    required=true
-                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
-                                    placeholder="my-prompt"
-                                    prop:value=move || name.get()
-                                    on:input=move |ev| {
-                                        let target = ev.target().unwrap();
-                                        let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
-                                        set_name.set(input.value());
-                                    }
-                                />
-                            </div>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">"Name *"</label>
+                        <input
+                            type="text"
+                            required=true
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
+                            placeholder="my-prompt"
+                            prop:value=move || name.get()
+                            on:input=move |ev| {
+                                let target = ev.target().unwrap();
+                                let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                set_name.set(input.value());
+                            }
+                        />
+                    </div>
 
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">"Description *"</label>
-                                <input
-                                    type="text"
-                                    required=true
-                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
-                                    placeholder="What this prompt does"
-                                    prop:value=move || description.get()
-                                    on:input=move |ev| {
-                                        let target = ev.target().unwrap();
-                                        let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
-                                        set_description.set(input.value());
-                                    }
-                                />
-                            </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">"Description *"</label>
+                        <input
+                            type="text"
+                            required=true
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
+                            placeholder="What this prompt does"
+                            prop:value=move || description.get()
+                            on:input=move |ev| {
+                                let target = ev.target().unwrap();
+                                let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                set_description.set(input.value());
+                            }
+                        />
+                    </div>
 
-                            <div>
-                                <JsonSchemaEditor
-                                    properties=args_properties
-                                    set_properties=set_args_properties
-                                    label="Arguments"
-                                    color="purple"
-                                />
-                                <SchemaPreview properties=args_properties />
-                            </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">"Tags"</label>
+                        <TagInput tags=tags />
+                        <p class="mt-1 text-xs text-gray-500">"Press Enter or comma to add tags"</p>
+                    </div>
 
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">"Messages (JSON Array)"</label>
-                                <textarea
-                                    rows=6
-                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono text-sm"
-                                    placeholder=r#"[{"role": "user", "content": "Hello"}]"#
-                                    prop:value=move || messages_json.get()
-                                    on:input=move |ev| {
-                                        let target = ev.target().unwrap();
-                                        let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
-                                        set_messages_json.set(textarea.value());
-                                    }
-                                />
-                                <p class="mt-1 text-xs text-gray-500">"Optional array of prompt messages"</p>
-                            </div>
-                        </div>
+                    <div>
+                        <FullSchemaEditor
+                            label="Arguments"
+                            color="purple"
+                            schema=args_schema
+                            set_schema=set_args_schema
+                            show_definitions=true
+                        />
+                    </div>
 
-                        <div class="mt-6 flex gap-3">
-                            <button
-                                type="submit"
-                                disabled=move || saving.get()
-                                class="px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                                {move || if saving.get() { "Saving..." } else { "Save Changes" }}
-                            </button>
-                            <a
-                                href="/prompts"
-                                class="px-4 py-2 border border-gray-300 text-gray-700 rounded hover:bg-gray-50"
-                            >
-                                "Cancel"
-                            </a>
-                        </div>
-                    </form>
-                }.into_any()
-            }}
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">"Messages (JSON Array)"</label>
+                        <textarea
+                            rows=6
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono text-sm"
+                            placeholder=r#"[{"role": "user", "content": "Hello"}]"#
+                            prop:value=move || messages_json.get()
+                            on:input=move |ev| {
+                                let target = ev.target().unwrap();
+                                let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
+                                set_messages_json.set(textarea.value());
+                            }
+                        />
+                        <p class="mt-1 text-xs text-gray-500">"Optional array of prompt messages"</p>
+                    </div>
+                </div>
+
+                <div class="mt-6 flex gap-3">
+                    <button
+                        type="submit"
+                        disabled=move || saving.get()
+                        class="px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {move || if saving.get() { "Saving..." } else { "Save Changes" }}
+                    </button>
+                    <a
+                        href="/prompts"
+                        class="px-4 py-2 border border-gray-300 text-gray-700 rounded hover:bg-gray-50"
+                    >
+                        "Cancel"
+                    </a>
+                </div>
+            </form>
         </div>
     }
 }

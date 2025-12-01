@@ -60,6 +60,8 @@ urlencoding = "2.1"
 uuid = { version = "1", features = ["v4"] }
 age = "0.10"
 secrecy = "0.10"
+sha2 = "0.10"
+chrono = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]
 tower = { version = "0.4", features = ["util"] }

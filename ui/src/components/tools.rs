@@ -2,15 +2,17 @@ use leptos::prelude::*;
 use leptos::web_sys;
 use leptos_router::hooks::use_params_map;
 use wasm_bindgen::JsCast;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use crate::api;
 use crate::types::{
     Tool, MockConfig, MockStrategyType, StatefulConfig, StateOperation,
-    FileConfig, ScriptLang, LLMConfig, LLMProvider, DatabaseConfig,
+    FileConfig, ScriptLang, LLMConfig, LLMProvider, MockDatabaseConfig,
 };
-use crate::components::schema_editor::{
-    JsonSchemaEditor, SchemaPreview, SchemaProperty,
-    properties_to_schema, schema_to_properties,
+use crate::components::schema_editor::FullSchemaEditor;
+use crate::components::list_filter::{
+    ListFilterBar, Pagination, TagBadges, TagInput,
+    extract_tags, filter_items, paginate_items, total_pages,
+    SortField, SortOrder, sort_items,
 };
 
 #[derive(Clone, Copy, PartialEq)]
@@ -117,6 +119,14 @@ pub fn Tools() -> impl IntoView {
     let (delete_target, set_delete_target) = signal(Option::<String>::None);
     let (deleting, set_deleting) = signal(false);
 
+    // Search and filter state
+    let search_query = RwSignal::new(String::new());
+    let selected_tags = RwSignal::new(HashSet::<String>::new());
+    let sort_field = RwSignal::new(SortField::Name);
+    let sort_order = RwSignal::new(SortOrder::Ascending);
+    let current_page = RwSignal::new(0usize);
+    let items_per_page = 10usize;
+
     // Test modal state - now stores the full Tool to access input_schema
     let (test_target, set_test_target) = signal(Option::<Tool>::None);
     let (test_form_fields, set_test_form_fields) = signal(HashMap::<String, String>::new());
@@ -126,6 +136,15 @@ pub fn Tools() -> impl IntoView {
     let tools = LocalResource::new(move || {
         let _ = refresh_trigger.get();
         async move { api::list_tools().await.ok() }
+    });
+
+    // Reset page when filters or sort change
+    Effect::new(move || {
+        let _ = search_query.get();
+        let _ = selected_tags.get();
+        let _ = sort_field.get();
+        let _ = sort_order.get();
+        current_page.set(0);
     });
 
     let on_delete_confirm = move |_| {
@@ -467,11 +486,62 @@ pub fn Tools() -> impl IntoView {
                     tools.get().map(|data| {
                         match data {
                             Some(list) if !list.is_empty() => {
-                                if view_mode.get() == ViewMode::Table {
-                                    view! { <ToolTable tools=list set_delete_target=set_delete_target set_test_target=set_test_target /> }.into_any()
-                                } else {
-                                    view! { <ToolCards tools=list set_delete_target=set_delete_target set_test_target=set_test_target /> }.into_any()
-                                }
+                                // Extract available tags from all tools
+                                let available_tags = extract_tags(&list, |t: &Tool| t.tags.as_slice());
+
+                                // Filter items based on search and tags
+                                let mut filtered = filter_items(
+                                    &list,
+                                    &search_query.get(),
+                                    &selected_tags.get(),
+                                    |t: &Tool| format!("{} {}", t.name, t.description),
+                                    |t: &Tool| t.tags.as_slice(),
+                                );
+
+                                // Sort the filtered items
+                                sort_items(&mut filtered, sort_field.get(), sort_order.get(), |t: &Tool| &t.name);
+
+                                let total_filtered = filtered.len();
+                                let pages = total_pages(total_filtered, items_per_page);
+                                let paginated = paginate_items(&filtered, current_page.get(), items_per_page);
+
+                                view! {
+                                    <div>
+                                        // Filter bar with sorting
+                                        <ListFilterBar
+                                            search_query=search_query
+                                            selected_tags=selected_tags
+                                            available_tags=available_tags
+                                            sort_field=sort_field
+                                            sort_order=sort_order
+                                            placeholder="Search tools by name or description..."
+                                        />
+
+                                        // Results info
+                                        {(total_filtered != list.len()).then(|| view! {
+                                            <p class="text-sm text-gray-500 mb-4">
+                                                "Showing " {total_filtered} " of " {list.len()} " tools"
+                                            </p>
+                                        })}
+
+                                        // Content
+                                        {if paginated.is_empty() {
+                                            view! { <NoResultsState /> }.into_any()
+                                        } else if view_mode.get() == ViewMode::Table {
+                                            view! { <ToolTable tools=paginated set_delete_target=set_delete_target set_test_target=set_test_target /> }.into_any()
+                                        } else {
+                                            view! { <ToolCards tools=paginated set_delete_target=set_delete_target set_test_target=set_test_target /> }.into_any()
+                                        }}
+
+                                        // Pagination
+                                        <Pagination
+                                            current_page=current_page
+                                            total_pages=Signal::derive(move || pages)
+                                            total_items=Signal::derive(move || total_filtered)
+                                            items_per_page=items_per_page
+                                        />
+                                    </div>
+                                }.into_any()
                             },
                             Some(_) => view! { <EmptyState /> }.into_any(),
                             None => view! { <ErrorState /> }.into_any(),
@@ -516,6 +586,19 @@ fn EmptyState() -> impl IntoView {
 }
 
 #[component]
+fn NoResultsState() -> impl IntoView {
+    view! {
+        <div class="text-center py-12 bg-white rounded-lg shadow">
+            <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+            </svg>
+            <h3 class="mt-2 text-sm font-medium text-gray-900">"No matching tools"</h3>
+            <p class="mt-1 text-sm text-gray-500">"Try adjusting your search or filter criteria."</p>
+        </div>
+    }
+}
+
+#[component]
 fn ErrorState() -> impl IntoView {
     view! {
         <div class="text-center py-12 bg-red-50 rounded-lg border border-red-200">
@@ -541,6 +624,7 @@ fn ToolTable(
                     <tr>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Name"</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Description"</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Tags"</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">"Strategy"</th>
                         <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">"Actions"</th>
                     </tr>
@@ -550,6 +634,7 @@ fn ToolTable(
                         let name_for_edit = tool.name.clone();
                         let name_for_delete = tool.name.clone();
                         let tool_for_test = tool.clone();
+                        let tags = tool.tags.clone();
                         let strategy = tool.mock.as_ref()
                             .map(|m| format!("{:?}", m.strategy))
                             .unwrap_or_else(|| if tool.static_response.is_some() { "Static".to_string() } else { "-".to_string() });
@@ -561,6 +646,9 @@ fn ToolTable(
                                 </td>
                                 <td class="px-6 py-4">
                                     <div class="text-sm text-gray-500 truncate max-w-md">{tool.description.clone()}</div>
+                                </td>
+                                <td class="px-6 py-4">
+                                    <TagBadges tags=tags />
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap">
                                     <span class="px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-800">
@@ -608,13 +696,14 @@ fn ToolCards(
                 let name_for_edit = tool.name.clone();
                 let name_for_delete = tool.name.clone();
                 let tool_for_test = tool.clone();
+                let tags = tool.tags.clone();
                 let strategy = tool.mock.as_ref()
                     .map(|m| format!("{:?}", m.strategy))
                     .unwrap_or_else(|| if tool.static_response.is_some() { "Static".to_string() } else { "-".to_string() });
 
                 view! {
                     <div class="bg-white rounded-lg shadow hover:shadow-md transition-shadow p-4">
-                        <div class="flex justify-between items-start mb-3">
+                        <div class="flex justify-between items-start mb-2">
                             <div class="flex-1 min-w-0">
                                 <h3 class="font-semibold text-gray-900 truncate">{tool.name.clone()}</h3>
                                 <p class="text-sm text-gray-500 line-clamp-2">{tool.description.clone()}</p>
@@ -623,6 +712,12 @@ fn ToolCards(
                                 {strategy}
                             </span>
                         </div>
+                        // Tags section
+                        {(!tags.is_empty()).then(|| view! {
+                            <div class="mb-3">
+                                <TagBadges tags=tags />
+                            </div>
+                        })}
                         <div class="flex justify-end gap-2 pt-3 border-t border-gray-100">
                             <button
                                 class="px-3 py-1 text-sm text-green-600 hover:bg-green-50 rounded"
@@ -654,8 +749,15 @@ fn ToolCards(
 pub fn ToolForm() -> impl IntoView {
     let (name, set_name) = signal(String::new());
     let (description, set_description) = signal(String::new());
-    let (schema_properties, set_schema_properties) = signal(Vec::<SchemaProperty>::new());
-    let (output_schema_properties, set_output_schema_properties) = signal(Vec::<SchemaProperty>::new());
+    // Tags signal
+    let tags = RwSignal::new(Vec::<String>::new());
+    // Use Value signals for full JSON schema support (definitions, $ref, etc.)
+    let default_schema = serde_json::json!({
+        "type": "object",
+        "properties": {}
+    });
+    let (input_schema, set_input_schema) = signal(default_schema.clone());
+    let (output_schema, set_output_schema) = signal(default_schema);
     let (static_response, set_static_response) = signal(String::new());
     let (error, set_error) = signal(Option::<String>::None);
     let (saving, set_saving) = signal(false);
@@ -755,7 +857,7 @@ pub fn ToolForm() -> impl IntoView {
                 });
             }
             "database" => {
-                config.database = Some(DatabaseConfig {
+                config.database = Some(MockDatabaseConfig {
                     url: mock_db_url.get(),
                     query: mock_db_query.get(),
                     params: vec![],
@@ -787,12 +889,17 @@ pub fn ToolForm() -> impl IntoView {
             return;
         }
 
-        let schema = properties_to_schema(&schema_properties.get());
-        let output_props = output_schema_properties.get();
-        let output_schema = if output_props.is_empty() {
+        let schema = input_schema.get();
+        // Check if output_schema has any properties defined
+        let out_schema = output_schema.get();
+        let output_schema_opt = if out_schema.get("properties")
+            .and_then(|p| p.as_object())
+            .map(|o| o.is_empty())
+            .unwrap_or(true)
+        {
             None
         } else {
-            Some(properties_to_schema(&output_props))
+            Some(out_schema)
         };
 
         let static_resp: Option<serde_json::Value> = if static_response.get().is_empty() {
@@ -804,8 +911,9 @@ pub fn ToolForm() -> impl IntoView {
         let tool = Tool {
             name: name.get(),
             description: description.get(),
+            tags: tags.get(),
             input_schema: schema,
-            output_schema,
+            output_schema: output_schema_opt,
             static_response: static_resp,
             mock: build_mock_config(),
         };
@@ -877,23 +985,30 @@ pub fn ToolForm() -> impl IntoView {
                             </div>
                         </div>
                         <div class="mt-4">
-                            <JsonSchemaEditor
-                                properties=schema_properties
-                                set_properties=set_schema_properties
+                            <FullSchemaEditor
                                 label="Input Schema"
                                 color="green"
+                                schema=input_schema
+                                set_schema=set_input_schema
+                                show_definitions=true
                             />
-                            <SchemaPreview properties=schema_properties />
                         </div>
                         <div class="mt-4">
-                            <JsonSchemaEditor
-                                properties=output_schema_properties
-                                set_properties=set_output_schema_properties
+                            <FullSchemaEditor
                                 label="Output Schema (optional)"
                                 color="blue"
+                                schema=output_schema
+                                set_schema=set_output_schema
+                                show_definitions=true
+                                description="Define the expected structure of tool outputs for validation and documentation"
                             />
-                            <p class="mt-1 text-xs text-gray-500">"Define the expected structure of tool outputs for validation and documentation"</p>
-                            <SchemaPreview properties=output_schema_properties />
+                        </div>
+                        <div class="mt-4">
+                            <TagInput
+                                tags=tags
+                                label="Tags"
+                                placeholder="Add tag for categorization..."
+                            />
                         </div>
                     </div>
 
@@ -1254,13 +1369,21 @@ pub fn ToolEditForm() -> impl IntoView {
 
     let (name, set_name) = signal(String::new());
     let (description, set_description) = signal(String::new());
-    let (schema_properties, set_schema_properties) = signal(Vec::<SchemaProperty>::new());
-    let (output_schema_properties, set_output_schema_properties) = signal(Vec::<SchemaProperty>::new());
+    // Tags signal
+    let tags = RwSignal::new(Vec::<String>::new());
+    // Use Value signals for full JSON schema support (definitions, $ref, etc.)
+    let default_schema = serde_json::json!({
+        "type": "object",
+        "properties": {}
+    });
+    let (input_schema, set_input_schema) = signal(default_schema.clone());
+    let (output_schema, set_output_schema) = signal(default_schema);
     let (static_response, set_static_response) = signal(String::new());
     let (error, set_error) = signal(Option::<String>::None);
     let (saving, set_saving) = signal(false);
     let (loading, set_loading) = signal(true);
     let (original_name, set_original_name) = signal(String::new());
+    let (has_loaded, set_has_loaded) = signal(false);
 
     // Mock strategy signals
     let (mock_strategy, set_mock_strategy) = signal("none".to_string());
@@ -1280,11 +1403,15 @@ pub fn ToolEditForm() -> impl IntoView {
     let (mock_db_url, set_mock_db_url) = signal(String::new());
     let (mock_db_query, set_mock_db_query) = signal(String::new());
 
-    // Load existing tool
+    // Load existing tool (only once)
     Effect::new(move |_| {
         let name_param = tool_name();
         // Skip if name is empty (params not ready yet)
         if name_param.is_empty() {
+            return;
+        }
+        // Skip if already loaded to prevent overwriting user changes
+        if has_loaded.get() {
             return;
         }
         set_loading.set(true);
@@ -1294,9 +1421,11 @@ pub fn ToolEditForm() -> impl IntoView {
                     set_original_name.set(tool.name.clone());
                     set_name.set(tool.name.clone());
                     set_description.set(tool.description.clone());
-                    set_schema_properties.set(schema_to_properties(&tool.input_schema));
-                    if let Some(output_schema) = &tool.output_schema {
-                        set_output_schema_properties.set(schema_to_properties(output_schema));
+                    tags.set(tool.tags.clone());
+                    web_sys::console::log_1(&format!("ToolEditForm: Loaded tags = {:?}", tool.tags).into());
+                    set_input_schema.set(tool.input_schema.clone());
+                    if let Some(out_schema) = &tool.output_schema {
+                        set_output_schema.set(out_schema.clone());
                     }
                     if let Some(resp) = &tool.static_response {
                         set_static_response.set(serde_json::to_string_pretty(resp).unwrap_or_default());
@@ -1373,6 +1502,7 @@ pub fn ToolEditForm() -> impl IntoView {
                             set_mock_db_query.set(db.query.clone());
                         }
                     }
+                    set_has_loaded.set(true);
                 }
                 Err(e) => {
                     set_error.set(Some(format!("Failed to load tool: {}", e)));
@@ -1459,7 +1589,7 @@ pub fn ToolEditForm() -> impl IntoView {
                 });
             }
             "database" => {
-                config.database = Some(DatabaseConfig {
+                config.database = Some(MockDatabaseConfig {
                     url: mock_db_url.get(),
                     query: mock_db_query.get(),
                     params: vec![],
@@ -1473,6 +1603,7 @@ pub fn ToolEditForm() -> impl IntoView {
 
     let on_submit = move |ev: web_sys::SubmitEvent| {
         ev.prevent_default();
+        web_sys::console::log_1(&format!("ToolEditForm: on_submit triggered, tags = {:?}", tags.get()).into());
         set_saving.set(true);
         set_error.set(None);
 
@@ -1491,12 +1622,17 @@ pub fn ToolEditForm() -> impl IntoView {
         }
 
         let orig_name = original_name.get();
-        let schema = properties_to_schema(&schema_properties.get());
-        let output_props = output_schema_properties.get();
-        let output_schema = if output_props.is_empty() {
+        let schema = input_schema.get();
+        // Check if output_schema has any properties defined
+        let out_schema = output_schema.get();
+        let output_schema_opt = if out_schema.get("properties")
+            .and_then(|p| p.as_object())
+            .map(|o| o.is_empty())
+            .unwrap_or(true)
+        {
             None
         } else {
-            Some(properties_to_schema(&output_props))
+            Some(out_schema)
         };
 
         let static_resp: Option<serde_json::Value> = if static_response.get().is_empty() {
@@ -1508,8 +1644,9 @@ pub fn ToolEditForm() -> impl IntoView {
         let tool = Tool {
             name: name.get(),
             description: description.get(),
+            tags: tags.get(),
             input_schema: schema,
-            output_schema,
+            output_schema: output_schema_opt,
             static_response: static_resp,
             mock: build_mock_config(),
         };
@@ -1542,16 +1679,21 @@ pub fn ToolEditForm() -> impl IntoView {
 
             <h2 class="text-2xl font-bold mb-6">"Edit Tool"</h2>
 
-            {move || if loading.get() {
-                view! {
-                    <div class="flex items-center justify-center py-12">
-                        <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-green-500"></div>
-                        <span class="ml-3 text-gray-500">"Loading tool..."</span>
-                    </div>
-                }.into_any()
-            } else {
-                view! {
-                    <form on:submit=on_submit class="bg-white rounded-lg shadow p-6 max-w-3xl">
+            // Loading spinner
+            <div
+                class="flex items-center justify-center py-12"
+                style=move || if loading.get() { "display: flex" } else { "display: none" }
+            >
+                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-green-500"></div>
+                <span class="ml-3 text-gray-500">"Loading tool..."</span>
+            </div>
+
+            // Form - always rendered but hidden while loading
+            <form
+                on:submit=on_submit
+                class="bg-white rounded-lg shadow p-6 max-w-3xl"
+                style=move || if loading.get() { "display: none" } else { "display: block" }
+            >
                         {move || error.get().map(|e| view! {
                             <div class="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
                                 {e}
@@ -1595,23 +1737,30 @@ pub fn ToolEditForm() -> impl IntoView {
                                     </div>
                                 </div>
                                 <div class="mt-4">
-                                    <JsonSchemaEditor
-                                        properties=schema_properties
-                                        set_properties=set_schema_properties
+                                    <FullSchemaEditor
                                         label="Input Schema"
                                         color="green"
+                                        schema=input_schema
+                                        set_schema=set_input_schema
+                                        show_definitions=true
                                     />
-                                    <SchemaPreview properties=schema_properties />
                                 </div>
                                 <div class="mt-4">
-                                    <JsonSchemaEditor
-                                        properties=output_schema_properties
-                                        set_properties=set_output_schema_properties
+                                    <FullSchemaEditor
                                         label="Output Schema (optional)"
                                         color="blue"
+                                        schema=output_schema
+                                        set_schema=set_output_schema
+                                        show_definitions=true
+                                        description="Define the expected structure of tool outputs for validation and documentation"
                                     />
-                                    <p class="mt-1 text-xs text-gray-500">"Define the expected structure of tool outputs for validation and documentation"</p>
-                                    <SchemaPreview properties=output_schema_properties />
+                                </div>
+                                <div class="mt-4">
+                                    <TagInput
+                                        tags=tags
+                                        label="Tags"
+                                        placeholder="Add tag for categorization..."
+                                    />
                                 </div>
                             </div>
 
@@ -1959,9 +2108,7 @@ pub fn ToolEditForm() -> impl IntoView {
                                 "Cancel"
                             </a>
                         </div>
-                    </form>
-                }.into_any()
-            }}
+            </form>
         </div>
     }
 }

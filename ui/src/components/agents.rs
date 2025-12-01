@@ -6,15 +6,18 @@
 use leptos::prelude::*;
 use leptos::web_sys;
 use leptos_router::hooks::use_params_map;
+use std::collections::HashSet;
 use crate::api;
 use crate::api::LlmModelInfo;
 use crate::types::{Agent, AgentType, AgentLlmConfig, AgentLlmProvider, MemoryConfig, MemoryBackend, MemoryStrategy};
-use crate::components::schema_editor::{
-    JsonSchemaEditor, SchemaPreview, SchemaProperty,
-    properties_to_schema, schema_to_properties,
-};
+use crate::components::schema_editor::FullSchemaEditor;
 use crate::components::artifact_selector::{
     ArtifactSelector, ArtifactItem, SelectionMode,
+};
+use crate::components::list_filter::{
+    ListFilterBar, Pagination, TagBadges, TagInput,
+    extract_tags, filter_items, paginate_items, total_pages,
+    SortField, SortOrder, sort_items,
 };
 
 /// Convert provider enum to API string
@@ -695,9 +698,26 @@ pub fn Agents() -> impl IntoView {
     // Dynamic form values for input schema (key -> value)
     let (form_values, set_form_values) = signal(std::collections::HashMap::<String, String>::new());
 
+    // Search and filter state
+    let search_query = RwSignal::new(String::new());
+    let selected_tags = RwSignal::new(HashSet::<String>::new());
+    let sort_field = RwSignal::new(SortField::Name);
+    let sort_order = RwSignal::new(SortOrder::Ascending);
+    let current_page = RwSignal::new(0usize);
+    let items_per_page = 10usize;
+
     let agents = LocalResource::new(move || {
         let _ = refresh_trigger.get();
         async move { api::list_agents().await.ok() }
+    });
+
+    // Reset page when filters change
+    Effect::new(move || {
+        let _ = search_query.get();
+        let _ = selected_tags.get();
+        let _ = sort_field.get();
+        let _ = sort_order.get();
+        current_page.set(0);
     });
 
     let on_delete_confirm = move |_| {
@@ -946,22 +966,71 @@ pub fn Agents() -> impl IntoView {
                 {move || {
                     let agents_data = agents.get().flatten();
                     match agents_data {
-                        Some(agents_list) if !agents_list.is_empty() => {
-                            if view_mode.get() == ViewMode::Table {
-                                view! {
-                                    <div class="overflow-x-auto bg-white dark:bg-gray-800 rounded-lg shadow border border-gray-200 dark:border-gray-700">
-                                        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-                                            <thead class="bg-gray-50 dark:bg-gray-700">
-                                                <tr>
-                                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">"Name"</th>
-                                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">"Type"</th>
-                                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">"LLM"</th>
-                                                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">"Tools"</th>
-                                                    <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">"Actions"</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                                                {agents_list.into_iter().map(|agent| {
+                        Some(list) if !list.is_empty() => {
+                            // Extract all available tags
+                            let available_tags = extract_tags(&list, |a: &Agent| a.tags.as_slice());
+
+                            // Filter agents
+                            let mut filtered_list = filter_items(
+                                &list,
+                                &search_query.get(),
+                                &selected_tags.get(),
+                                |a: &Agent| format!("{} {}", a.name, a.description),
+                                |a: &Agent| a.tags.as_slice(),
+                            );
+
+                            // Sort the filtered items
+                            sort_items(&mut filtered_list, sort_field.get(), sort_order.get(), |a: &Agent| &a.name);
+
+                            let total_filtered = filtered_list.len();
+                            let page_count = total_pages(total_filtered, items_per_page);
+                            let paginated_list = paginate_items(&filtered_list, current_page.get(), items_per_page);
+
+                            view! {
+                                <div>
+                                    // Filter bar
+                                    <ListFilterBar
+                                        search_query=search_query
+                                        selected_tags=selected_tags
+                                        available_tags=available_tags
+                                        sort_field=sort_field
+                                        sort_order=sort_order
+                                        placeholder="Search agents..."
+                                    />
+
+                                    // Show results count when filtered
+                                    {move || {
+                                        if !search_query.get().is_empty() || !selected_tags.get().is_empty() {
+                                            view! {
+                                                <div class="mb-4 text-sm text-gray-600 dark:text-gray-400">
+                                                    "Showing "{total_filtered}" of "{list.len()}" agents"
+                                                </div>
+                                            }.into_any()
+                                        } else {
+                                            view! { <span></span> }.into_any()
+                                        }
+                                    }}
+
+                                    // No results state
+                                    {if paginated_list.is_empty() {
+                                        view! { <NoResultsState /> }.into_any()
+                                    } else if view_mode.get() == ViewMode::Table {
+                                        view! {
+                                            <div class="overflow-x-auto bg-white dark:bg-gray-800 rounded-lg shadow border border-gray-200 dark:border-gray-700">
+                                                <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                                                    <thead class="bg-gray-50 dark:bg-gray-700">
+                                                        <tr>
+                                                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">"Name"</th>
+                                                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">"Type"</th>
+                                                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">"LLM"</th>
+                                                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">"Tools"</th>
+                                                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">"Tags"</th>
+                                                            <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">"Actions"</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                                                        {paginated_list.into_iter().map(|agent| {
+                                                    let tags = agent.tags.clone();
                                                     let agent_for_test = agent.clone();
                                                     let name_for_edit = agent.name.clone();
                                                     let name_for_delete = agent.name.clone();
@@ -994,6 +1063,9 @@ pub fn Agents() -> impl IntoView {
                                                                 } else {
                                                                     view! { <span></span> }.into_any()
                                                                 }}
+                                                            </td>
+                                                            <td class="px-6 py-4">
+                                                                <TagBadges tags=tags />
                                                             </td>
                                                             <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
                                                                 <button
@@ -1029,7 +1101,8 @@ pub fn Agents() -> impl IntoView {
                                 // Card view
                                 view! {
                                     <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                                        {agents_list.into_iter().map(|agent| {
+                                        {paginated_list.into_iter().map(|agent| {
+                                            let tags = agent.tags.clone();
                                             let agent_for_test = agent.clone();
                                             let name_for_edit = agent.name.clone();
                                             let name_for_delete = agent.name.clone();
@@ -1085,6 +1158,16 @@ pub fn Agents() -> impl IntoView {
                                                             view! { <span></span> }.into_any()
                                                         }}
                                                     </div>
+                                                    {if !tags.is_empty() {
+                                                        view! {
+                                                            <div class="mt-4">
+                                                                <div class="text-xs text-gray-500 dark:text-gray-400 mb-1">"Tags"</div>
+                                                                <TagBadges tags=tags />
+                                                            </div>
+                                                        }.into_any()
+                                                    } else {
+                                                        view! { <span></span> }.into_any()
+                                                    }}
                                                     <div class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 flex justify-end space-x-2">
                                                         <a
                                                             href=format!("/agents/edit/{}", name_for_edit)
@@ -1104,7 +1187,17 @@ pub fn Agents() -> impl IntoView {
                                         }).collect::<Vec<_>>()}
                                     </div>
                                 }.into_any()
-                            }
+                                    }}
+
+                                    // Pagination
+                                    <Pagination
+                                        current_page=current_page
+                                        total_pages=Signal::derive(move || page_count)
+                                        total_items=Signal::derive(move || total_filtered)
+                                        items_per_page=items_per_page
+                                    />
+                                </div>
+                            }.into_any()
                         }
                         Some(_) => view! {
                             <div class="text-center py-12 bg-white dark:bg-gray-800 rounded-lg shadow border border-gray-200 dark:border-gray-700">
@@ -1553,11 +1646,25 @@ pub fn Agents() -> impl IntoView {
     }
 }
 
+#[component]
+fn NoResultsState() -> impl IntoView {
+    view! {
+        <div class="text-center py-12 bg-white rounded-lg shadow">
+            <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+            </svg>
+            <h3 class="mt-2 text-sm font-medium text-gray-900">"No matching agents"</h3>
+            <p class="mt-1 text-sm text-gray-500">"Try adjusting your search or filter criteria."</p>
+        </div>
+    }
+}
+
 /// Agent create form component
 #[component]
 pub fn AgentForm() -> impl IntoView {
     let (name, set_name) = signal(String::new());
     let (description, set_description) = signal(String::new());
+    let tags = RwSignal::new(Vec::<String>::new());
     let (agent_type, set_agent_type) = signal(AgentType::SingleTurn);
     let (provider, set_provider) = signal(AgentLlmProvider::OpenAI);
     let (model, set_model) = signal(get_default_model(&AgentLlmProvider::OpenAI).to_string());
@@ -1576,9 +1683,13 @@ pub fn AgentForm() -> impl IntoView {
     // ReAct specific settings
     let (max_iterations, set_max_iterations) = signal(10u32);
 
-    // Schema configuration - using hierarchical editor like tools
-    let (input_schema_properties, set_input_schema_properties) = signal(Vec::<SchemaProperty>::new());
-    let (output_schema_properties, set_output_schema_properties) = signal(Vec::<SchemaProperty>::new());
+    // Schema configuration - using Value signals for full JSON schema support
+    let default_schema = serde_json::json!({
+        "type": "object",
+        "properties": {}
+    });
+    let (input_schema, set_input_schema) = signal(default_schema.clone());
+    let (output_schema, set_output_schema) = signal(default_schema);
 
     // Prompt template for custom input schemas
     let (prompt_template, set_prompt_template) = signal(String::new());
@@ -1667,19 +1778,18 @@ pub fn AgentForm() -> impl IntoView {
             return;
         }
 
-        // Build schemas from properties
-        let input_props = input_schema_properties.get();
-        let input_schema = if input_props.is_empty() {
-            serde_json::json!({})
-        } else {
-            properties_to_schema(&input_props)
-        };
-
-        let output_props = output_schema_properties.get();
-        let output_schema = if output_props.is_empty() {
+        // Get schemas
+        let input_schema_val = input_schema.get();
+        // Check if output_schema has any properties defined
+        let out_schema = output_schema.get();
+        let output_schema_opt = if out_schema.get("properties")
+            .and_then(|p| p.as_object())
+            .map(|o| o.is_empty())
+            .unwrap_or(true)
+        {
             None
         } else {
-            Some(properties_to_schema(&output_props))
+            Some(out_schema)
         };
 
         // Extract artifacts by category
@@ -1720,6 +1830,7 @@ pub fn AgentForm() -> impl IntoView {
         let agent = Agent {
             name: name.get(),
             description: description.get(),
+            tags: tags.get(),
             agent_type: agent_type.get(),
             llm: AgentLlmConfig {
                 provider: provider.get(),
@@ -1751,8 +1862,8 @@ pub fn AgentForm() -> impl IntoView {
             timeout_seconds: 300,
             temperature: None,
             max_tokens: None,
-            input_schema,
-            output_schema,
+            input_schema: input_schema_val,
+            output_schema: output_schema_opt,
         };
 
         wasm_bindgen_futures::spawn_local(async move {
@@ -1881,6 +1992,12 @@ pub fn AgentForm() -> impl IntoView {
                             prop:value=move || description.get()
                             on:input=move |ev| set_description.set(event_target_value(&ev))
                         />
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">"Tags"</label>
+                        <TagInput tags=tags />
+                        <p class="mt-1 text-xs text-gray-500">"Press Enter or comma to add tags"</p>
                     </div>
 
                     // Artifacts Configuration (for ReAct agents)
@@ -2246,19 +2363,22 @@ pub fn AgentForm() -> impl IntoView {
                             "Custom input fields are serialized to the agent's prompt. Output schema enables JSON parsing of responses."
                         </p>
                         <div class="space-y-4">
-                            <JsonSchemaEditor
-                                properties=input_schema_properties
-                                set_properties=set_input_schema_properties
+                            <FullSchemaEditor
                                 label="Input Schema (optional)"
                                 color="green"
+                                schema=input_schema
+                                set_schema=set_input_schema
+                                show_definitions=true
                             />
-                            <SchemaPreview properties=input_schema_properties />
 
                             // Prompt Template (shown when input schema has properties)
                             {move || {
-                                let props = input_schema_properties.get();
-                                if !props.is_empty() {
-                                    let prop_names: Vec<String> = props.iter().map(|p| p.name.clone()).collect();
+                                let schema_val = input_schema.get();
+                                let prop_names: Vec<String> = schema_val.get("properties")
+                                    .and_then(|p| p.as_object())
+                                    .map(|obj| obj.keys().cloned().collect())
+                                    .unwrap_or_default();
+                                if !prop_names.is_empty() {
                                     view! {
                                         <div class="mt-4 p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
                                             <label class="block text-sm font-medium text-purple-800 dark:text-purple-300 mb-2">
@@ -2293,13 +2413,13 @@ pub fn AgentForm() -> impl IntoView {
                                 }
                             }}
 
-                            <JsonSchemaEditor
-                                properties=output_schema_properties
-                                set_properties=set_output_schema_properties
+                            <FullSchemaEditor
                                 label="Output Schema (optional)"
                                 color="blue"
+                                schema=output_schema
+                                set_schema=set_output_schema
+                                show_definitions=true
                             />
-                            <SchemaPreview properties=output_schema_properties />
                         </div>
                     </div>
 
@@ -2333,6 +2453,7 @@ pub fn AgentEditForm() -> impl IntoView {
 
     let (name, set_name) = signal(String::new());
     let (description, set_description) = signal(String::new());
+    let tags = RwSignal::new(Vec::<String>::new());
     let (agent_type, set_agent_type) = signal(AgentType::SingleTurn);
     let (provider, set_provider) = signal(AgentLlmProvider::OpenAI);
     let (model, set_model) = signal(String::new());
@@ -2358,9 +2479,13 @@ pub fn AgentEditForm() -> impl IntoView {
     let (selected_artifacts, set_selected_artifacts) = signal(Vec::<String>::new());
     let (artifacts_loading, set_artifacts_loading) = signal(false);
 
-    // Schema configuration - using hierarchical editor like tools
-    let (input_schema_properties, set_input_schema_properties) = signal(Vec::<SchemaProperty>::new());
-    let (output_schema_properties, set_output_schema_properties) = signal(Vec::<SchemaProperty>::new());
+    // Schema configuration - using Value signals for full JSON schema support
+    let default_schema_edit = serde_json::json!({
+        "type": "object",
+        "properties": {}
+    });
+    let (input_schema, set_input_schema) = signal(default_schema_edit.clone());
+    let (output_schema, set_output_schema) = signal(default_schema_edit);
 
     // Prompt template for custom input schemas
     let (prompt_template, set_prompt_template) = signal(String::new());
@@ -2425,6 +2550,7 @@ pub fn AgentEditForm() -> impl IntoView {
                     set_original_name.set(agent.name.clone());
                     set_name.set(agent.name.clone());
                     set_description.set(agent.description.clone());
+                    tags.set(agent.tags.clone());
                     set_agent_type.set(agent.agent_type.clone());
                     let loaded_provider = agent.llm.provider.clone();
                     set_provider.set(loaded_provider.clone());
@@ -2443,10 +2569,10 @@ pub fn AgentEditForm() -> impl IntoView {
                     artifacts.extend(agent.available_resources.clone());
                     artifacts.extend(agent.available_resource_templates.clone());
                     set_selected_artifacts.set(artifacts);
-                    // Load schema fields using schema_to_properties
-                    set_input_schema_properties.set(schema_to_properties(&agent.input_schema));
-                    if let Some(output_schema) = &agent.output_schema {
-                        set_output_schema_properties.set(schema_to_properties(output_schema));
+                    // Load schemas directly
+                    set_input_schema.set(agent.input_schema.clone());
+                    if let Some(out_schema) = &agent.output_schema {
+                        set_output_schema.set(out_schema.clone());
                     }
                     set_loading.set(false);
 
@@ -2482,19 +2608,18 @@ pub fn AgentEditForm() -> impl IntoView {
             return;
         }
 
-        // Build schemas from properties
-        let input_props = input_schema_properties.get();
-        let input_schema = if input_props.is_empty() {
-            serde_json::json!({})
-        } else {
-            properties_to_schema(&input_props)
-        };
-
-        let output_props = output_schema_properties.get();
-        let output_schema = if output_props.is_empty() {
+        // Get schemas
+        let input_schema_val = input_schema.get();
+        // Check if output_schema has any properties defined
+        let out_schema = output_schema.get();
+        let output_schema_opt = if out_schema.get("properties")
+            .and_then(|p| p.as_object())
+            .map(|o| o.is_empty())
+            .unwrap_or(true)
+        {
             None
         } else {
-            Some(properties_to_schema(&output_props))
+            Some(out_schema)
         };
 
         // Extract artifacts by category
@@ -2535,6 +2660,7 @@ pub fn AgentEditForm() -> impl IntoView {
         let agent = Agent {
             name: name.get(),
             description: description.get(),
+            tags: tags.get(),
             agent_type: agent_type.get(),
             llm: AgentLlmConfig {
                 provider: provider.get(),
@@ -2563,8 +2689,8 @@ pub fn AgentEditForm() -> impl IntoView {
             timeout_seconds: 300,
             temperature: None,
             max_tokens: None,
-            input_schema,
-            output_schema,
+            input_schema: input_schema_val,
+            output_schema: output_schema_opt,
         };
 
         wasm_bindgen_futures::spawn_local(async move {
@@ -2604,8 +2730,19 @@ pub fn AgentEditForm() -> impl IntoView {
                     </div>
                 })}
 
-                <Show when=move || !loading.get() fallback=|| view! { <div class="text-center py-8">"Loading..."</div> }>
-                    <div class="bg-white dark:bg-gray-800 shadow rounded-lg border border-gray-200 dark:border-gray-700 p-6 space-y-6">
+                // Loading spinner
+                <div
+                    class="text-center py-8"
+                    style=move || if loading.get() { "display: block" } else { "display: none" }
+                >
+                    "Loading..."
+                </div>
+
+                // Form content - always rendered but hidden while loading
+                <div
+                    class="bg-white dark:bg-gray-800 shadow rounded-lg border border-gray-200 dark:border-gray-700 p-6 space-y-6"
+                    style=move || if loading.get() { "display: none" } else { "display: block" }
+                >
                         // Basic Info
                         <div class="grid grid-cols-2 gap-4">
                             <div>
@@ -2693,6 +2830,12 @@ pub fn AgentEditForm() -> impl IntoView {
                                 prop:value=move || description.get()
                                 on:input=move |ev| set_description.set(event_target_value(&ev))
                             />
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">"Tags"</label>
+                            <TagInput tags=tags />
+                            <p class="mt-1 text-xs text-gray-500">"Press Enter or comma to add tags"</p>
                         </div>
 
                         // Artifacts Configuration (for ReAct agents)
@@ -2951,19 +3094,22 @@ pub fn AgentEditForm() -> impl IntoView {
                                 "Custom input fields are serialized to the agent's prompt. Output schema enables JSON parsing of responses."
                             </p>
                             <div class="space-y-4">
-                                <JsonSchemaEditor
-                                    properties=input_schema_properties
-                                    set_properties=set_input_schema_properties
+                                <FullSchemaEditor
                                     label="Input Schema (optional)"
                                     color="green"
+                                    schema=input_schema
+                                    set_schema=set_input_schema
+                                    show_definitions=true
                                 />
-                                <SchemaPreview properties=input_schema_properties />
 
                                 // Prompt Template (shown when input schema has properties)
                                 {move || {
-                                    let props = input_schema_properties.get();
-                                    if !props.is_empty() {
-                                        let prop_names: Vec<String> = props.iter().map(|p| p.name.clone()).collect();
+                                    let schema_val = input_schema.get();
+                                    let prop_names: Vec<String> = schema_val.get("properties")
+                                        .and_then(|p| p.as_object())
+                                        .map(|obj| obj.keys().cloned().collect())
+                                        .unwrap_or_default();
+                                    if !prop_names.is_empty() {
                                         view! {
                                             <div class="mt-4 p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-800">
                                                 <label class="block text-sm font-medium text-purple-800 dark:text-purple-300 mb-2">
@@ -2998,13 +3144,13 @@ pub fn AgentEditForm() -> impl IntoView {
                                     }
                                 }}
 
-                                <JsonSchemaEditor
-                                    properties=output_schema_properties
-                                    set_properties=set_output_schema_properties
+                                <FullSchemaEditor
                                     label="Output Schema (optional)"
                                     color="blue"
+                                    schema=output_schema
+                                    set_schema=set_output_schema
+                                    show_definitions=true
                                 />
-                                <SchemaPreview properties=output_schema_properties />
                             </div>
                         </div>
 
@@ -3025,7 +3171,6 @@ pub fn AgentEditForm() -> impl IntoView {
                             </button>
                         </div>
                     </div>
-                </Show>
             </div>
         </div>
     }
