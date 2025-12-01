@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.31.0 - 2025-12-01
+#### Features
+- **(ui)** add tabbed settings interface and archetype counts - (f2f8ee0) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.30.0 - 2025-12-01
 #### Features
 - **(persistence)** add database layer with git-style version history - (cfaddea) - Joan Marc Carbo Arnau
