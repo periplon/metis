@@ -2209,30 +2209,65 @@ pub async fn test_resource_template(
 
     // Generate resource content
     let output = if let Some(mock_config) = &template.mock {
-        match state
-            .mock_strategy
-            .generate(mock_config, Some(&req.args))
-            .await
-        {
-            Ok(result) => {
+        // Special handling for Static strategy: use content if available
+        if matches!(mock_config.strategy, crate::config::MockStrategyType::Static) {
+            if let Some(content) = &template.content {
+                // Also resolve template variables in static content
+                let resolved_content = resolve_uri_template(content, &req.args);
                 json!({
                     "uri_template": template.uri_template,
                     "resolved_uri": resolved_uri,
                     "name": template.name,
                     "mime_type": template.mime_type,
-                    "content": result
+                    "content": resolved_content
                 })
+            } else {
+                // Fall through to generate() which returns null for Static
+                match state.mock_strategy.generate(mock_config, Some(&req.args)).await {
+                    Ok(result) => {
+                        json!({
+                            "uri_template": template.uri_template,
+                            "resolved_uri": resolved_uri,
+                            "name": template.name,
+                            "mime_type": template.mime_type,
+                            "content": result
+                        })
+                    }
+                    Err(e) => {
+                        let elapsed = start.elapsed().as_millis() as u64;
+                        return (
+                            StatusCode::OK,
+                            Json(ApiResponse::success(TestResult {
+                                output: Value::Null,
+                                error: Some(format!("Mock strategy error: {}", e)),
+                                execution_time_ms: elapsed,
+                            })),
+                        );
+                    }
+                }
             }
-            Err(e) => {
-                let elapsed = start.elapsed().as_millis() as u64;
-                return (
-                    StatusCode::OK,
-                    Json(ApiResponse::success(TestResult {
-                        output: Value::Null,
-                        error: Some(format!("Mock strategy error: {}", e)),
-                        execution_time_ms: elapsed,
-                    })),
-                );
+        } else {
+            match state.mock_strategy.generate(mock_config, Some(&req.args)).await {
+                Ok(result) => {
+                    json!({
+                        "uri_template": template.uri_template,
+                        "resolved_uri": resolved_uri,
+                        "name": template.name,
+                        "mime_type": template.mime_type,
+                        "content": result
+                    })
+                }
+                Err(e) => {
+                    let elapsed = start.elapsed().as_millis() as u64;
+                    return (
+                        StatusCode::OK,
+                        Json(ApiResponse::success(TestResult {
+                            output: Value::Null,
+                            error: Some(format!("Mock strategy error: {}", e)),
+                            execution_time_ms: elapsed,
+                        })),
+                    );
+                }
             }
         }
     } else if let Some(content) = &template.content {
@@ -2931,18 +2966,41 @@ pub async fn test_tool(
 
     // Execute the mock strategy
     let output = if let Some(mock_config) = &tool.mock {
-        match state.mock_strategy.generate(mock_config, Some(&req.args)).await {
-            Ok(result) => result,
-            Err(e) => {
-                let elapsed = start.elapsed().as_millis() as u64;
-                return (
-                    StatusCode::OK,
-                    Json(ApiResponse::success(TestResult {
-                        output: Value::Null,
-                        error: Some(format!("Mock strategy error: {}", e)),
-                        execution_time_ms: elapsed,
-                    })),
-                );
+        // Special handling for Static strategy: use static_response if available
+        if matches!(mock_config.strategy, crate::config::MockStrategyType::Static) {
+            if let Some(static_response) = &tool.static_response {
+                static_response.clone()
+            } else {
+                // Fall through to generate() which returns null for Static
+                match state.mock_strategy.generate(mock_config, Some(&req.args)).await {
+                    Ok(result) => result,
+                    Err(e) => {
+                        let elapsed = start.elapsed().as_millis() as u64;
+                        return (
+                            StatusCode::OK,
+                            Json(ApiResponse::success(TestResult {
+                                output: Value::Null,
+                                error: Some(format!("Mock strategy error: {}", e)),
+                                execution_time_ms: elapsed,
+                            })),
+                        );
+                    }
+                }
+            }
+        } else {
+            match state.mock_strategy.generate(mock_config, Some(&req.args)).await {
+                Ok(result) => result,
+                Err(e) => {
+                    let elapsed = start.elapsed().as_millis() as u64;
+                    return (
+                        StatusCode::OK,
+                        Json(ApiResponse::success(TestResult {
+                            output: Value::Null,
+                            error: Some(format!("Mock strategy error: {}", e)),
+                            execution_time_ms: elapsed,
+                        })),
+                    );
+                }
             }
         }
     } else if let Some(static_response) = &tool.static_response {
@@ -2985,26 +3043,60 @@ pub async fn test_resource(
 
     // Generate resource content
     let output = if let Some(mock_config) = &resource.mock {
-        match state.mock_strategy.generate(mock_config, None).await {
-            Ok(result) => {
-                // Return as structured content
+        // Special handling for Static strategy: use content if available
+        if matches!(mock_config.strategy, crate::config::MockStrategyType::Static) {
+            if let Some(content) = &resource.content {
                 json!({
                     "uri": resource.uri,
                     "name": resource.name,
                     "mime_type": resource.mime_type,
-                    "content": result
+                    "content": content
                 })
+            } else {
+                // Fall through to generate() which returns null for Static
+                match state.mock_strategy.generate(mock_config, None).await {
+                    Ok(result) => {
+                        json!({
+                            "uri": resource.uri,
+                            "name": resource.name,
+                            "mime_type": resource.mime_type,
+                            "content": result
+                        })
+                    }
+                    Err(e) => {
+                        let elapsed = start.elapsed().as_millis() as u64;
+                        return (
+                            StatusCode::OK,
+                            Json(ApiResponse::success(TestResult {
+                                output: Value::Null,
+                                error: Some(format!("Mock strategy error: {}", e)),
+                                execution_time_ms: elapsed,
+                            })),
+                        );
+                    }
+                }
             }
-            Err(e) => {
-                let elapsed = start.elapsed().as_millis() as u64;
-                return (
-                    StatusCode::OK,
-                    Json(ApiResponse::success(TestResult {
-                        output: Value::Null,
-                        error: Some(format!("Mock strategy error: {}", e)),
-                        execution_time_ms: elapsed,
-                    })),
-                );
+        } else {
+            match state.mock_strategy.generate(mock_config, None).await {
+                Ok(result) => {
+                    json!({
+                        "uri": resource.uri,
+                        "name": resource.name,
+                        "mime_type": resource.mime_type,
+                        "content": result
+                    })
+                }
+                Err(e) => {
+                    let elapsed = start.elapsed().as_millis() as u64;
+                    return (
+                        StatusCode::OK,
+                        Json(ApiResponse::success(TestResult {
+                            output: Value::Null,
+                            error: Some(format!("Mock strategy error: {}", e)),
+                            execution_time_ms: elapsed,
+                        })),
+                    );
+                }
             }
         }
     } else if let Some(content) = &resource.content {

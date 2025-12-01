@@ -8,6 +8,7 @@ use crate::types::{
     Resource, MockConfig, MockStrategyType, StatefulConfig, StateOperation,
     FileConfig, ScriptLang, LLMConfig, LLMProvider, MockDatabaseConfig,
 };
+use crate::components::json_editor::JsonEditor;
 use crate::components::schema_editor::FullSchemaEditor;
 use crate::components::list_filter::{
     ListFilterBar, Pagination, TagBadges, TagInput,
@@ -597,7 +598,7 @@ pub fn ResourceForm() -> impl IntoView {
     let (uri, set_uri) = signal(String::new());
     let (description, set_description) = signal(String::new());
     let (mime_type, set_mime_type) = signal(String::new());
-    let (content, set_content) = signal(String::new());
+    let content = RwSignal::new(String::new());
     let (error, set_error) = signal(Option::<String>::None);
     let (saving, set_saving) = signal(false);
     let tags = RwSignal::new(Vec::<String>::new());
@@ -803,7 +804,7 @@ pub fn ResourceForm() -> impl IntoView {
                     uri=uri set_uri=set_uri
                     description=description set_description=set_description
                     mime_type=mime_type set_mime_type=set_mime_type
-                    content=content set_content=set_content
+                    content=content
                     output_schema=output_schema
                     set_output_schema=set_output_schema
                     mock_strategy=mock_strategy set_mock_strategy=set_mock_strategy
@@ -860,8 +861,7 @@ fn ResourceFormFields(
     set_description: WriteSignal<String>,
     mime_type: ReadSignal<String>,
     set_mime_type: WriteSignal<String>,
-    content: ReadSignal<String>,
-    set_content: WriteSignal<String>,
+    content: RwSignal<String>,
     // NOTE: tags moved out of this component to fix signal propagation issues
     output_schema: ReadSignal<serde_json::Value>,
     set_output_schema: WriteSignal<serde_json::Value>,
@@ -1012,7 +1012,7 @@ fn ResourceFormFields(
                 // Strategy-specific fields
                 <MockStrategyFields
                     strategy=mock_strategy
-                    content=content set_content=set_content
+                    content=content
                     template=mock_template set_template=set_mock_template
                     faker_type=mock_faker_type set_faker_type=set_mock_faker_type
                     state_key=mock_state_key set_state_key=set_mock_state_key
@@ -1038,8 +1038,7 @@ fn ResourceFormFields(
 #[component]
 fn MockStrategyFields(
     strategy: ReadSignal<String>,
-    content: ReadSignal<String>,
-    set_content: WriteSignal<String>,
+    content: RwSignal<String>,
     template: ReadSignal<String>,
     set_template: WriteSignal<String>,
     faker_type: ReadSignal<String>,
@@ -1076,20 +1075,13 @@ fn MockStrategyFields(
             let strat = strategy.get();
             match strat.as_str() {
                 "none" | "static" => view! {
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">"Static Content"</label>
-                        <textarea
-                            rows=6
-                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
-                            placeholder="Static content for this resource"
-                            prop:value=move || content.get()
-                            on:input=move |ev| {
-                                let target = ev.target().unwrap();
-                                let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
-                                set_content.set(textarea.value());
-                            }
-                        />
-                    </div>
+                    <JsonEditor
+                        value=content
+                        placeholder=r#"{"data": "static content"}"#.to_string()
+                        rows=8
+                        label="Static Content (JSON)".to_string()
+                        help_text="Enter the JSON content that will be returned for this resource".to_string()
+                    />
                 }.into_any(),
                 "template" => view! {
                     <div>
@@ -1378,7 +1370,7 @@ pub fn ResourceEditForm() -> impl IntoView {
     let (resource_uri, set_resource_uri) = signal(String::new());
     let (description, set_description) = signal(String::new());
     let (mime_type, set_mime_type) = signal(String::new());
-    let (content, set_content) = signal(String::new());
+    let content = RwSignal::new(String::new());
     let (error, set_error) = signal(Option::<String>::None);
     let (saving, set_saving) = signal(false);
     let (loading, set_loading) = signal(true);
@@ -1433,7 +1425,7 @@ pub fn ResourceEditForm() -> impl IntoView {
                     set_resource_uri.set(resource.uri.clone());
                     set_description.set(resource.description.clone().unwrap_or_default());
                     set_mime_type.set(resource.mime_type.clone().unwrap_or_default());
-                    set_content.set(resource.content.clone().unwrap_or_default());
+                    content.set(resource.content.clone().unwrap_or_default());
                     tags.set(resource.tags.clone());
 
                     // Load output schema directly
@@ -1713,7 +1705,7 @@ pub fn ResourceEditForm() -> impl IntoView {
                     uri=resource_uri set_uri=set_resource_uri
                     description=description set_description=set_description
                     mime_type=mime_type set_mime_type=set_mime_type
-                    content=content set_content=set_content
+                    content=content
                     output_schema=output_schema
                     set_output_schema=set_output_schema
                     mock_strategy=mock_strategy set_mock_strategy=set_mock_strategy

@@ -8,6 +8,7 @@ use crate::types::{
     Tool, MockConfig, MockStrategyType, StatefulConfig, StateOperation,
     FileConfig, ScriptLang, LLMConfig, LLMProvider, MockDatabaseConfig,
 };
+use crate::components::json_editor::JsonEditor;
 use crate::components::schema_editor::FullSchemaEditor;
 use crate::components::list_filter::{
     ListFilterBar, Pagination, TagBadges, TagInput,
@@ -758,7 +759,7 @@ pub fn ToolForm() -> impl IntoView {
     });
     let (input_schema, set_input_schema) = signal(default_schema.clone());
     let (output_schema, set_output_schema) = signal(default_schema);
-    let (static_response, set_static_response) = signal(String::new());
+    let static_response = RwSignal::new(String::new());
     let (error, set_error) = signal(Option::<String>::None);
     let (saving, set_saving) = signal(false);
 
@@ -905,7 +906,14 @@ pub fn ToolForm() -> impl IntoView {
         let static_resp: Option<serde_json::Value> = if static_response.get().is_empty() {
             None
         } else {
-            serde_json::from_str(&static_response.get()).ok()
+            match serde_json::from_str(&static_response.get()) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    set_error.set(Some(format!("Invalid JSON in static response: {}", e)));
+                    set_saving.set(false);
+                    return;
+                }
+            }
         };
 
         let tool = Tool {
@@ -1049,20 +1057,13 @@ pub fn ToolForm() -> impl IntoView {
                             let strategy = mock_strategy.get();
                             match strategy.as_str() {
                                 "none" | "static" => view! {
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-700 mb-1">"Static Response (JSON)"</label>
-                                        <textarea
-                                            rows=6
-                                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 font-mono text-sm"
-                                            placeholder=r#"{"result": "success", "data": {}}"#
-                                            prop:value=move || static_response.get()
-                                            on:input=move |ev| {
-                                                let target = ev.target().unwrap();
-                                                let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
-                                                set_static_response.set(textarea.value());
-                                            }
-                                        />
-                                    </div>
+                                    <JsonEditor
+                                        value=static_response
+                                        placeholder=r#"{"result": "success", "data": {}}"#.to_string()
+                                        rows=8
+                                        label="Static Response (JSON)".to_string()
+                                        help_text="Enter the JSON response that will be returned when this tool is called".to_string()
+                                    />
                                 }.into_any(),
                                 "template" => view! {
                                     <div>
@@ -1381,7 +1382,7 @@ pub fn ToolEditForm() -> impl IntoView {
     });
     let (input_schema, set_input_schema) = signal(default_schema.clone());
     let (output_schema, set_output_schema) = signal(default_schema);
-    let (static_response, set_static_response) = signal(String::new());
+    let static_response = RwSignal::new(String::new());
     let (error, set_error) = signal(Option::<String>::None);
     let (saving, set_saving) = signal(false);
     let (loading, set_loading) = signal(true);
@@ -1431,7 +1432,7 @@ pub fn ToolEditForm() -> impl IntoView {
                         set_output_schema.set(out_schema.clone());
                     }
                     if let Some(resp) = &tool.static_response {
-                        set_static_response.set(serde_json::to_string_pretty(resp).unwrap_or_default());
+                        static_response.set(serde_json::to_string_pretty(resp).unwrap_or_default());
                     }
 
                     // Load mock config
@@ -1641,7 +1642,14 @@ pub fn ToolEditForm() -> impl IntoView {
         let static_resp: Option<serde_json::Value> = if static_response.get().is_empty() {
             None
         } else {
-            serde_json::from_str(&static_response.get()).ok()
+            match serde_json::from_str(&static_response.get()) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    set_error.set(Some(format!("Invalid JSON in static response: {}", e)));
+                    set_saving.set(false);
+                    return;
+                }
+            }
         };
 
         let tool = Tool {
@@ -1798,20 +1806,13 @@ pub fn ToolEditForm() -> impl IntoView {
                                     let strategy = mock_strategy.get();
                                     match strategy.as_str() {
                                         "none" | "static" => view! {
-                                            <div>
-                                                <label class="block text-sm font-medium text-gray-700 mb-1">"Static Response (JSON)"</label>
-                                                <textarea
-                                                    rows=6
-                                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 font-mono text-sm"
-                                                    placeholder=r#"{"result": "success", "data": {}}"#
-                                                    prop:value=move || static_response.get()
-                                                    on:input=move |ev| {
-                                                        let target = ev.target().unwrap();
-                                                        let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
-                                                        set_static_response.set(textarea.value());
-                                                    }
-                                                />
-                                            </div>
+                                            <JsonEditor
+                                                value=static_response
+                                                placeholder=r#"{"result": "success", "data": {}}"#.to_string()
+                                                rows=8
+                                                label="Static Response (JSON)".to_string()
+                                                help_text="Enter the JSON response that will be returned when this tool is called".to_string()
+                                            />
                                         }.into_any(),
                                         "template" => view! {
                                             <div>

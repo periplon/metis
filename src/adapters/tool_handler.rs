@@ -110,6 +110,12 @@ impl ToolPort for InnerToolHandler {
         // Handle regular tools
         if let Some(config) = self.find_tool_config(name).await {
             if let Some(mock_config) = &config.mock {
+                // Special handling for Static strategy: use static_response if available
+                if matches!(mock_config.strategy, crate::config::MockStrategyType::Static) {
+                    if let Some(static_response) = &config.static_response {
+                        return Ok(static_response.clone());
+                    }
+                }
                 self.mock_strategy.generate(mock_config, Some(&args)).await
             } else if let Some(static_response) = &config.static_response {
                 Ok(static_response.clone())
@@ -533,6 +539,12 @@ impl ToolPort for BasicToolHandler {
         // Otherwise, treat as regular tool
         if let Some(config) = self.find_tool_config(name).await {
             if let Some(mock_config) = &config.mock {
+                // Special handling for Static strategy: use static_response if available
+                if matches!(mock_config.strategy, crate::config::MockStrategyType::Static) {
+                    if let Some(static_response) = &config.static_response {
+                        return Ok(static_response.clone());
+                    }
+                }
                 self.inner_handler
                     .mock_strategy
                     .generate(mock_config, Some(&args))
