@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.32.0 - 2025-12-01
+#### Features
+- **(ui)** standardize form layouts with consistent back navigation - (bbbeb78) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.31.0 - 2025-12-01
 #### Features
 - **(ui)** add tabbed settings interface and archetype counts - (f2f8ee0) - Joan Marc Carbo Arnau
