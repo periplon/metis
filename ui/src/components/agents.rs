@@ -1882,28 +1882,23 @@ pub fn AgentForm() -> impl IntoView {
     };
 
     view! {
-        <div class="p-6">
-            <div class="max-w-4xl mx-auto space-y-6">
-                <div class="flex justify-between items-center">
-                    <div>
-                        <h2 class="text-2xl font-bold text-gray-900 dark:text-white">"New Agent"</h2>
-                        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">"Create a new AI agent"</p>
-                    </div>
-                    <a
-                        href="/agents"
-                        class="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-                    >
-                        "Back to Agents"
-                    </a>
+        <div class="p-6 max-w-4xl mx-auto">
+            <div class="flex items-center gap-4 mb-6">
+                <a href="/agents" class="text-gray-500 hover:text-gray-700">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+                    </svg>
+                </a>
+                <h2 class="text-2xl font-bold text-gray-900 dark:text-white">"New Agent"</h2>
+            </div>
+
+            {move || error.get().map(|e| view! {
+                <div class="p-4 bg-red-50 dark:bg-red-900/20 rounded-md text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800 mb-6">
+                    {e}
                 </div>
+            })}
 
-                {move || error.get().map(|e| view! {
-                    <div class="p-4 bg-red-50 dark:bg-red-900/20 rounded-md text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800">
-                        {e}
-                    </div>
-                })}
-
-                <div class="bg-white dark:bg-gray-800 shadow rounded-lg border border-gray-200 dark:border-gray-700 p-6 space-y-6">
+            <div class="bg-white dark:bg-gray-800 shadow rounded-lg border border-gray-200 dark:border-gray-700 p-6 space-y-6">
                     // Basic Info
                     <div class="grid grid-cols-2 gap-4">
                         <div>
@@ -2441,7 +2436,6 @@ pub fn AgentForm() -> impl IntoView {
                     </div>
                 </div>
             </div>
-        </div>
     }
 }
 
@@ -2709,40 +2703,37 @@ pub fn AgentEditForm() -> impl IntoView {
     };
 
     view! {
-        <div class="p-6">
-            <div class="max-w-4xl mx-auto space-y-6">
-                <div class="flex justify-between items-center">
-                    <div>
-                        <h2 class="text-2xl font-bold text-gray-900 dark:text-white">"Edit Agent"</h2>
-                        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">"Update agent configuration"</p>
-                    </div>
-                    <a
-                        href="/agents"
-                        class="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-                    >
-                        "Back to Agents"
-                    </a>
+        <div class="p-6 max-w-4xl mx-auto">
+            <div class="flex items-center gap-4 mb-6">
+                <a href="/agents" class="text-gray-500 hover:text-gray-700">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
+                    </svg>
+                </a>
+                <h2 class="text-2xl font-bold">"Edit Agent"</h2>
+            </div>
+
+            // Loading spinner
+            <div
+                class="flex items-center justify-center py-12"
+                style=move || if loading.get() { "display: flex" } else { "display: none" }
+            >
+                <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+                <span class="ml-3 text-gray-500">"Loading agent..."</span>
+            </div>
+
+            // Form - always rendered but hidden while loading
+            {move || error.get().map(|e| view! {
+                <div class="p-4 bg-red-50 dark:bg-red-900/20 rounded-md text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800 mb-6">
+                    {e}
                 </div>
+            })}
 
-                {move || error.get().map(|e| view! {
-                    <div class="p-4 bg-red-50 dark:bg-red-900/20 rounded-md text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800">
-                        {e}
-                    </div>
-                })}
-
-                // Loading spinner
-                <div
-                    class="text-center py-8"
-                    style=move || if loading.get() { "display: block" } else { "display: none" }
-                >
-                    "Loading..."
-                </div>
-
-                // Form content - always rendered but hidden while loading
-                <div
-                    class="bg-white dark:bg-gray-800 shadow rounded-lg border border-gray-200 dark:border-gray-700 p-6 space-y-6"
-                    style=move || if loading.get() { "display: none" } else { "display: block" }
-                >
+            // Form - always rendered but hidden while loading
+            <div
+                class="bg-white dark:bg-gray-800 rounded-lg shadow p-6"
+                style=move || if loading.get() { "display: none" } else { "display: block" }
+            >
                         // Basic Info
                         <div class="grid grid-cols-2 gap-4">
                             <div>
@@ -3172,6 +3163,5 @@ pub fn AgentEditForm() -> impl IntoView {
                         </div>
                     </div>
             </div>
-        </div>
     }
 }

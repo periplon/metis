@@ -931,19 +931,17 @@ pub fn WorkflowForm() -> impl IntoView {
     };
 
     view! {
-        <div class="p-6">
-            <div class="mb-6">
-                <a href="/workflows" class="text-orange-500 hover:underline flex items-center gap-1">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+        <div class="p-6 max-w-4xl mx-auto">
+            <div class="flex items-center gap-4 mb-6">
+                <a href="/workflows" class="text-gray-500 hover:text-gray-700">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
                     </svg>
-                    "Back to Workflows"
                 </a>
+                <h2 class="text-2xl font-bold">"New Workflow"</h2>
             </div>
 
-            <h2 class="text-2xl font-bold mb-6">"New Workflow"</h2>
-
-            <form on:submit=on_submit class="bg-white rounded-lg shadow p-6 max-w-2xl">
+            <form on:submit=on_submit class="bg-white rounded-lg shadow p-6">
                 {move || error.get().map(|e| view! {
                     <div class="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
                         {e}
@@ -1236,17 +1234,15 @@ pub fn WorkflowEditForm() -> impl IntoView {
     };
 
     view! {
-        <div class="p-6">
-            <div class="mb-6">
-                <a href="/workflows" class="text-orange-500 hover:underline flex items-center gap-1">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+        <div class="p-6 max-w-4xl mx-auto">
+            <div class="flex items-center gap-4 mb-6">
+                <a href="/workflows" class="text-gray-500 hover:text-gray-700">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"/>
                     </svg>
-                    "Back to Workflows"
                 </a>
+                <h2 class="text-2xl font-bold">"Edit Workflow"</h2>
             </div>
-
-            <h2 class="text-2xl font-bold mb-6">"Edit Workflow"</h2>
 
             // Loading spinner
             <div
@@ -1260,7 +1256,7 @@ pub fn WorkflowEditForm() -> impl IntoView {
             // Form - always rendered but hidden while loading
             <form
                 on:submit=on_submit
-                class="bg-white rounded-lg shadow p-6 max-w-2xl"
+                class="bg-white rounded-lg shadow p-6"
                 style=move || if loading.get() { "display: none" } else { "display: block" }
             >
                         {move || error.get().map(|e| view! {
