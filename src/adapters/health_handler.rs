@@ -108,6 +108,8 @@ mod tests {
             mcp_servers: vec![],
             secrets: Default::default(),
             schemas: vec![],
+            data_lakes: vec![],
+            database: None,
         };
         let handler = HealthHandler::new(Arc::new(RwLock::new(settings)));
 
@@ -137,6 +139,8 @@ mod tests {
             mcp_servers: vec![],
             secrets: Default::default(),
             schemas: vec![],
+            data_lakes: vec![],
+            database: None,
         };
         let handler = HealthHandler::new(Arc::new(RwLock::new(settings)));
 
@@ -167,6 +171,8 @@ mod tests {
             mcp_servers: vec![],
             secrets: Default::default(),
             schemas: vec![],
+            data_lakes: vec![],
+            database: None,
         };
         let handler = HealthHandler::new(Arc::new(RwLock::new(settings)));
 

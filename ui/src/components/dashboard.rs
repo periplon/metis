@@ -207,6 +207,18 @@ fn StatsGrid(overview: ConfigOverview) -> impl IntoView {
                 color="indigo"
                 href="/agents"
             />
+            <StatCard
+                title="Schemas"
+                count=overview.schemas_count
+                color="teal"
+                href="/schemas"
+            />
+            <StatCard
+                title="Data Lakes"
+                count=overview.data_lakes_count
+                color="cyan"
+                href="/data-lakes"
+            />
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
@@ -242,6 +254,8 @@ fn StatCard(
         "purple" => "bg-purple-50 border-purple-200",
         "orange" => "bg-orange-50 border-orange-200",
         "indigo" => "bg-indigo-50 border-indigo-200",
+        "teal" => "bg-teal-50 border-teal-200",
+        "cyan" => "bg-cyan-50 border-cyan-200",
         _ => "bg-gray-50 border-gray-200",
     };
 
@@ -251,6 +265,8 @@ fn StatCard(
         "purple" => "text-purple-600",
         "orange" => "text-orange-600",
         "indigo" => "text-indigo-600",
+        "teal" => "text-teal-600",
+        "cyan" => "text-cyan-600",
         _ => "text-gray-600",
     };
 

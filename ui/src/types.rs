@@ -31,6 +31,10 @@ pub struct ConfigOverview {
     pub config_file_loaded: bool,
     #[serde(default)]
     pub mcp_servers_count: usize,
+    #[serde(default)]
+    pub schemas_count: usize,
+    #[serde(default)]
+    pub data_lakes_count: usize,
     /// Version number for optimistic locking
     #[serde(default)]
     pub config_version: u64,

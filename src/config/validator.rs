@@ -235,6 +235,8 @@ mod tests {
             mcp_servers: vec![],
             secrets: Default::default(),
             schemas: vec![],
+            data_lakes: vec![],
+            database: None,
         };
 
         let result = ConfigValidator::validate(&settings);
@@ -263,6 +265,8 @@ mod tests {
             mcp_servers: vec![],
             secrets: Default::default(),
             schemas: vec![],
+            data_lakes: vec![],
+            database: None,
         };
 
         let result = ConfigValidator::validate(&settings);
@@ -290,6 +294,7 @@ mod tests {
                     output_schema: None,
                     content: Some("content".to_string()),
                     mock: None,
+                    tags: vec![],
                 },
                 ResourceConfig {
                     uri: "test://same".to_string(),
@@ -299,6 +304,7 @@ mod tests {
                     output_schema: None,
                     content: Some("content".to_string()),
                     mock: None,
+                    tags: vec![],
                 },
             ],
             resource_templates: vec![],
@@ -312,6 +318,8 @@ mod tests {
             mcp_servers: vec![],
             secrets: Default::default(),
             schemas: vec![],
+            data_lakes: vec![],
+            database: None,
         };
 
         let result = ConfigValidator::validate(&settings);

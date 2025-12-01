@@ -52,7 +52,7 @@ pub fn Config() -> impl IntoView {
                                 view! {
                                     <div class="space-y-6">
                                         <NewConfigBanner />
-                                        <SecretsEditor />
+
                                         <SettingsEditorCard initial_settings=server_settings />
                                     </div>
                                 }.into_any()
@@ -61,7 +61,7 @@ pub fn Config() -> impl IntoView {
                                 view! {
                                     <div class="space-y-6">
                                         <ServerConfigCard overview=overview.clone() />
-                                        <SecretsEditor />
+
                                         <SettingsEditorCard initial_settings=server_settings />
                                         <QuickLinksCard overview=overview />
                                     </div>
@@ -100,7 +100,7 @@ pub fn Config() -> impl IntoView {
                                 view! {
                                     <div class="space-y-6">
                                         <NewConfigBanner />
-                                        <SecretsEditor />
+
                                         <SettingsEditorCard initial_settings=default_settings />
                                     </div>
                                 }.into_any()
@@ -109,7 +109,7 @@ pub fn Config() -> impl IntoView {
                                 view! {
                                     <div class="space-y-6">
                                         <ServerConfigCard overview=overview.clone() />
-                                        <SecretsEditor />
+
                                         <FeaturesCard overview=overview.clone() />
                                         <QuickLinksCard overview=overview />
                                     </div>
@@ -257,6 +257,9 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
 
     let (saving, set_saving) = signal(false);
     let (message, set_message) = signal(Option::<(String, bool)>::None);
+
+    // Tab state
+    let (active_tab, set_active_tab) = signal("auth");
 
     let on_save = move |_| {
         set_saving.set(true);
@@ -781,9 +784,80 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
                 }
             })}
 
-            <div class="p-6 space-y-8">
+            // Tabs
+            <div class="px-6 pt-4 border-b border-gray-200 dark:border-gray-700">
+                <nav class="-mb-px flex space-x-8" aria-label="Tabs">
+                    <button
+                        class=move || format!(
+                            "whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm {}",
+                            if active_tab.get() == "auth" {
+                                "border-blue-500 text-blue-600"
+                            } else {
+                                "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                            }
+                        )
+                        on:click=move |_| set_active_tab.set("auth")
+                    >
+                        "Authentication"
+                    </button>
+                    <button
+                        class=move || format!(
+                            "whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm {}",
+                            if active_tab.get() == "rate_limit" {
+                                "border-green-500 text-green-600"
+                            } else {
+                                "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                            }
+                        )
+                        on:click=move |_| set_active_tab.set("rate_limit")
+                    >
+                        "Rate Limiting"
+                    </button>
+                    <button
+                        class=move || format!(
+                            "whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm {}",
+                            if active_tab.get() == "s3" {
+                                "border-purple-500 text-purple-600"
+                            } else {
+                                "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                            }
+                        )
+                        on:click=move |_| set_active_tab.set("s3")
+                    >
+                        "S3 Storage"
+                    </button>
+                    <button
+                        class=move || format!(
+                            "whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm {}",
+                            if active_tab.get() == "database" {
+                                "border-cyan-500 text-cyan-600"
+                            } else {
+                                "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                            }
+                        )
+                        on:click=move |_| set_active_tab.set("database")
+                    >
+                        "Database"
+                    </button>
+                    <button
+                        class=move || format!(
+                            "whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm {}",
+                            if active_tab.get() == "secrets" {
+                                "border-amber-500 text-amber-600"
+                            } else {
+                                "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                            }
+                        )
+                        on:click=move |_| set_active_tab.set("secrets")
+                    >
+                        "Secrets"
+                    </button>
+                </nav>
+            </div>
+
+            <div class="p-6">
                 // Authentication Section
-                <div>
+                <div class=move || if active_tab.get() == "auth" { "block" } else { "hidden" }>
                     <h4 class="text-md font-semibold text-gray-700 mb-4 flex items-center">
                         <span class="w-2 h-2 bg-blue-500 rounded-full mr-2"></span>
                         "Authentication"
@@ -1048,7 +1122,7 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
                 </div>
 
                 // Rate Limiting Section
-                <div>
+                <div class=move || if active_tab.get() == "rate_limit" { "block" } else { "hidden" }>
                     <h4 class="text-md font-semibold text-gray-700 mb-4 flex items-center">
                         <span class="w-2 h-2 bg-green-500 rounded-full mr-2"></span>
                         "Rate Limiting"
@@ -1105,7 +1179,7 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
                 </div>
 
                 // S3 Configuration Section
-                <div>
+                <div class=move || if active_tab.get() == "s3" { "block" } else { "hidden" }>
                     <h4 class="text-md font-semibold text-gray-700 mb-4 flex items-center">
                         <span class="w-2 h-2 bg-purple-500 rounded-full mr-2"></span>
                         "S3 Storage"
@@ -1208,7 +1282,7 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
                 </div>
 
                 // Database Configuration Section
-                <div>
+                <div class=move || if active_tab.get() == "database" { "block" } else { "hidden" }>
                     <h4 class="text-md font-semibold text-gray-700 mb-4 flex items-center">
                         <span class="w-2 h-2 bg-cyan-500 rounded-full mr-2"></span>
                         "Database Persistence"
@@ -1309,6 +1383,17 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
                                 </p>
                             </div>
                         </div>
+                    </div>
+                </div>
+
+                // Secrets Section
+                <div class=move || if active_tab.get() == "secrets" { "block" } else { "hidden" }>
+                    <h4 class="text-md font-semibold text-gray-700 mb-4 flex items-center">
+                        <span class="w-2 h-2 bg-amber-500 rounded-full mr-2"></span>
+                        "API Keys & Credentials"
+                    </h4>
+                    <div class="pl-4">
+                        <SecretsEditor />
                     </div>
                 </div>
             </div>
@@ -1412,6 +1497,18 @@ fn QuickLinksCard(overview: ConfigOverview) -> impl IntoView {
                         count=overview.agents_count
                         color="indigo"
                     />
+                    <QuickLinkItem
+                        href="/schemas"
+                        label="Schemas"
+                        count=overview.schemas_count
+                        color="teal"
+                    />
+                    <QuickLinkItem
+                        href="/data-lakes"
+                        label="Data Lakes"
+                        count=overview.data_lakes_count
+                        color="cyan"
+                    />
                 </div>
             </div>
         </div>
@@ -1491,6 +1588,8 @@ fn QuickLinkItem(
         "purple" => ("bg-purple-50 hover:bg-purple-100 border-purple-200", "text-purple-600"),
         "orange" => ("bg-orange-50 hover:bg-orange-100 border-orange-200", "text-orange-600"),
         "indigo" => ("bg-indigo-50 hover:bg-indigo-100 border-indigo-200", "text-indigo-600"),
+        "teal" => ("bg-teal-50 hover:bg-teal-100 border-teal-200", "text-teal-600"),
+        "cyan" => ("bg-cyan-50 hover:bg-cyan-100 border-cyan-200", "text-cyan-600"),
         _ => ("bg-gray-50 hover:bg-gray-100 border-gray-200", "text-gray-600"),
     };
 

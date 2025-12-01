@@ -16,6 +16,7 @@ use tokio::sync::RwLock;
         output_schema: None,
         content: Some("Static Content".to_string()),
         mock: None,
+        tags: vec![],
     }];
 
     let settings = Settings {
@@ -35,6 +36,8 @@ use tokio::sync::RwLock;
         mcp_servers: vec![],
         secrets: Default::default(),
         schemas: vec![],
+        data_lakes: vec![],
+        database: None,
     };
     let handler = InMemoryResourceHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -65,6 +68,7 @@ use tokio::sync::RwLock;
             llm: None,
             database: None,
         }),
+        tags: vec![],
     }];
 
     let settings = Settings {
@@ -84,6 +88,8 @@ use tokio::sync::RwLock;
         mcp_servers: vec![],
         secrets: Default::default(),
         schemas: vec![],
+        data_lakes: vec![],
+        database: None,
     };
     let handler = InMemoryResourceHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -112,6 +118,8 @@ use tokio::sync::RwLock;
         mcp_servers: vec![],
         secrets: Default::default(),
         schemas: vec![],
+        data_lakes: vec![],
+        database: None,
     };
     let handler = InMemoryResourceHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -130,6 +138,7 @@ use tokio::sync::RwLock;
             output_schema: None,
             content: None,
             mock: None,
+            tags: vec![],
         },
         ResourceConfig {
             uri: "file:///2.txt".to_string(),
@@ -139,6 +148,7 @@ use tokio::sync::RwLock;
             output_schema: None,
             content: None,
             mock: None,
+            tags: vec![],
         },
     ];
 
@@ -159,6 +169,8 @@ use tokio::sync::RwLock;
         mcp_servers: vec![],
         secrets: Default::default(),
         schemas: vec![],
+        data_lakes: vec![],
+        database: None,
     };
     let handler = InMemoryResourceHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 

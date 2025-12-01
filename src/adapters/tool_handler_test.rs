@@ -17,6 +17,7 @@ async fn test_execute_tool_static() {
         output_schema: None,
         static_response: Some(json!({ "result": "success" })),
         mock: None,
+        tags: vec![],
     }];
 
     let settings = Settings {
@@ -36,6 +37,8 @@ async fn test_execute_tool_static() {
         mcp_servers: vec![],
         secrets: Default::default(),
         schemas: vec![],
+        data_lakes: vec![],
+        database: None,
     };
     let handler = BasicToolHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -66,6 +69,7 @@ async fn test_execute_tool_mock() {
             llm: None,
             database: None,
         }),
+        tags: vec![],
     }];
 
     let settings = Settings {
@@ -85,6 +89,8 @@ async fn test_execute_tool_mock() {
         mcp_servers: vec![],
         secrets: Default::default(),
         schemas: vec![],
+        data_lakes: vec![],
+        database: None,
     };
     let handler = BasicToolHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -104,6 +110,7 @@ async fn test_execute_tool_echo_fallback() {
         output_schema: None,
         static_response: None,
         mock: None,
+        tags: vec![],
     }];
 
     let settings = Settings {
@@ -123,6 +130,8 @@ async fn test_execute_tool_echo_fallback() {
         mcp_servers: vec![],
         secrets: Default::default(),
         schemas: vec![],
+        data_lakes: vec![],
+        database: None,
     };
     let handler = BasicToolHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -152,6 +161,8 @@ async fn test_execute_tool_not_found() {
         mcp_servers: vec![],
         secrets: Default::default(),
         schemas: vec![],
+        data_lakes: vec![],
+        database: None,
     };
     let handler = BasicToolHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -170,6 +181,7 @@ async fn test_list_tools() {
             output_schema: None,
             static_response: None,
             mock: None,
+            tags: vec![],
         },
         ToolConfig {
             name: "t2".to_string(),
@@ -178,6 +190,7 @@ async fn test_list_tools() {
             output_schema: None,
             static_response: None,
             mock: None,
+            tags: vec![],
         },
     ];
 
@@ -198,6 +211,8 @@ async fn test_list_tools() {
         mcp_servers: vec![],
         secrets: Default::default(),
         schemas: vec![],
+        data_lakes: vec![],
+        database: None,
     };
     let handler = BasicToolHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 

@@ -86,6 +86,7 @@ async fn test_simple_workflow() {
             },
         ],
         on_error: ErrorStrategy::Fail,
+        tags: vec![],
     };
 
     let input = json!({"x": 42});
@@ -131,6 +132,7 @@ async fn test_workflow_with_condition() {
             },
         ],
         on_error: ErrorStrategy::Fail,
+        tags: vec![],
     };
 
     // With condition false
@@ -163,6 +165,7 @@ async fn test_workflow_with_loop() {
             on_error: ErrorStrategy::Fail,
         }],
         on_error: ErrorStrategy::Fail,
+        tags: vec![],
     };
 
     let input = json!({
@@ -202,6 +205,7 @@ async fn test_workflow_parallel_loop() {
             on_error: ErrorStrategy::Fail,
         }],
         on_error: ErrorStrategy::Fail,
+        tags: vec![],
     };
 
     let input = json!({
@@ -250,6 +254,7 @@ async fn test_workflow_error_continue() {
             },
         ],
         on_error: ErrorStrategy::Continue,
+        tags: vec![],
     };
 
     let result = engine.execute(&workflow, json!({})).await.unwrap();
@@ -285,6 +290,7 @@ async fn test_workflow_error_fallback() {
         on_error: ErrorStrategy::Fallback {
             value: json!({"default": true}),
         },
+        tags: vec![],
     };
 
     let result = engine.execute(&workflow, json!({})).await.unwrap();
@@ -328,6 +334,7 @@ async fn test_workflow_data_passing() {
             },
         ],
         on_error: ErrorStrategy::Fail,
+        tags: vec![],
     };
 
     let result = engine.execute(&workflow, json!({"value": "test"})).await.unwrap();
@@ -359,6 +366,7 @@ async fn test_empty_loop() {
             on_error: ErrorStrategy::Fail,
         }],
         on_error: ErrorStrategy::Fail,
+        tags: vec![],
     };
 
     let result = engine.execute(&workflow, json!({"items": []})).await.unwrap();

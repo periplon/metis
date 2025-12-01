@@ -199,6 +199,8 @@ pub struct ConfigOverview {
     pub s3_enabled: bool,
     pub config_file_loaded: bool,
     pub mcp_servers_count: usize,
+    pub schemas_count: usize,
+    pub data_lakes_count: usize,
     /// Version number for optimistic locking (incremented on each save)
     pub config_version: u64,
 }
@@ -631,6 +633,8 @@ pub async fn get_config_overview(
         s3_enabled: settings.s3.as_ref().is_some_and(|s| s.enabled),
         config_file_loaded,
         mcp_servers_count: settings.mcp_servers.len(),
+        schemas_count: settings.schemas.len(),
+        data_lakes_count: settings.data_lakes.len(),
         config_version: settings.version,
     };
 

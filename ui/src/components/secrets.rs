@@ -117,7 +117,7 @@ pub fn SecretsEditor() -> impl IntoView {
     };
 
     view! {
-        <div class="bg-white rounded-lg shadow p-6">
+        <div class="">
             <div class="flex justify-between items-center mb-4">
                 <div>
                     <h2 class="text-xl font-semibold text-gray-900">"API Keys & Credentials"</h2>

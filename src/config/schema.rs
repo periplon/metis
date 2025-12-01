@@ -142,6 +142,7 @@ mod tests {
                     },
                     "required": ["name", "email"]
                 }),
+                tags: vec![],
             },
             SchemaConfig {
                 name: "Address".to_string(),
@@ -153,6 +154,7 @@ mod tests {
                         "city": { "type": "string" }
                     }
                 }),
+                tags: vec![],
             },
         ]
     }
