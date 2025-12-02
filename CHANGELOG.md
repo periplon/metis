@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.34.0 - 2025-12-02
+#### Features
+- add schema-driven faker generation and schema form UI component - (85d5fa7) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.33.0 - 2025-12-01
 #### Features
 - **(ui)** add JSON editor with syntax highlighting for static responses - (5835d88) - Joan Marc Carbo Arnau
