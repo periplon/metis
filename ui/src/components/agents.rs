@@ -627,6 +627,14 @@ enum ViewMode {
     Card,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum AgentFormTab {
+    Basic,
+    LlmConfig,
+    Prompt,
+    Schema,
+}
+
 /// Chat message for the agent test interface
 #[derive(Clone, Debug)]
 struct ChatMessage {
@@ -1701,6 +1709,9 @@ pub fn AgentForm() -> impl IntoView {
     // Help popup for agent type
     let (show_type_help, set_show_type_help) = signal(false);
 
+    // Tab state
+    let (active_tab, set_active_tab) = signal(AgentFormTab::Basic);
+
     // Artifacts configuration (tools, agents, workflows, resources for ReAct agents)
     let (all_tools, set_all_tools) = signal(Vec::<crate::types::Tool>::new());
     let (all_agents, set_all_agents) = signal(Vec::<Agent>::new());
@@ -1902,7 +1913,92 @@ pub fn AgentForm() -> impl IntoView {
                 </div>
             })}
 
-            <div class="bg-white dark:bg-gray-800 shadow rounded-lg border border-gray-200 dark:border-gray-700 p-6 space-y-6">
+            <div class="bg-white dark:bg-gray-800 shadow rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+                // Tab Navigation
+                <div class="border-b border-gray-200 dark:border-gray-700 mb-6">
+                    <nav class="flex -mb-px space-x-8">
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == AgentFormTab::Basic {
+                                    "border-blue-500 text-blue-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(AgentFormTab::Basic)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                                "Basic"
+                            </span>
+                        </button>
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == AgentFormTab::LlmConfig {
+                                    "border-blue-500 text-blue-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(AgentFormTab::LlmConfig)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                                </svg>
+                                "LLM Config"
+                            </span>
+                        </button>
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == AgentFormTab::Prompt {
+                                    "border-blue-500 text-blue-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(AgentFormTab::Prompt)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+                                </svg>
+                                "Prompt"
+                            </span>
+                        </button>
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == AgentFormTab::Schema {
+                                    "border-blue-500 text-blue-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(AgentFormTab::Schema)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>
+                                </svg>
+                                "Schema"
+                            </span>
+                        </button>
+                    </nav>
+                </div>
+
+                // Basic Tab
+                <div style=move || if active_tab.get() == AgentFormTab::Basic { "display: block" } else { "display: none" }>
+                    <div class="space-y-6">
                     // Basic Info
                     <div class="grid grid-cols-2 gap-4">
                         <div>
@@ -2198,9 +2294,14 @@ pub fn AgentForm() -> impl IntoView {
                             view! { <div></div> }.into_any()
                         }
                     }}
+                    </div>
+                </div>
 
+                // LLM Config Tab
+                <div style=move || if active_tab.get() == AgentFormTab::LlmConfig { "display: block" } else { "display: none" }>
+                    <div class="space-y-6">
                     // LLM Configuration
-                    <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
+                    <div>
                         <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">"LLM Configuration"</h3>
                         <div class="grid grid-cols-2 gap-4">
                             <div>
@@ -2341,9 +2442,14 @@ pub fn AgentForm() -> impl IntoView {
                             </div>
                         </div>
                     </div>
+                    </div>
+                </div>
 
+                // Prompt Tab
+                <div style=move || if active_tab.get() == AgentFormTab::Prompt { "display: block" } else { "display: none" }>
+                    <div class="space-y-6">
                     // System Prompt
-                    <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
+                    <div>
                         <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">"System Prompt"</h3>
                         <textarea
                             rows="6"
@@ -2353,9 +2459,14 @@ pub fn AgentForm() -> impl IntoView {
                             on:input=move |ev| set_system_prompt.set(event_target_value(&ev))
                         />
                     </div>
+                    </div>
+                </div>
 
+                // Schema Tab
+                <div style=move || if active_tab.get() == AgentFormTab::Schema { "display: block" } else { "display: none" }>
+                    <div class="space-y-6">
                     // Schema Configuration
-                    <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
+                    <div>
                         <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">"Schema Configuration"</h3>
                         <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">
                             "Define JSON schemas for structured input/output when agent is exposed as a tool. "
@@ -2421,9 +2532,11 @@ pub fn AgentForm() -> impl IntoView {
                             />
                         </div>
                     </div>
+                    </div>
+                </div>
 
-                    // Save button
-                    <div class="border-t border-gray-200 dark:border-gray-700 pt-6 flex justify-end space-x-4">
+                // Save button (outside tabs)
+                <div class="border-t border-gray-200 dark:border-gray-700 pt-6 mt-6 flex justify-end space-x-4">
                         <a
                             href="/agents"
                             class="px-4 py-2 text-gray-700 bg-gray-200 rounded-md hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-300"
@@ -2490,6 +2603,9 @@ pub fn AgentEditForm() -> impl IntoView {
 
     // Help popup for agent type
     let (show_type_help, set_show_type_help) = signal(false);
+
+    // Tab state
+    let (active_tab, set_active_tab) = signal(AgentFormTab::Basic);
 
     // Fetch models function
     let fetch_models = move |prov: AgentLlmProvider, base: Option<String>, api_env: Option<String>| {
@@ -2738,6 +2854,91 @@ pub fn AgentEditForm() -> impl IntoView {
                 class="bg-white dark:bg-gray-800 rounded-lg shadow p-6"
                 style=move || if loading.get() { "display: none" } else { "display: block" }
             >
+                // Tab Navigation
+                <div class="border-b border-gray-200 dark:border-gray-700 mb-6">
+                    <nav class="flex -mb-px space-x-8">
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == AgentFormTab::Basic {
+                                    "border-blue-500 text-blue-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(AgentFormTab::Basic)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                                "Basic"
+                            </span>
+                        </button>
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == AgentFormTab::LlmConfig {
+                                    "border-blue-500 text-blue-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(AgentFormTab::LlmConfig)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                                </svg>
+                                "LLM Config"
+                            </span>
+                        </button>
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == AgentFormTab::Prompt {
+                                    "border-blue-500 text-blue-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(AgentFormTab::Prompt)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+                                </svg>
+                                "Prompt"
+                            </span>
+                        </button>
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == AgentFormTab::Schema {
+                                    "border-blue-500 text-blue-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(AgentFormTab::Schema)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>
+                                </svg>
+                                "Schema"
+                            </span>
+                        </button>
+                    </nav>
+                </div>
+
+                // Basic Tab
+                <div style=move || if active_tab.get() == AgentFormTab::Basic { "display: block" } else { "display: none" }>
+                    <div class="space-y-6">
                         // Basic Info
                         <div class="grid grid-cols-2 gap-4">
                             <div>
@@ -2925,9 +3126,14 @@ pub fn AgentEditForm() -> impl IntoView {
                                 view! { <span></span> }.into_any()
                             }
                         }}
+                    </div>
+                </div>
 
+                // LLM Config Tab
+                <div style=move || if active_tab.get() == AgentFormTab::LlmConfig { "display: block" } else { "display: none" }>
+                    <div class="space-y-6">
                         // LLM Configuration
-                        <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
+                        <div>
                             <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">"LLM Configuration"</h3>
                             <div class="grid grid-cols-2 gap-4">
                                 <div>
@@ -3068,9 +3274,14 @@ pub fn AgentEditForm() -> impl IntoView {
                                 </div>
                             </div>
                         </div>
+                    </div>
+                </div>
 
+                // Prompt Tab
+                <div style=move || if active_tab.get() == AgentFormTab::Prompt { "display: block" } else { "display: none" }>
+                    <div class="space-y-6">
                         // System Prompt
-                        <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
+                        <div>
                             <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">"System Prompt"</h3>
                             <textarea
                                 rows="6"
@@ -3080,9 +3291,14 @@ pub fn AgentEditForm() -> impl IntoView {
                                 on:input=move |ev| set_system_prompt.set(event_target_value(&ev))
                             />
                         </div>
+                    </div>
+                </div>
 
+                // Schema Tab
+                <div style=move || if active_tab.get() == AgentFormTab::Schema { "display: block" } else { "display: none" }>
+                    <div class="space-y-6">
                         // Schema Configuration
-                        <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
+                        <div>
                             <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">"Schema Configuration"</h3>
                             <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">
                                 "Define JSON schemas for structured input/output when agent is exposed as a tool. "
@@ -3148,24 +3364,26 @@ pub fn AgentEditForm() -> impl IntoView {
                                 />
                             </div>
                         </div>
-
-                        // Save button
-                        <div class="border-t border-gray-200 dark:border-gray-700 pt-6 flex justify-end space-x-4">
-                            <a
-                                href="/agents"
-                                class="px-4 py-2 text-gray-700 bg-gray-200 rounded-md hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-300"
-                            >
-                                "Cancel"
-                            </a>
-                            <button
-                                class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
-                                on:click=on_save
-                                disabled=saving
-                            >
-                                {move || if saving.get() { "Saving..." } else { "Save Changes" }}
-                            </button>
-                        </div>
                     </div>
+                </div>
+
+                // Save button (outside tabs)
+                <div class="border-t border-gray-200 dark:border-gray-700 pt-6 mt-6 flex justify-end space-x-4">
+                    <a
+                        href="/agents"
+                        class="px-4 py-2 text-gray-700 bg-gray-200 rounded-md hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-300"
+                    >
+                        "Cancel"
+                    </a>
+                    <button
+                        class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+                        on:click=on_save
+                        disabled=saving
+                    >
+                        {move || if saving.get() { "Saving..." } else { "Save Changes" }}
+                    </button>
+                </div>
             </div>
+        </div>
     }
 }

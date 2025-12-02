@@ -27,6 +27,12 @@ enum ViewMode {
     Card,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum SchemaFormTab {
+    Basic,
+    Schema,
+}
+
 #[component]
 pub fn Schemas() -> impl IntoView {
     let (view_mode, set_view_mode) = signal(ViewMode::Table);
@@ -381,6 +387,9 @@ pub fn SchemaForm() -> impl IntoView {
     let (error, set_error) = signal(Option::<String>::None);
     let (show_metadata, set_show_metadata) = signal(false);
 
+    // Tab state
+    let (active_tab, set_active_tab) = signal(SchemaFormTab::Basic);
+
     let on_submit = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
         set_saving.set(true);
@@ -443,6 +452,52 @@ pub fn SchemaForm() -> impl IntoView {
             </Show>
 
             <form on:submit=on_submit class="bg-white rounded-lg shadow p-6">
+                // Tab Navigation
+                <div class="border-b border-gray-200 dark:border-gray-700 mb-6">
+                    <nav class="flex -mb-px space-x-8">
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == SchemaFormTab::Basic {
+                                    "border-teal-500 text-teal-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(SchemaFormTab::Basic)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                                "Basic"
+                            </span>
+                        </button>
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == SchemaFormTab::Schema {
+                                    "border-teal-500 text-teal-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(SchemaFormTab::Schema)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>
+                                </svg>
+                                "Schema"
+                            </span>
+                        </button>
+                    </nav>
+                </div>
+
+                // Basic Tab
+                <div style=move || if active_tab.get() == SchemaFormTab::Basic { "display: block" } else { "display: none" }>
                 <div class="space-y-6">
                     // Name
                     <div>
@@ -478,7 +533,12 @@ pub fn SchemaForm() -> impl IntoView {
 
                     // Tags
                     <TagInput tags=tags />
+                </div>
+                </div>
 
+                // Schema Tab
+                <div style=move || if active_tab.get() == SchemaFormTab::Schema { "display: block" } else { "display: none" }>
+                <div class="space-y-6">
                     // Mode toggle
                     <div class="flex items-center gap-4 border-b border-gray-200 pb-4">
                         <span class="text-sm font-medium text-gray-700">"Edit Mode:"</span>
@@ -626,8 +686,9 @@ pub fn SchemaForm() -> impl IntoView {
                         </Show>
                     </div>
                 </div>
+                </div>
 
-                // Submit button
+                // Submit button (outside tabs)
                 <div class="flex justify-end gap-3 mt-6 pt-6 border-t border-gray-200">
                     <A href="/schemas" attr:class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
                         "Cancel"
@@ -663,6 +724,9 @@ pub fn SchemaEditForm() -> impl IntoView {
     let (error, set_error) = signal(Option::<String>::None);
     let (loaded, set_loaded) = signal(false);
     let (show_metadata, set_show_metadata) = signal(false);
+
+    // Tab state
+    let (active_tab, set_active_tab) = signal(SchemaFormTab::Basic);
 
     // Load existing schema
     Effect::new(move |_| {
@@ -770,6 +834,52 @@ pub fn SchemaEditForm() -> impl IntoView {
                 class="bg-white rounded-lg shadow p-6"
                 style=move || if loaded.get() { "display: block" } else { "display: none" }
             >
+                // Tab Navigation
+                <div class="border-b border-gray-200 dark:border-gray-700 mb-6">
+                    <nav class="flex -mb-px space-x-8">
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == SchemaFormTab::Basic {
+                                    "border-teal-500 text-teal-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(SchemaFormTab::Basic)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                                "Basic"
+                            </span>
+                        </button>
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == SchemaFormTab::Schema {
+                                    "border-teal-500 text-teal-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(SchemaFormTab::Schema)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>
+                                </svg>
+                                "Schema"
+                            </span>
+                        </button>
+                    </nav>
+                </div>
+
+                // Basic Tab
+                <div style=move || if active_tab.get() == SchemaFormTab::Basic { "display: block" } else { "display: none" }>
                 <div class="space-y-6">
                     // Name
                         <div>
@@ -802,7 +912,12 @@ pub fn SchemaEditForm() -> impl IntoView {
 
                         // Tags
                         <TagInput tags=tags />
+                </div>
+                </div>
 
+                // Schema Tab
+                <div style=move || if active_tab.get() == SchemaFormTab::Schema { "display: block" } else { "display: none" }>
+                <div class="space-y-6">
                         // Mode toggle
                         <div class="flex items-center gap-4 border-b border-gray-200 pb-4">
                             <span class="text-sm font-medium text-gray-700">"Edit Mode:"</span>
@@ -948,8 +1063,9 @@ pub fn SchemaEditForm() -> impl IntoView {
                             </Show>
                         </div>
                 </div>
+                </div>
 
-                // Submit button
+                // Submit button (outside tabs)
                 <div class="flex justify-end gap-3 mt-6 pt-6 border-t border-gray-200">
                     <A href="/schemas" attr:class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">
                         "Cancel"
