@@ -23,6 +23,13 @@ enum ViewMode {
     Card,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum WorkflowFormTab {
+    Basic,
+    Schema,
+    Steps,
+}
+
 /// Schema field information for test forms
 #[derive(Clone, Debug)]
 struct SchemaFieldInfo {
@@ -796,6 +803,7 @@ pub fn WorkflowForm() -> impl IntoView {
     let (steps_data, set_steps_data) = signal(Vec::<StepData>::new());
     let (error, set_error) = signal(Option::<String>::None);
     let (saving, set_saving) = signal(false);
+    let (active_tab, set_active_tab) = signal(WorkflowFormTab::Basic);
 
     // Load available artifacts for dropdown (tools, workflows, agents, resources)
     let available_artifacts = LocalResource::new(move || async move {
@@ -951,75 +959,144 @@ pub fn WorkflowForm() -> impl IntoView {
                     </div>
                 })}
 
-                <div class="space-y-4">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">"Name *"</label>
-                        <input
-                            type="text"
-                            required=true
-                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
-                            placeholder="my-workflow"
-                            prop:value=move || name.get()
-                            on:input=move |ev| {
-                                let target = ev.target().unwrap();
-                                let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
-                                set_name.set(input.value());
-                            }
-                        />
-                    </div>
+                // Tab Navigation
+                <div class="border-b border-gray-200 mb-6">
+                    <nav class="flex -mb-px space-x-8">
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == WorkflowFormTab::Basic {
+                                    "border-orange-500 text-orange-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(WorkflowFormTab::Basic)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                                "Basic"
+                            </span>
+                        </button>
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == WorkflowFormTab::Schema {
+                                    "border-orange-500 text-orange-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(WorkflowFormTab::Schema)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>
+                                </svg>
+                                "Schema"
+                            </span>
+                        </button>
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == WorkflowFormTab::Steps {
+                                    "border-orange-500 text-orange-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(WorkflowFormTab::Steps)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>
+                                </svg>
+                                "Steps"
+                            </span>
+                        </button>
+                    </nav>
+                </div>
 
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">"Description *"</label>
-                        <input
-                            type="text"
-                            required=true
-                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
-                            placeholder="What this workflow does"
-                            prop:value=move || description.get()
-                            on:input=move |ev| {
-                                let target = ev.target().unwrap();
-                                let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
-                                set_description.set(input.value());
-                            }
-                        />
+                // Basic Tab
+                <div style=move || if active_tab.get() == WorkflowFormTab::Basic { "display: block" } else { "display: none" }>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">"Name *"</label>
+                            <input
+                                type="text"
+                                required=true
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
+                                placeholder="my-workflow"
+                                prop:value=move || name.get()
+                                on:input=move |ev| {
+                                    let target = ev.target().unwrap();
+                                    let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                    set_name.set(input.value());
+                                }
+                            />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">"Description *"</label>
+                            <input
+                                type="text"
+                                required=true
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
+                                placeholder="What this workflow does"
+                                prop:value=move || description.get()
+                                on:input=move |ev| {
+                                    let target = ev.target().unwrap();
+                                    let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                    set_description.set(input.value());
+                                }
+                            />
+                        </div>
                     </div>
-
-                    <div>
+                    <div class="mt-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">"Tags"</label>
                         <TagInput tags=tags />
+                        <p class="mt-1 text-xs text-gray-500">"Press Enter or comma to add tags"</p>
                     </div>
+                </div>
 
-                    <div>
+                // Schema Tab
+                <div style=move || if active_tab.get() == WorkflowFormTab::Schema { "display: block" } else { "display: none" }>
+                    <div class="space-y-4">
                         <FullSchemaEditor
                             label="Input Schema"
                             color="orange"
                             schema=input_schema
                             set_schema=set_input_schema
                             show_definitions=true
+                            description="Define the input parameters for this workflow"
                         />
-                    </div>
-
-                    <div>
                         <FullSchemaEditor
-                            label="Output Schema"
+                            label="Output Schema (optional)"
                             color="blue"
                             schema=output_schema
                             set_schema=set_output_schema
                             show_definitions=true
+                            description="Define the expected output structure of this workflow"
                         />
                     </div>
+                </div>
 
-                    <div>
-                        {move || {
-                            let artifacts = available_artifacts.get().unwrap_or_default();
-                            view! {
-                                <WorkflowStepsEditor
-                                    steps=steps_data
-                                    set_steps=set_steps_data
-                                    available_artifacts=artifacts
-                                />
-                            }
-                        }}
-                    </div>
+                // Steps Tab
+                <div style=move || if active_tab.get() == WorkflowFormTab::Steps { "display: block" } else { "display: none" }>
+                    {move || {
+                        let artifacts = available_artifacts.get().unwrap_or_default();
+                        view! {
+                            <WorkflowStepsEditor
+                                steps=steps_data
+                                set_steps=set_steps_data
+                                available_artifacts=artifacts
+                            />
+                        }
+                    }}
                 </div>
 
                 <div class="mt-6 flex gap-3">
@@ -1063,6 +1140,7 @@ pub fn WorkflowEditForm() -> impl IntoView {
     let (loading, set_loading) = signal(true);
     let (original_name, set_original_name) = signal(String::new());
     let (has_loaded, set_has_loaded) = signal(false);
+    let (active_tab, set_active_tab) = signal(WorkflowFormTab::Basic);
 
     // Load available artifacts for dropdown (tools, workflows, agents, resources)
     let available_artifacts = LocalResource::new(move || async move {
@@ -1262,99 +1340,168 @@ pub fn WorkflowEditForm() -> impl IntoView {
                 class="bg-white rounded-lg shadow p-6"
                 style=move || if loading.get() { "display: none" } else { "display: block" }
             >
-                        {move || error.get().map(|e| view! {
-                            <div class="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
-                                {e}
-                            </div>
-                        })}
+                {move || error.get().map(|e| view! {
+                    <div class="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+                        {e}
+                    </div>
+                })}
 
-                        <div class="space-y-4">
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">"Name *"</label>
-                                <input
-                                    type="text"
-                                    required=true
-                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
-                                    placeholder="my-workflow"
-                                    prop:value=move || name.get()
-                                    on:input=move |ev| {
-                                        let target = ev.target().unwrap();
-                                        let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
-                                        set_name.set(input.value());
-                                    }
-                                />
-                            </div>
+                // Tab Navigation
+                <div class="border-b border-gray-200 mb-6">
+                    <nav class="flex -mb-px space-x-8">
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == WorkflowFormTab::Basic {
+                                    "border-orange-500 text-orange-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(WorkflowFormTab::Basic)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                                "Basic"
+                            </span>
+                        </button>
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == WorkflowFormTab::Schema {
+                                    "border-orange-500 text-orange-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(WorkflowFormTab::Schema)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>
+                                </svg>
+                                "Schema"
+                            </span>
+                        </button>
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == WorkflowFormTab::Steps {
+                                    "border-orange-500 text-orange-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(WorkflowFormTab::Steps)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>
+                                </svg>
+                                "Steps"
+                            </span>
+                        </button>
+                    </nav>
+                </div>
 
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">"Description *"</label>
-                                <input
-                                    type="text"
-                                    required=true
-                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
-                                    placeholder="What this workflow does"
-                                    prop:value=move || description.get()
-                                    on:input=move |ev| {
-                                        let target = ev.target().unwrap();
-                                        let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
-                                        set_description.set(input.value());
-                                    }
-                                />
-                            </div>
-
-                            <div>
-                                <TagInput tags=tags />
-                            </div>
-
-                            <div>
-                                <FullSchemaEditor
-                                    label="Input Schema"
-                                    color="orange"
-                                    schema=input_schema
-                                    set_schema=set_input_schema
-                                    show_definitions=true
-                                />
-                            </div>
-
-                            <div>
-                                <FullSchemaEditor
-                                    label="Output Schema"
-                                    color="blue"
-                                    schema=output_schema
-                                    set_schema=set_output_schema
-                                    show_definitions=true
-                                />
-                            </div>
-
-                            <div>
-                                {move || {
-                                    let artifacts = available_artifacts.get().unwrap_or_default();
-                                    view! {
-                                        <WorkflowStepsEditor
-                                            steps=steps_data
-                                            set_steps=set_steps_data
-                                            available_artifacts=artifacts
-                                        />
-                                    }
-                                }}
-                            </div>
+                // Basic Tab
+                <div style=move || if active_tab.get() == WorkflowFormTab::Basic { "display: block" } else { "display: none" }>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">"Name *"</label>
+                            <input
+                                type="text"
+                                required=true
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
+                                placeholder="my-workflow"
+                                prop:value=move || name.get()
+                                on:input=move |ev| {
+                                    let target = ev.target().unwrap();
+                                    let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                    set_name.set(input.value());
+                                }
+                            />
                         </div>
-
-                        <div class="mt-6 flex gap-3">
-                            <button
-                                type="submit"
-                                disabled=move || saving.get()
-                                class="px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                                {move || if saving.get() { "Saving..." } else { "Save Changes" }}
-                            </button>
-                            <a
-                                href="/workflows"
-                                class="px-4 py-2 border border-gray-300 text-gray-700 rounded hover:bg-gray-50"
-                            >
-                                "Cancel"
-                            </a>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">"Description *"</label>
+                            <input
+                                type="text"
+                                required=true
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
+                                placeholder="What this workflow does"
+                                prop:value=move || description.get()
+                                on:input=move |ev| {
+                                    let target = ev.target().unwrap();
+                                    let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                    set_description.set(input.value());
+                                }
+                            />
                         </div>
-                    </form>
+                    </div>
+                    <div class="mt-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">"Tags"</label>
+                        <TagInput tags=tags />
+                        <p class="mt-1 text-xs text-gray-500">"Press Enter or comma to add tags"</p>
+                    </div>
+                </div>
+
+                // Schema Tab
+                <div style=move || if active_tab.get() == WorkflowFormTab::Schema { "display: block" } else { "display: none" }>
+                    <div class="space-y-4">
+                        <FullSchemaEditor
+                            label="Input Schema"
+                            color="orange"
+                            schema=input_schema
+                            set_schema=set_input_schema
+                            show_definitions=true
+                            description="Define the input parameters for this workflow"
+                        />
+                        <FullSchemaEditor
+                            label="Output Schema (optional)"
+                            color="blue"
+                            schema=output_schema
+                            set_schema=set_output_schema
+                            show_definitions=true
+                            description="Define the expected output structure of this workflow"
+                        />
+                    </div>
+                </div>
+
+                // Steps Tab
+                <div style=move || if active_tab.get() == WorkflowFormTab::Steps { "display: block" } else { "display: none" }>
+                    {move || {
+                        let artifacts = available_artifacts.get().unwrap_or_default();
+                        view! {
+                            <WorkflowStepsEditor
+                                steps=steps_data
+                                set_steps=set_steps_data
+                                available_artifacts=artifacts
+                            />
+                        }
+                    }}
+                </div>
+
+                <div class="mt-6 flex gap-3">
+                    <button
+                        type="submit"
+                        disabled=move || saving.get()
+                        class="px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {move || if saving.get() { "Saving..." } else { "Save Changes" }}
+                    </button>
+                    <a
+                        href="/workflows"
+                        class="px-4 py-2 border border-gray-300 text-gray-700 rounded hover:bg-gray-50"
+                    >
+                        "Cancel"
+                    </a>
+                </div>
+            </form>
         </div>
     }
 }
