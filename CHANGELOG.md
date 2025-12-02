@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.35.0 - 2025-12-02
+#### Features
+- **(ui)** add tabbed interface to Prompt create and edit forms - (8b1e4eb) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.34.0 - 2025-12-02
 #### Features
 - add schema-driven faker generation and schema form UI component - (85d5fa7) - Joan Marc Carbo Arnau
