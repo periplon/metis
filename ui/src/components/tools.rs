@@ -10,6 +10,7 @@ use crate::types::{
 };
 use crate::components::json_editor::JsonEditor;
 use crate::components::schema_editor::FullSchemaEditor;
+use crate::components::schema_form::{SchemaFormGenerator, SchemaFormMode};
 use crate::components::list_filter::{
     ListFilterBar, Pagination, TagBadges, TagInput,
     extract_tags, filter_items, paginate_items, total_pages,
@@ -20,6 +21,13 @@ use crate::components::list_filter::{
 enum ViewMode {
     Table,
     Card,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum ToolFormTab {
+    Basic,
+    Schema,
+    Response,
 }
 
 /// Schema field information for test forms
@@ -127,6 +135,8 @@ pub fn Tools() -> impl IntoView {
     let sort_order = RwSignal::new(SortOrder::Ascending);
     let current_page = RwSignal::new(0usize);
     let items_per_page = 10usize;
+    // Available tags - updated when tools load
+    let available_tags = RwSignal::new(Vec::<String>::new());
 
     // Test modal state - now stores the full Tool to access input_schema
     let (test_target, set_test_target) = signal(Option::<Tool>::None);
@@ -482,13 +492,24 @@ pub fn Tools() -> impl IntoView {
             }
             })}
 
+            // Filter bar - rendered once outside reactive block to prevent focus loss
+            <ListFilterBar
+                search_query=search_query
+                selected_tags=selected_tags
+                available_tags=Signal::derive(move || available_tags.get())
+                sort_field=sort_field
+                sort_order=sort_order
+                placeholder="Search tools by name or description..."
+            />
+
             <Suspense fallback=move || view! { <LoadingState /> }>
                 {move || {
                     tools.get().map(|data| {
                         match data {
                             Some(list) if !list.is_empty() => {
-                                // Extract available tags from all tools
-                                let available_tags = extract_tags(&list, |t: &Tool| t.tags.as_slice());
+                                // Update available tags signal
+                                let tags = extract_tags(&list, |t: &Tool| t.tags.as_slice());
+                                available_tags.set(tags);
 
                                 // Filter items based on search and tags
                                 let mut filtered = filter_items(
@@ -503,25 +524,16 @@ pub fn Tools() -> impl IntoView {
                                 sort_items(&mut filtered, sort_field.get(), sort_order.get(), |t: &Tool| &t.name);
 
                                 let total_filtered = filtered.len();
+                                let total_count = list.len();
                                 let pages = total_pages(total_filtered, items_per_page);
                                 let paginated = paginate_items(&filtered, current_page.get(), items_per_page);
 
                                 view! {
                                     <div>
-                                        // Filter bar with sorting
-                                        <ListFilterBar
-                                            search_query=search_query
-                                            selected_tags=selected_tags
-                                            available_tags=available_tags
-                                            sort_field=sort_field
-                                            sort_order=sort_order
-                                            placeholder="Search tools by name or description..."
-                                        />
-
                                         // Results info
-                                        {(total_filtered != list.len()).then(|| view! {
+                                        {(total_filtered != total_count).then(|| view! {
                                             <p class="text-sm text-gray-500 mb-4">
-                                                "Showing " {total_filtered} " of " {list.len()} " tools"
+                                                "Showing " {total_filtered} " of " {total_count} " tools"
                                             </p>
                                         })}
 
@@ -891,14 +903,23 @@ pub fn ToolForm() -> impl IntoView {
         }
 
         let schema = input_schema.get();
-        // Check if output_schema has any properties defined
+        // Check if output_schema has any meaningful content (same logic as Resources)
         let out_schema = output_schema.get();
         let output_schema_opt = if out_schema.get("properties")
             .and_then(|p| p.as_object())
             .map(|o| o.is_empty())
             .unwrap_or(true)
         {
-            None
+            // Also check definitions for full schema support
+            if out_schema.get("definitions")
+                .and_then(|d| d.as_object())
+                .map(|o| o.is_empty())
+                .unwrap_or(true)
+            {
+                None
+            } else {
+                Some(out_schema)
+            }
         } else {
             Some(out_schema)
         };
@@ -921,7 +942,7 @@ pub fn ToolForm() -> impl IntoView {
             description: description.get(),
             tags: tags.get(),
             input_schema: schema,
-            output_schema: output_schema_opt,
+            output_schema: output_schema_opt.clone(),
             static_response: static_resp,
             mock: build_mock_config(),
         };
@@ -941,6 +962,8 @@ pub fn ToolForm() -> impl IntoView {
         });
     };
 
+    let (active_tab, set_active_tab) = signal(ToolFormTab::Basic);
+
     view! {
         <div class="p-6 max-w-4xl mx-auto">
             <div class="flex items-center gap-4 mb-6">
@@ -959,112 +982,200 @@ pub fn ToolForm() -> impl IntoView {
                     </div>
                 })}
 
-                <div class="space-y-6">
-                    // Basic Info Section
-                    <div class="border-b pb-4">
-                        <h3 class="text-lg font-semibold text-gray-800 mb-4">"Basic Information"</h3>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">"Name *"</label>
-                                <input
-                                    type="text"
-                                    required=true
-                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
-                                    placeholder="my-tool"
-                                    prop:value=move || name.get()
-                                    on:input=move |ev| {
-                                        let target = ev.target().unwrap();
-                                        let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
-                                        set_name.set(input.value());
-                                    }
-                                />
-                            </div>
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-1">"Description *"</label>
-                                <input
-                                    type="text"
-                                    required=true
-                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
-                                    placeholder="What this tool does"
-                                    prop:value=move || description.get()
-                                    on:input=move |ev| {
-                                        let target = ev.target().unwrap();
-                                        let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
-                                        set_description.set(input.value());
-                                    }
-                                />
-                            </div>
-                        </div>
-                        <div class="mt-4">
-                            <FullSchemaEditor
-                                label="Input Schema"
-                                color="green"
-                                schema=input_schema
-                                set_schema=set_input_schema
-                                show_definitions=true
+                // Tab Navigation
+                <div class="border-b border-gray-200 mb-6">
+                    <nav class="flex -mb-px space-x-8">
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == ToolFormTab::Basic {
+                                    "border-green-500 text-green-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(ToolFormTab::Basic)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                                "Basic"
+                            </span>
+                        </button>
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == ToolFormTab::Schema {
+                                    "border-green-500 text-green-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(ToolFormTab::Schema)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>
+                                </svg>
+                                "Schema"
+                            </span>
+                        </button>
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == ToolFormTab::Response {
+                                    "border-green-500 text-green-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(ToolFormTab::Response)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                                </svg>
+                                "Response"
+                            </span>
+                        </button>
+                    </nav>
+                </div>
+
+                // Basic Tab
+                <div style=move || if active_tab.get() == ToolFormTab::Basic { "display: block" } else { "display: none" }>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">"Name *"</label>
+                            <input
+                                type="text"
+                                required=true
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                                placeholder="my-tool"
+                                prop:value=move || name.get()
+                                on:input=move |ev| {
+                                    let target = ev.target().unwrap();
+                                    let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                    set_name.set(input.value());
+                                }
                             />
                         </div>
-                        <div class="mt-4">
-                            <FullSchemaEditor
-                                label="Output Schema (optional)"
-                                color="blue"
-                                schema=output_schema
-                                set_schema=set_output_schema
-                                show_definitions=true
-                                description="Define the expected structure of tool outputs for validation and documentation"
-                            />
-                        </div>
-                        <div class="mt-4">
-                            <TagInput
-                                tags=tags
-                                label="Tags"
-                                placeholder="Add tag for categorization..."
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">"Description *"</label>
+                            <input
+                                type="text"
+                                required=true
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                                placeholder="What this tool does"
+                                prop:value=move || description.get()
+                                on:input=move |ev| {
+                                    let target = ev.target().unwrap();
+                                    let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                    set_description.set(input.value());
+                                }
                             />
                         </div>
                     </div>
+                    <div class="mt-4">
+                        <TagInput
+                            tags=tags
+                            label="Tags"
+                            placeholder="Add tag for categorization..."
+                        />
+                    </div>
+                </div>
 
-                    // Response Strategy Section
-                    <div class="border-b pb-4">
-                        <h3 class="text-lg font-semibold text-gray-800 mb-4">"Response Strategy"</h3>
+                // Schema Tab
+                <div style=move || if active_tab.get() == ToolFormTab::Schema { "display: block" } else { "display: none" }>
+                    <div class="space-y-4">
+                        <FullSchemaEditor
+                            label="Input Schema"
+                            color="green"
+                            schema=input_schema
+                            set_schema=set_input_schema
+                            show_definitions=true
+                        />
+                        <FullSchemaEditor
+                            label="Output Schema (optional)"
+                            color="blue"
+                            schema=output_schema
+                            set_schema=set_output_schema
+                            show_definitions=true
+                            description="Define the expected structure of tool outputs for validation and documentation"
+                        />
+                    </div>
+                </div>
 
-                        <div class="mb-4">
-                            <label class="block text-sm font-medium text-gray-700 mb-1">"Strategy Type"</label>
-                            <select
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
-                                prop:value=move || mock_strategy.get()
-                                on:change=move |ev| {
-                                    let target = ev.target().unwrap();
-                                    let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
-                                    set_mock_strategy.set(select.value());
-                                }
-                            >
-                                <option value="none">"No Mock (Use Static Response)"</option>
-                                <option value="static">"Static"</option>
-                                <option value="template">"Template (Handlebars)"</option>
-                                <option value="random">"Random (Faker)"</option>
-                                <option value="stateful">"Stateful"</option>
-                                <option value="script">"Script"</option>
-                                <option value="file">"File"</option>
-                                <option value="pattern">"Pattern (Regex)"</option>
-                                <option value="llm">"LLM (AI Generated)"</option>
-                                <option value="database">"Database Query"</option>
-                            </select>
-                            <p class="mt-1 text-xs text-gray-500">"Choose how the tool response should be generated"</p>
-                        </div>
+                // Response Tab
+                <div style=move || if active_tab.get() == ToolFormTab::Response { "display: block" } else { "display: none" }>
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">"Strategy Type"</label>
+                        <select
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                            prop:value=move || mock_strategy.get()
+                            on:change=move |ev| {
+                                let target = ev.target().unwrap();
+                                let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
+                                set_mock_strategy.set(select.value());
+                            }
+                        >
+                            <option value="none">"No Mock (Use Static Response)"</option>
+                            <option value="static">"Static"</option>
+                            <option value="template">"Template (Handlebars)"</option>
+                            <option value="random">"Random (Faker)"</option>
+                            <option value="stateful">"Stateful"</option>
+                            <option value="script">"Script"</option>
+                            <option value="file">"File"</option>
+                            <option value="pattern">"Pattern (Regex)"</option>
+                            <option value="llm">"LLM (AI Generated)"</option>
+                            <option value="database">"Database Query"</option>
+                        </select>
+                        <p class="mt-1 text-xs text-gray-500">"Choose how the tool response should be generated"</p>
+                    </div>
 
-                        // Strategy-specific fields
+                    // Strategy-specific fields
                         {move || {
                             let strategy = mock_strategy.get();
+                            // Helper to check if output schema has properties
+                            let has_schema_properties = || {
+                                output_schema.get()
+                                    .get("properties")
+                                    .and_then(|p| p.as_object())
+                                    .map(|o| !o.is_empty())
+                                    .unwrap_or(false)
+                            };
                             match strategy.as_str() {
-                                "none" | "static" => view! {
-                                    <JsonEditor
-                                        value=static_response
-                                        placeholder=r#"{"result": "success", "data": {}}"#.to_string()
-                                        rows=8
-                                        label="Static Response (JSON)".to_string()
-                                        help_text="Enter the JSON response that will be returned when this tool is called".to_string()
-                                    />
-                                }.into_any(),
+                                "none" | "static" => {
+                                    if has_schema_properties() {
+                                        view! {
+                                            <div class="space-y-2">
+                                                <div class="text-sm text-green-700 font-medium mb-2">
+                                                    "Schema-Driven Form"
+                                                </div>
+                                                <SchemaFormGenerator
+                                                    schema=output_schema
+                                                    mode=SchemaFormMode::StaticValue
+                                                    output=static_response
+                                                    color="green".to_string()
+                                                    show_toggle=true
+                                                />
+                                            </div>
+                                        }.into_any()
+                                    } else {
+                                        view! {
+                                            <JsonEditor
+                                                value=static_response
+                                                placeholder=r#"{"result": "success", "data": {}}"#.to_string()
+                                                rows=8
+                                                label="Static Response (JSON)".to_string()
+                                                help_text="Enter the JSON response that will be returned when this tool is called".to_string()
+                                            />
+                                        }.into_any()
+                                    }
+                                }
                                 "template" => view! {
                                     <div>
                                         <label class="block text-sm font-medium text-gray-700 mb-1">"Handlebars Template *"</label>
@@ -1082,31 +1193,50 @@ pub fn ToolForm() -> impl IntoView {
                                         <p class="mt-1 text-xs text-gray-500">"Use {{input.field}} to access tool arguments. Helpers: now, uuid, random_int, random_float, random_bool, random_string, json_encode"</p>
                                     </div>
                                 }.into_any(),
-                                "random" => view! {
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-700 mb-1">"Faker Type"</label>
-                                        <select
-                                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
-                                            prop:value=move || mock_faker_type.get()
-                                            on:change=move |ev| {
-                                                let target = ev.target().unwrap();
-                                                let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
-                                                set_mock_faker_type.set(select.value());
-                                            }
-                                        >
-                                            <option value="">"Default (lorem ipsum)"</option>
-                                            <option value="name">"Name"</option>
-                                            <option value="email">"Email"</option>
-                                            <option value="phone">"Phone"</option>
-                                            <option value="address">"Address"</option>
-                                            <option value="company">"Company"</option>
-                                            <option value="uuid">"UUID"</option>
-                                            <option value="sentence">"Sentence"</option>
-                                            <option value="paragraph">"Paragraph"</option>
-                                        </select>
-                                        <p class="mt-1 text-xs text-gray-500">"Generate random fake data"</p>
-                                    </div>
-                                }.into_any(),
+                                "random" => {
+                                    if has_schema_properties() {
+                                        view! {
+                                            <div class="space-y-2">
+                                                <div class="text-sm text-purple-700 font-medium mb-2">
+                                                    "Schema-Driven Faker Configuration"
+                                                </div>
+                                                <SchemaFormGenerator
+                                                    schema=output_schema
+                                                    mode=SchemaFormMode::FakerConfig
+                                                    output=static_response
+                                                    color="purple".to_string()
+                                                    show_toggle=true
+                                                />
+                                            </div>
+                                        }.into_any()
+                                    } else {
+                                        view! {
+                                            <div>
+                                                <label class="block text-sm font-medium text-gray-700 mb-1">"Faker Type"</label>
+                                                <select
+                                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                                                    prop:value=move || mock_faker_type.get()
+                                                    on:change=move |ev| {
+                                                        let target = ev.target().unwrap();
+                                                        let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
+                                                        set_mock_faker_type.set(select.value());
+                                                    }
+                                                >
+                                                    <option value="">"Default (lorem ipsum)"</option>
+                                                    <option value="name">"Name"</option>
+                                                    <option value="email">"Email"</option>
+                                                    <option value="phone">"Phone"</option>
+                                                    <option value="address">"Address"</option>
+                                                    <option value="company">"Company"</option>
+                                                    <option value="uuid">"UUID"</option>
+                                                    <option value="sentence">"Sentence"</option>
+                                                    <option value="paragraph">"Paragraph"</option>
+                                                </select>
+                                                <p class="mt-1 text-xs text-gray-500">"Generate random fake data"</p>
+                                            </div>
+                                        }.into_any()
+                                    }
+                                }
                                 "stateful" => view! {
                                     <div class="space-y-4">
                                         <div>
@@ -1343,7 +1473,6 @@ pub fn ToolForm() -> impl IntoView {
                                 _ => view! { <div></div> }.into_any(),
                             }
                         }}
-                    </div>
                 </div>
 
                 <div class="mt-6 flex gap-3">
@@ -1426,7 +1555,6 @@ pub fn ToolEditForm() -> impl IntoView {
                     set_name.set(tool.name.clone());
                     set_description.set(tool.description.clone());
                     tags.set(tool.tags.clone());
-                    web_sys::console::log_1(&format!("ToolEditForm: Loaded tags = {:?}", tool.tags).into());
                     set_input_schema.set(tool.input_schema.clone());
                     if let Some(out_schema) = &tool.output_schema {
                         set_output_schema.set(out_schema.clone());
@@ -1607,7 +1735,6 @@ pub fn ToolEditForm() -> impl IntoView {
 
     let on_submit = move |ev: web_sys::SubmitEvent| {
         ev.prevent_default();
-        web_sys::console::log_1(&format!("ToolEditForm: on_submit triggered, tags = {:?}", tags.get()).into());
         set_saving.set(true);
         set_error.set(None);
 
@@ -1627,14 +1754,23 @@ pub fn ToolEditForm() -> impl IntoView {
 
         let orig_name = original_name.get();
         let schema = input_schema.get();
-        // Check if output_schema has any properties defined
+        // Check if output_schema has any meaningful content (same logic as Resources)
         let out_schema = output_schema.get();
         let output_schema_opt = if out_schema.get("properties")
             .and_then(|p| p.as_object())
             .map(|o| o.is_empty())
             .unwrap_or(true)
         {
-            None
+            // Also check definitions for full schema support
+            if out_schema.get("definitions")
+                .and_then(|d| d.as_object())
+                .map(|o| o.is_empty())
+                .unwrap_or(true)
+            {
+                None
+            } else {
+                Some(out_schema)
+            }
         } else {
             Some(out_schema)
         };
@@ -1657,7 +1793,7 @@ pub fn ToolEditForm() -> impl IntoView {
             description: description.get(),
             tags: tags.get(),
             input_schema: schema,
-            output_schema: output_schema_opt,
+            output_schema: output_schema_opt.clone(),
             static_response: static_resp,
             mock: build_mock_config(),
         };
@@ -1676,6 +1812,8 @@ pub fn ToolEditForm() -> impl IntoView {
             }
         });
     };
+
+    let (active_tab, set_active_tab) = signal(ToolFormTab::Basic);
 
     view! {
         <div class="p-6 max-w-4xl mx-auto">
@@ -1703,117 +1841,206 @@ pub fn ToolEditForm() -> impl IntoView {
                 class="bg-white rounded-lg shadow p-6"
                 style=move || if loading.get() { "display: none" } else { "display: block" }
             >
-                        {move || error.get().map(|e| view! {
-                            <div class="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
-                                {e}
-                            </div>
-                        })}
+                {move || error.get().map(|e| view! {
+                    <div class="mb-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded">
+                        {e}
+                    </div>
+                })}
 
-                        <div class="space-y-6">
-                            // Basic Info Section
-                            <div class="border-b pb-4">
-                                <h3 class="text-lg font-semibold text-gray-800 mb-4">"Basic Information"</h3>
-                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-700 mb-1">"Name *"</label>
-                                        <input
-                                            type="text"
-                                            required=true
-                                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
-                                            placeholder="my-tool"
-                                            prop:value=move || name.get()
-                                            on:input=move |ev| {
-                                                let target = ev.target().unwrap();
-                                                let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
-                                                set_name.set(input.value());
-                                            }
-                                        />
-                                    </div>
-                                    <div>
-                                        <label class="block text-sm font-medium text-gray-700 mb-1">"Description *"</label>
-                                        <input
-                                            type="text"
-                                            required=true
-                                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
-                                            placeholder="What this tool does"
-                                            prop:value=move || description.get()
-                                            on:input=move |ev| {
-                                                let target = ev.target().unwrap();
-                                                let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
-                                                set_description.set(input.value());
-                                            }
-                                        />
-                                    </div>
-                                </div>
-                                <div class="mt-4">
-                                    <FullSchemaEditor
-                                        label="Input Schema"
-                                        color="green"
-                                        schema=input_schema
-                                        set_schema=set_input_schema
-                                        show_definitions=true
-                                    />
-                                </div>
-                                <div class="mt-4">
-                                    <FullSchemaEditor
-                                        label="Output Schema (optional)"
-                                        color="blue"
-                                        schema=output_schema
-                                        set_schema=set_output_schema
-                                        show_definitions=true
-                                        description="Define the expected structure of tool outputs for validation and documentation"
-                                    />
-                                </div>
-                                <div class="mt-4">
-                                    <TagInput
-                                        tags=tags
-                                        label="Tags"
-                                        placeholder="Add tag for categorization..."
-                                    />
-                                </div>
-                            </div>
+                // Tab Navigation
+                <div class="border-b border-gray-200 mb-6">
+                    <nav class="flex -mb-px space-x-8">
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == ToolFormTab::Basic {
+                                    "border-green-500 text-green-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(ToolFormTab::Basic)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                                "Basic"
+                            </span>
+                        </button>
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == ToolFormTab::Schema {
+                                    "border-green-500 text-green-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(ToolFormTab::Schema)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>
+                                </svg>
+                                "Schema"
+                            </span>
+                        </button>
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == ToolFormTab::Response {
+                                    "border-green-500 text-green-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(ToolFormTab::Response)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                                </svg>
+                                "Response"
+                            </span>
+                        </button>
+                    </nav>
+                </div>
 
-                            // Response Strategy Section
-                            <div class="border-b pb-4">
-                                <h3 class="text-lg font-semibold text-gray-800 mb-4">"Response Strategy"</h3>
+                // Basic Tab
+                <div style=move || if active_tab.get() == ToolFormTab::Basic { "display: block" } else { "display: none" }>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">"Name *"</label>
+                            <input
+                                type="text"
+                                required=true
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                                placeholder="my-tool"
+                                prop:value=move || name.get()
+                                on:input=move |ev| {
+                                    let target = ev.target().unwrap();
+                                    let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                    set_name.set(input.value());
+                                }
+                            />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">"Description *"</label>
+                            <input
+                                type="text"
+                                required=true
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                                placeholder="What this tool does"
+                                prop:value=move || description.get()
+                                on:input=move |ev| {
+                                    let target = ev.target().unwrap();
+                                    let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                    set_description.set(input.value());
+                                }
+                            />
+                        </div>
+                    </div>
+                    <div class="mt-4">
+                        <TagInput
+                            tags=tags
+                            label="Tags"
+                            placeholder="Add tag for categorization..."
+                        />
+                    </div>
+                </div>
 
-                                <div class="mb-4">
-                                    <label class="block text-sm font-medium text-gray-700 mb-1">"Strategy Type"</label>
-                                    <select
-                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
-                                        prop:value=move || mock_strategy.get()
-                                        on:change=move |ev| {
-                                            let target = ev.target().unwrap();
-                                            let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
-                                            set_mock_strategy.set(select.value());
-                                        }
-                                    >
-                                        <option value="none">"No Mock (Use Static Response)"</option>
-                                        <option value="static">"Static"</option>
-                                        <option value="template">"Template (Handlebars)"</option>
-                                        <option value="random">"Random (Faker)"</option>
-                                        <option value="stateful">"Stateful"</option>
-                                        <option value="script">"Script"</option>
-                                        <option value="file">"File"</option>
-                                        <option value="pattern">"Pattern (Regex)"</option>
-                                        <option value="llm">"LLM (AI Generated)"</option>
-                                        <option value="database">"Database Query"</option>
-                                    </select>
-                                </div>
+                // Schema Tab
+                <div style=move || if active_tab.get() == ToolFormTab::Schema { "display: block" } else { "display: none" }>
+                    <div class="space-y-4">
+                        <FullSchemaEditor
+                            label="Input Schema"
+                            color="green"
+                            schema=input_schema
+                            set_schema=set_input_schema
+                            show_definitions=true
+                        />
+                        <FullSchemaEditor
+                            label="Output Schema (optional)"
+                            color="blue"
+                            schema=output_schema
+                            set_schema=set_output_schema
+                            show_definitions=true
+                            description="Define the expected structure of tool outputs for validation and documentation"
+                        />
+                    </div>
+                </div>
 
-                                // Strategy-specific fields
+                // Response Tab
+                <div style=move || if active_tab.get() == ToolFormTab::Response { "display: block" } else { "display: none" }>
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">"Strategy Type"</label>
+                        <select
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                            prop:value=move || mock_strategy.get()
+                            on:change=move |ev| {
+                                let target = ev.target().unwrap();
+                                let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
+                                set_mock_strategy.set(select.value());
+                            }
+                        >
+                            <option value="none">"No Mock (Use Static Response)"</option>
+                            <option value="static">"Static"</option>
+                            <option value="template">"Template (Handlebars)"</option>
+                            <option value="random">"Random (Faker)"</option>
+                            <option value="stateful">"Stateful"</option>
+                            <option value="script">"Script"</option>
+                            <option value="file">"File"</option>
+                            <option value="pattern">"Pattern (Regex)"</option>
+                            <option value="llm">"LLM (AI Generated)"</option>
+                            <option value="database">"Database Query"</option>
+                        </select>
+                        <p class="mt-1 text-xs text-gray-500">"Choose how the tool response should be generated"</p>
+                    </div>
+
+                    // Strategy-specific fields
                                 {move || {
                                     let strategy = mock_strategy.get();
+                                    // Helper to check if output schema has properties
+                                    let has_schema_properties = || {
+                                        output_schema.get()
+                                            .get("properties")
+                                            .and_then(|p| p.as_object())
+                                            .map(|o| !o.is_empty())
+                                            .unwrap_or(false)
+                                    };
                                     match strategy.as_str() {
-                                        "none" | "static" => view! {
-                                            <JsonEditor
-                                                value=static_response
-                                                placeholder=r#"{"result": "success", "data": {}}"#.to_string()
-                                                rows=8
-                                                label="Static Response (JSON)".to_string()
-                                                help_text="Enter the JSON response that will be returned when this tool is called".to_string()
-                                            />
-                                        }.into_any(),
+                                        "none" | "static" => {
+                                            if has_schema_properties() {
+                                                view! {
+                                                    <div class="space-y-2">
+                                                        <div class="text-sm text-green-700 font-medium mb-2">
+                                                            "Schema-Driven Form"
+                                                        </div>
+                                                        <SchemaFormGenerator
+                                                            schema=output_schema
+                                                            mode=SchemaFormMode::StaticValue
+                                                            output=static_response
+                                                            color="green".to_string()
+                                                            show_toggle=true
+                                                        />
+                                                    </div>
+                                                }.into_any()
+                                            } else {
+                                                view! {
+                                                    <JsonEditor
+                                                        value=static_response
+                                                        placeholder=r#"{"result": "success", "data": {}}"#.to_string()
+                                                        rows=8
+                                                        label="Static Response (JSON)".to_string()
+                                                        help_text="Enter the JSON response that will be returned when this tool is called".to_string()
+                                                    />
+                                                }.into_any()
+                                            }
+                                        }
                                         "template" => view! {
                                             <div>
                                                 <label class="block text-sm font-medium text-gray-700 mb-1">"Handlebars Template *"</label>
@@ -1831,31 +2058,50 @@ pub fn ToolEditForm() -> impl IntoView {
                                                 <p class="mt-1 text-xs text-gray-500">"Use {{input.field}} to access tool arguments. Helpers: now, uuid, random_int, random_float, random_bool, random_string, json_encode"</p>
                                             </div>
                                         }.into_any(),
-                                        "random" => view! {
-                                            <div>
-                                                <label class="block text-sm font-medium text-gray-700 mb-1">"Faker Type"</label>
-                                                <select
-                                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
-                                                    prop:value=move || mock_faker_type.get()
-                                                    on:change=move |ev| {
-                                                        let target = ev.target().unwrap();
-                                                        let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
-                                                        set_mock_faker_type.set(select.value());
-                                                    }
-                                                >
-                                                    <option value="">"Default (lorem ipsum)"</option>
-                                                    <option value="name">"Name"</option>
-                                                    <option value="email">"Email"</option>
-                                                    <option value="phone">"Phone"</option>
-                                                    <option value="address">"Address"</option>
-                                                    <option value="company">"Company"</option>
-                                                    <option value="uuid">"UUID"</option>
-                                                    <option value="sentence">"Sentence"</option>
-                                                    <option value="paragraph">"Paragraph"</option>
-                                                </select>
-                                                <p class="mt-1 text-xs text-gray-500">"Generate random fake data"</p>
-                                            </div>
-                                        }.into_any(),
+                                        "random" => {
+                                            if has_schema_properties() {
+                                                view! {
+                                                    <div class="space-y-2">
+                                                        <div class="text-sm text-purple-700 font-medium mb-2">
+                                                            "Schema-Driven Faker Configuration"
+                                                        </div>
+                                                        <SchemaFormGenerator
+                                                            schema=output_schema
+                                                            mode=SchemaFormMode::FakerConfig
+                                                            output=static_response
+                                                            color="purple".to_string()
+                                                            show_toggle=true
+                                                        />
+                                                    </div>
+                                                }.into_any()
+                                            } else {
+                                                view! {
+                                                    <div>
+                                                        <label class="block text-sm font-medium text-gray-700 mb-1">"Faker Type"</label>
+                                                        <select
+                                                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                                                            prop:value=move || mock_faker_type.get()
+                                                            on:change=move |ev| {
+                                                                let target = ev.target().unwrap();
+                                                                let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
+                                                                set_mock_faker_type.set(select.value());
+                                                            }
+                                                        >
+                                                            <option value="">"Default (lorem ipsum)"</option>
+                                                            <option value="name">"Name"</option>
+                                                            <option value="email">"Email"</option>
+                                                            <option value="phone">"Phone"</option>
+                                                            <option value="address">"Address"</option>
+                                                            <option value="company">"Company"</option>
+                                                            <option value="uuid">"UUID"</option>
+                                                            <option value="sentence">"Sentence"</option>
+                                                            <option value="paragraph">"Paragraph"</option>
+                                                        </select>
+                                                        <p class="mt-1 text-xs text-gray-500">"Generate random fake data"</p>
+                                                    </div>
+                                                }.into_any()
+                                            }
+                                        }
                                         "stateful" => view! {
                                             <div class="space-y-4">
                                                 <div>
@@ -2092,24 +2338,23 @@ pub fn ToolEditForm() -> impl IntoView {
                                         _ => view! { <div></div> }.into_any(),
                                     }
                                 }}
-                            </div>
-                        </div>
+                </div>
 
-                        <div class="mt-6 flex gap-3">
-                            <button
-                                type="submit"
-                                disabled=move || saving.get()
-                                class="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                                {move || if saving.get() { "Saving..." } else { "Save Changes" }}
-                            </button>
-                            <a
-                                href="/tools"
-                                class="px-4 py-2 border border-gray-300 text-gray-700 rounded hover:bg-gray-50"
-                            >
-                                "Cancel"
-                            </a>
-                        </div>
+                <div class="mt-6 flex gap-3">
+                    <button
+                        type="submit"
+                        disabled=move || saving.get()
+                        class="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        {move || if saving.get() { "Saving..." } else { "Save Changes" }}
+                    </button>
+                    <a
+                        href="/tools"
+                        class="px-4 py-2 border border-gray-300 text-gray-700 rounded hover:bg-gray-50"
+                    >
+                        "Cancel"
+                    </a>
+                </div>
             </form>
         </div>
     }

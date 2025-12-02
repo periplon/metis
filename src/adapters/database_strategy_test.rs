@@ -74,6 +74,7 @@ async fn test_generate_database_sqlite() {
             query: "SELECT name FROM users WHERE id = ?".to_string(),
             params: vec!["user_id".to_string()],
         }),
+        faker_schema: None,
     };
     
     let args = json!({ "user_id": 1 });

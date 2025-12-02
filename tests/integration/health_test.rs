@@ -16,8 +16,8 @@ async fn test_health_endpoint() {
     assert_eq!(response.status(), 200);
 
     let body: serde_json::Value = response.json().await.unwrap();
-    assert_eq!(body["status"], "ok");
-    assert!(body["uptime"].is_number());
+    assert_eq!(body["status"], "healthy");
+    assert!(body["uptime_seconds"].is_number());
     assert!(body["version"].is_string());
 }
 
@@ -50,7 +50,7 @@ async fn test_health_live_endpoint() {
     assert_eq!(response.status(), 200);
 
     let body: serde_json::Value = response.json().await.unwrap();
-    assert_eq!(body["status"], "ok");
+    assert_eq!(body["status"], "alive");
 }
 
 #[tokio::test]

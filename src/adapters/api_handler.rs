@@ -1187,7 +1187,10 @@ pub async fn get_tool(
         match store.archetypes().get(ArchetypeType::Tool.as_str(), &name).await {
             Ok(Some(tool)) => {
                 match serde_json::from_value::<ToolDto>(tool) {
-                    Ok(dto) => return (StatusCode::OK, Json(ApiResponse::success(dto))),
+                    Ok(dto) => {
+                        tracing::info!("get_tool: Returning tool '{}' with output_schema = {:?}", dto.name, dto.output_schema.as_ref().map(|s| serde_json::to_string(s).unwrap_or_default()));
+                        return (StatusCode::OK, Json(ApiResponse::success(dto)));
+                    }
                     Err(e) => {
                         return (
                             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1222,6 +1225,7 @@ pub async fn create_tool(
     State(state): State<ApiState>,
     Json(dto): Json<ToolDto>,
 ) -> impl IntoResponse {
+    tracing::info!("create_tool: Received tool '{}' with output_schema = {:?}", dto.name, dto.output_schema.as_ref().map(|s| serde_json::to_string(s).unwrap_or_default()));
     // Use database if available
     if let Some(store) = &state.data_store {
         let definition = match serde_json::to_value(&dto) {
@@ -1286,6 +1290,7 @@ pub async fn update_tool(
     Path(name): Path<String>,
     Json(dto): Json<ToolDto>,
 ) -> impl IntoResponse {
+    tracing::info!("update_tool: Received tool '{}' with output_schema = {:?}", dto.name, dto.output_schema.as_ref().map(|s| serde_json::to_string(s).unwrap_or_default()));
     // Use database if available
     if let Some(store) = &state.data_store {
         let definition = match serde_json::to_value(&dto) {
@@ -1325,6 +1330,7 @@ pub async fn update_tool(
         tool.description = dto.description.clone();
         tool.tags = dto.tags.clone();
         tool.input_schema = dto.input_schema.clone();
+        tool.output_schema = dto.output_schema.clone();
         tool.static_response = dto.static_response.clone();
         tool.mock = dto.mock.clone();
         drop(settings);
@@ -5236,5 +5242,90 @@ pub async fn delete_tag(
                 "Database not configured. Version history requires database persistence.",
             )),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_tool_dto_output_schema_serialization() {
+        // Create a ToolDto with output_schema
+        let tool = ToolDto {
+            name: "test-tool".to_string(),
+            description: "A test tool".to_string(),
+            tags: vec![],
+            input_schema: json!({"type": "object", "properties": {}}),
+            output_schema: Some(json!({
+                "type": "object",
+                "properties": {
+                    "result": {"type": "string"}
+                }
+            })),
+            static_response: None,
+            mock: None,
+        };
+
+        // Serialize to JSON Value (what happens before storing in DB)
+        let value = serde_json::to_value(&tool).unwrap();
+
+        // Verify output_schema is present
+        assert!(value.get("output_schema").is_some(), "output_schema should be present in serialized JSON");
+
+        // Deserialize back (what happens when retrieving from DB)
+        let deserialized: ToolDto = serde_json::from_value(value).unwrap();
+
+        // Verify output_schema is preserved
+        assert!(deserialized.output_schema.is_some(), "output_schema should be preserved after deserialization");
+
+        let out_schema = deserialized.output_schema.unwrap();
+        assert!(out_schema.get("properties").is_some());
+        assert!(out_schema["properties"].get("result").is_some());
+    }
+
+    #[test]
+    fn test_tool_dto_output_schema_none() {
+        // Create a ToolDto without output_schema
+        let tool = ToolDto {
+            name: "test-tool".to_string(),
+            description: "A test tool".to_string(),
+            tags: vec![],
+            input_schema: json!({"type": "object", "properties": {}}),
+            output_schema: None,
+            static_response: None,
+            mock: None,
+        };
+
+        // Serialize to JSON Value
+        let value = serde_json::to_value(&tool).unwrap();
+
+        // Verify output_schema is NOT present (skip_serializing_if works)
+        assert!(value.get("output_schema").is_none(), "output_schema should be omitted when None");
+
+        // Deserialize back
+        let deserialized: ToolDto = serde_json::from_value(value).unwrap();
+
+        // Verify output_schema is still None
+        assert!(deserialized.output_schema.is_none(), "output_schema should remain None");
+    }
+
+    #[test]
+    fn test_tool_dto_from_ui_json() {
+        // Simulate JSON that would come from the UI
+        let ui_json = r#"{
+            "name": "test-tool",
+            "description": "A test tool",
+            "input_schema": {"type": "object", "properties": {}},
+            "output_schema": {"type": "object", "properties": {"result": {"type": "string"}}}
+        }"#;
+
+        let tool: ToolDto = serde_json::from_str(ui_json).unwrap();
+
+        assert!(tool.output_schema.is_some(), "output_schema should be parsed from UI JSON");
+
+        let out_schema = tool.output_schema.unwrap();
+        assert!(out_schema["properties"]["result"]["type"] == "string");
     }
 }

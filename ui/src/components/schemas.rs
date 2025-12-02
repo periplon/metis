@@ -41,6 +41,8 @@ pub fn Schemas() -> impl IntoView {
     let sort_order = RwSignal::new(SortOrder::Ascending);
     let current_page = RwSignal::new(0usize);
     let items_per_page = 10usize;
+    // Available tags - updated when schemas load
+    let available_tags = RwSignal::new(Vec::<String>::new());
 
     let schemas = LocalResource::new(move || {
         let _ = refresh_trigger.get();
@@ -121,14 +123,25 @@ pub fn Schemas() -> impl IntoView {
                 </div>
             </div>
 
+            // Filter bar - rendered once outside reactive block to prevent focus loss
+            <ListFilterBar
+                search_query=search_query
+                selected_tags=selected_tags
+                available_tags=Signal::derive(move || available_tags.get())
+                sort_field=sort_field
+                sort_order=sort_order
+                placeholder="Search schemas..."
+            />
+
             // Content area
             <Suspense fallback=move || view! { <div class="text-gray-500">"Loading schemas..."</div> }>
                 {move || {
                     schemas.get().map(|maybe_schemas| {
                         match maybe_schemas {
                             Some(list) if !list.is_empty() => {
-                                // Extract available tags
-                                let available_tags = extract_tags(&list, |s: &Schema| s.tags.as_slice());
+                                // Update available tags signal
+                                let tags = extract_tags(&list, |s: &Schema| s.tags.as_slice());
+                                available_tags.set(tags);
 
                                 // Filter items based on search and tags
                                 let mut filtered = filter_items(
@@ -145,26 +158,16 @@ pub fn Schemas() -> impl IntoView {
                                 sort_items(&mut filtered, sort_field.get(), sort_order.get(), |s: &Schema| &s.name);
 
                                 let total_filtered = filtered.len();
-                                let total = list.len();
+                                let total_count = list.len();
                                 let pages = total_pages(total_filtered, items_per_page);
                                 let items = paginate_items(&filtered, current_page.get(), items_per_page);
 
                                 view! {
                                     <div>
-                                        // Filter bar
-                                        <ListFilterBar
-                                            search_query=search_query
-                                            selected_tags=selected_tags
-                                            available_tags=available_tags
-                                            sort_field=sort_field
-                                            sort_order=sort_order
-                                            placeholder="Search schemas..."
-                                        />
-
                                         // Results count when filtered
-                                        {(total_filtered != total).then(|| view! {
+                                        {(total_filtered != total_count).then(|| view! {
                                             <p class="text-sm text-gray-500 mb-4">
-                                                "Showing " {total_filtered} " of " {total} " schemas"
+                                                "Showing " {total_filtered} " of " {total_count} " schemas"
                                             </p>
                                         })}
 

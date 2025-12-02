@@ -67,6 +67,8 @@ impl TestServer {
             mcp_servers: vec![],
             secrets: Default::default(),
             schemas: vec![],
+            data_lakes: vec![],
+            database: None,
         }));
 
         let state_manager = Arc::new(StateManager::new());
@@ -87,7 +89,7 @@ impl TestServer {
         let passphrase_store = metis::adapters::secrets::create_passphrase_store();
 
         let app =
-            metis::create_app(metis_server, health_handler, metrics_handler, settings, state_manager, secrets_store, passphrase_store, tool_handler).await;
+            metis::create_app(metis_server, health_handler, metrics_handler, settings, state_manager, secrets_store, passphrase_store, tool_handler, None).await;
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -127,6 +129,7 @@ impl TestServer {
                 strategy: MockStrategyType::Static,
                 template: Some(r#"{"echoed": "hello"}"#.to_string()),
                 faker_type: None,
+                faker_schema: None,
                 stateful: None,
                 script: None,
                 script_lang: None,
@@ -135,6 +138,7 @@ impl TestServer {
                 llm: None,
                 database: None,
             }),
+            tags: vec![],
         }];
 
         Self::with_config(vec![], tools, vec![]).await
@@ -152,6 +156,7 @@ impl TestServer {
                 strategy: MockStrategyType::Static,
                 template: Some("Sample resource content".to_string()),
                 faker_type: None,
+                faker_schema: None,
                 stateful: None,
                 script: None,
                 script_lang: None,
@@ -160,6 +165,7 @@ impl TestServer {
                 llm: None,
                 database: None,
             }),
+            tags: vec![],
         }];
 
         let tools = vec![ToolConfig {
@@ -181,6 +187,7 @@ impl TestServer {
                 strategy: MockStrategyType::Static,
                 template: Some(r#"{"echoed": "hello"}"#.to_string()),
                 faker_type: None,
+                faker_schema: None,
                 stateful: None,
                 script: None,
                 script_lang: None,
@@ -189,6 +196,7 @@ impl TestServer {
                 llm: None,
                 database: None,
             }),
+            tags: vec![],
         }];
 
         let prompts = vec![PromptConfig {
@@ -204,6 +212,7 @@ impl TestServer {
                 role: "user".to_string(),
                 content: "Hello, {{name}}!".to_string(),
             }]),
+            tags: vec![],
         }];
 
         Self::with_config(resources, tools, prompts).await
@@ -339,6 +348,7 @@ async fn test_list_tools_with_configured_tools() {
             strategy: MockStrategyType::Static,
             template: Some(r#"{"echoed": "hello"}"#.to_string()),
             faker_type: None,
+            faker_schema: None,
             stateful: None,
             script: None,
             script_lang: None,
@@ -347,6 +357,7 @@ async fn test_list_tools_with_configured_tools() {
             llm: None,
             database: None,
         }),
+        tags: vec![],
     }];
 
     let server = TestServer::with_config(vec![], tools, vec![]).await;
@@ -383,6 +394,7 @@ async fn test_call_tool() {
             strategy: MockStrategyType::Static,
             template: Some(r#"{"echoed": "hello"}"#.to_string()),
             faker_type: None,
+            faker_schema: None,
             stateful: None,
             script: None,
             script_lang: None,
@@ -391,6 +403,7 @@ async fn test_call_tool() {
             llm: None,
             database: None,
         }),
+        tags: vec![],
     }];
 
     let server = TestServer::with_config(vec![], tools, vec![]).await;
@@ -442,6 +455,7 @@ async fn test_list_resources_with_configured_resources() {
             strategy: MockStrategyType::Static,
             template: Some("Sample resource content".to_string()),
             faker_type: None,
+            faker_schema: None,
             stateful: None,
             script: None,
             script_lang: None,
@@ -450,6 +464,7 @@ async fn test_list_resources_with_configured_resources() {
             llm: None,
             database: None,
         }),
+        tags: vec![],
     }];
 
     let server = TestServer::with_config(resources, vec![], vec![]).await;
@@ -482,6 +497,7 @@ async fn test_read_resource() {
             strategy: MockStrategyType::Static,
             template: Some("Sample resource content".to_string()),
             faker_type: None,
+            faker_schema: None,
             stateful: None,
             script: None,
             script_lang: None,
@@ -490,6 +506,7 @@ async fn test_read_resource() {
             llm: None,
             database: None,
         }),
+        tags: vec![],
     }];
 
     let server = TestServer::with_config(resources, vec![], vec![]).await;
@@ -531,6 +548,7 @@ async fn test_list_prompts_with_configured_prompts() {
             role: "user".to_string(),
             content: "Hello, {{name}}!".to_string(),
         }]),
+        tags: vec![],
     }];
 
     let server = TestServer::with_config(vec![], vec![], prompts).await;
@@ -561,6 +579,7 @@ async fn test_get_prompt() {
             role: "user".to_string(),
             content: "Hello, {{name}}!".to_string(),
         }]),
+        tags: vec![],
     }];
 
     let server = TestServer::with_config(vec![], vec![], prompts).await;

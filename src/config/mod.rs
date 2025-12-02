@@ -244,6 +244,8 @@ pub struct MockConfig {
     pub strategy: MockStrategyType,
     pub template: Option<String>,
     pub faker_type: Option<String>,
+    /// Schema-driven faker configuration for structured data generation
+    pub faker_schema: Option<FakerSchemaConfig>,
     pub stateful: Option<StatefulConfig>,
     pub script: Option<String>,
     #[serde(default)]
@@ -252,6 +254,78 @@ pub struct MockConfig {
     pub pattern: Option<String>,
     pub llm: Option<LLMConfig>,
     pub database: Option<DatabaseConfig>,
+}
+
+/// Schema-driven faker configuration for generating structured fake data
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct FakerSchemaConfig {
+    /// Field configurations keyed by property path (e.g., "user.name", "items[*].id")
+    #[serde(default)]
+    pub fields: std::collections::HashMap<String, FakerFieldConfig>,
+    /// Array configurations keyed by array path
+    #[serde(default)]
+    pub arrays: std::collections::HashMap<String, FakerArrayConfig>,
+}
+
+/// Configuration for a single faker field
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct FakerFieldConfig {
+    /// The faker type to use (e.g., "name", "email", "integer")
+    pub faker_type: FakerFieldType,
+    /// Minimum value for numeric types
+    pub min: Option<f64>,
+    /// Maximum value for numeric types
+    pub max: Option<f64>,
+    /// Regex pattern for pattern-based generation
+    pub pattern: Option<String>,
+    /// Possible values for enum/constant types
+    pub enum_values: Option<Vec<String>>,
+    /// Constant value
+    pub constant: Option<serde_json::Value>,
+}
+
+/// Array generation configuration
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct FakerArrayConfig {
+    /// Minimum number of items to generate
+    pub min_items: usize,
+    /// Maximum number of items to generate
+    pub max_items: usize,
+}
+
+/// Faker field types for schema-driven generation
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum FakerFieldType {
+    // Personal
+    FirstName,
+    LastName,
+    FullName,
+    Username,
+    // Contact
+    Email,
+    Phone,
+    // Address
+    StreetAddress,
+    City,
+    State,
+    Country,
+    PostalCode,
+    // Text
+    Word,
+    Sentence,
+    Paragraph,
+    // Numbers
+    Integer,
+    Float,
+    // Identifiers
+    Uuid,
+    // Special
+    Pattern,
+    Enum,
+    Constant,
+    // Default
+    Lorem,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]

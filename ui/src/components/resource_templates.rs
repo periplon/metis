@@ -16,6 +16,7 @@ use crate::types::{
 };
 use crate::components::json_editor::JsonEditor;
 use crate::components::schema_editor::FullSchemaEditor;
+use crate::components::schema_form::{SchemaFormGenerator, SchemaFormMode};
 use crate::components::list_filter::{
     ListFilterBar, Pagination, TagBadges, TagInput,
     extract_tags, filter_items, paginate_items, total_pages,
@@ -48,6 +49,8 @@ pub fn ResourceTemplates() -> impl IntoView {
     let sort_order = RwSignal::new(SortOrder::Ascending);
     let current_page = RwSignal::new(0usize);
     let items_per_page = 10usize;
+    // Available tags - updated when templates load
+    let available_tags = RwSignal::new(Vec::<String>::new());
 
     let templates = LocalResource::new(move || {
         let _ = refresh_trigger.get();
@@ -290,13 +293,24 @@ pub fn ResourceTemplates() -> impl IntoView {
                 </div>
             })}
 
+            // Filter bar - rendered once outside reactive block to prevent focus loss
+            <ListFilterBar
+                search_query=search_query
+                selected_tags=selected_tags
+                available_tags=Signal::derive(move || available_tags.get())
+                sort_field=sort_field
+                sort_order=sort_order
+                placeholder="Search templates by name, URI template, or description..."
+            />
+
             <Suspense fallback=move || view! { <LoadingState /> }>
                 {move || {
                     templates.get().map(|data| {
                         match data {
                             Some(list) if !list.is_empty() => {
-                                // Extract available tags
-                                let available_tags = extract_tags(&list, |t: &ResourceTemplate| t.tags.as_slice());
+                                // Update available tags signal
+                                let tags = extract_tags(&list, |t: &ResourceTemplate| t.tags.as_slice());
+                                available_tags.set(tags);
 
                                 // Filter items
                                 let mut filtered_list = filter_items(
@@ -316,28 +330,19 @@ pub fn ResourceTemplates() -> impl IntoView {
 
                                 // Paginate filtered results
                                 let total_count = filtered_list.len();
+                                let original_count = list.len();
                                 let total_pages_count = total_pages(total_count, items_per_page);
                                 let paginated_list = paginate_items(&filtered_list, current_page.get(), items_per_page);
 
                                 view! {
                                     <div>
-                                        // Filter bar
-                                        <ListFilterBar
-                                            search_query=search_query
-                                            selected_tags=selected_tags
-                                            available_tags=available_tags.clone()
-                                            sort_field=sort_field
-                                            sort_order=sort_order
-                                            placeholder="Search templates by name, URI template, or description..."
-                                        />
-
                                         // Results count when filtered
                                         {move || {
                                             let is_filtered = !search_query.get().is_empty() || !selected_tags.get().is_empty();
                                             if is_filtered {
                                                 view! {
                                                     <div class="mb-4 text-sm text-gray-600">
-                                                        {format!("Showing {} of {} templates", total_count, list.len())}
+                                                        {format!("Showing {} of {} templates", total_count, original_count)}
                                                     </div>
                                                 }.into_any()
                                             } else {
@@ -820,6 +825,7 @@ pub fn ResourceTemplateForm() -> impl IntoView {
                     description=description set_description=set_description
                     mime_type=mime_type set_mime_type=set_mime_type
                     content=content
+                    tags=tags
                     input_schema=input_schema
                     set_input_schema=set_input_schema
                     output_schema=output_schema
@@ -842,11 +848,6 @@ pub fn ResourceTemplateForm() -> impl IntoView {
                     mock_db_query=mock_db_query set_mock_db_query=set_mock_db_query
                 />
 
-                // Tags - directly in the form to avoid signal propagation issues
-                <div class="mt-4">
-                    <TagInput tags=tags />
-                </div>
-
                 <div class="mt-6 flex gap-3">
                     <button
                         type="submit"
@@ -867,6 +868,13 @@ pub fn ResourceTemplateForm() -> impl IntoView {
     }
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum ResourceTemplateFormTab {
+    Basic,
+    Schema,
+    Response,
+}
+
 #[allow(clippy::too_many_arguments)]
 #[component]
 fn ResourceTemplateFormFields(
@@ -879,6 +887,7 @@ fn ResourceTemplateFormFields(
     mime_type: ReadSignal<String>,
     set_mime_type: WriteSignal<String>,
     content: RwSignal<String>,
+    tags: RwSignal<Vec<String>>,
     input_schema: ReadSignal<serde_json::Value>,
     set_input_schema: WriteSignal<serde_json::Value>,
     output_schema: ReadSignal<serde_json::Value>,
@@ -916,11 +925,76 @@ fn ResourceTemplateFormFields(
     mock_db_query: ReadSignal<String>,
     set_mock_db_query: WriteSignal<String>,
 ) -> impl IntoView {
+    let (active_tab, set_active_tab) = signal(ResourceTemplateFormTab::Basic);
+
     view! {
-        <div class="space-y-6">
-            // Basic Info Section
-            <div class="border-b pb-4">
-                <h3 class="text-lg font-semibold text-gray-800 mb-4">"Basic Information"</h3>
+        <div>
+            // Tab Navigation
+            <div class="border-b border-gray-200 mb-6">
+                <nav class="flex -mb-px space-x-8">
+                    <button
+                        type="button"
+                        class=move || format!(
+                            "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                            if active_tab.get() == ResourceTemplateFormTab::Basic {
+                                "border-purple-500 text-purple-600"
+                            } else {
+                                "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                            }
+                        )
+                        on:click=move |_| set_active_tab.set(ResourceTemplateFormTab::Basic)
+                    >
+                        <span class="flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                            </svg>
+                            "Basic Info"
+                        </span>
+                    </button>
+                    <button
+                        type="button"
+                        class=move || format!(
+                            "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                            if active_tab.get() == ResourceTemplateFormTab::Schema {
+                                "border-purple-500 text-purple-600"
+                            } else {
+                                "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                            }
+                        )
+                        on:click=move |_| set_active_tab.set(ResourceTemplateFormTab::Schema)
+                    >
+                        <span class="flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>
+                            </svg>
+                            "Schema"
+                        </span>
+                    </button>
+                    <button
+                        type="button"
+                        class=move || format!(
+                            "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                            if active_tab.get() == ResourceTemplateFormTab::Response {
+                                "border-purple-500 text-purple-600"
+                            } else {
+                                "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                            }
+                        )
+                        on:click=move |_| set_active_tab.set(ResourceTemplateFormTab::Response)
+                    >
+                        <span class="flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+                            </svg>
+                            "Response"
+                        </span>
+                    </button>
+                </nav>
+            </div>
+
+            // Tab Content
+            // Basic Info Tab
+            <div style=move || if active_tab.get() == ResourceTemplateFormTab::Basic { "display: block" } else { "display: none" }>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">"Name *"</label>
@@ -969,24 +1043,29 @@ fn ResourceTemplateFormFields(
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">"MIME Type"</label>
-                        <input
-                            type="text"
+                        <select
                             class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
-                            placeholder="application/json"
                             prop:value=move || mime_type.get()
-                            on:input=move |ev| {
+                            on:change=move |ev| {
                                 let target = ev.target().unwrap();
-                                let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
-                                set_mime_type.set(input.value());
+                                let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
+                                set_mime_type.set(select.value());
                             }
-                        />
+                        >
+                            <option value="">"Select MIME type..."</option>
+                            <option value="text/plain">"text/plain"</option>
+                            <option value="application/json">"application/json"</option>
+                            <option value="application/yaml">"application/yaml"</option>
+                        </select>
                     </div>
+                </div>
+                <div class="mt-4">
+                    <TagInput tags=tags />
                 </div>
             </div>
 
-            // Schema Section (templates have both input and output schemas)
-            <div class="border-b pb-4">
-                <h3 class="text-lg font-semibold text-gray-800 mb-4">"Input Variables & Output Schema"</h3>
+            // Schema Tab
+            <div style=move || if active_tab.get() == ResourceTemplateFormTab::Schema { "display: block" } else { "display: none" }>
                 <div class="space-y-4">
                     <div class="bg-purple-50 border border-purple-200 rounded-lg p-4">
                         <h4 class="font-medium text-purple-800 mb-2">"Input Variables (URI Template Parameters)"</h4>
@@ -1011,10 +1090,8 @@ fn ResourceTemplateFormFields(
                 </div>
             </div>
 
-            // Mock Strategy Section
-            <div class="border-b pb-4">
-                <h3 class="text-lg font-semibold text-gray-800 mb-4">"Response Strategy"</h3>
-
+            // Response Tab
+            <div style=move || if active_tab.get() == ResourceTemplateFormTab::Response { "display: block" } else { "display: none" }>
                 <div class="mb-4">
                     <label class="block text-sm font-medium text-gray-700 mb-1">"Strategy Type"</label>
                     <select
@@ -1059,6 +1136,7 @@ fn ResourceTemplateFormFields(
                     llm_system_prompt=mock_llm_system_prompt set_llm_system_prompt=set_mock_llm_system_prompt
                     db_url=mock_db_url set_db_url=set_mock_db_url
                     db_query=mock_db_query set_db_query=set_mock_db_query
+                    output_schema=output_schema
                 />
             </div>
         </div>
@@ -1102,22 +1180,58 @@ fn MockStrategyFields(
     set_db_url: WriteSignal<String>,
     db_query: ReadSignal<String>,
     set_db_query: WriteSignal<String>,
+    #[prop(optional)]
+    output_schema: Option<ReadSignal<serde_json::Value>>,
 ) -> impl IntoView {
+    // Helper to check if schema has properties
+    let has_schema_properties = move || {
+        output_schema
+            .map(|schema| {
+                schema.get()
+                    .get("properties")
+                    .and_then(|p| p.as_object())
+                    .map(|o| !o.is_empty())
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false)
+    };
+
     view! {
         {move || {
             let strat = strategy.get();
             match strat.as_str() {
-                "none" | "static" => view! {
-                    <div>
-                        <JsonEditor
-                            value=content
-                            label="Static Content (JSON)".to_string()
-                            placeholder=r#"{"id": 1, "name": "User"}"#.to_string()
-                            rows=10
-                            help_text="Enter valid JSON for the static response. Use {variable} syntax for URI template variable substitution.".to_string()
-                        />
-                    </div>
-                }.into_any(),
+                "none" | "static" => {
+                    if has_schema_properties() {
+                        // Use schema-driven form
+                        let schema_signal = output_schema.unwrap();
+                        view! {
+                            <div class="space-y-2">
+                                <div class="text-sm text-purple-700 font-medium mb-2">
+                                    "Schema-Driven Form"
+                                </div>
+                                <SchemaFormGenerator
+                                    schema=schema_signal
+                                    mode=SchemaFormMode::StaticValue
+                                    output=content
+                                    color="purple".to_string()
+                                    show_toggle=true
+                                />
+                            </div>
+                        }.into_any()
+                    } else {
+                        view! {
+                            <div>
+                                <JsonEditor
+                                    value=content
+                                    label="Static Content (JSON)".to_string()
+                                    placeholder=r#"{"id": 1, "name": "User"}"#.to_string()
+                                    rows=10
+                                    help_text="Enter valid JSON for the static response. Use {variable} syntax for URI template variable substitution.".to_string()
+                                />
+                            </div>
+                        }.into_any()
+                    }
+                }
                 "template" => view! {
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">"Handlebars Template *"</label>
@@ -1135,30 +1249,51 @@ fn MockStrategyFields(
                         <p class="mt-1 text-xs text-gray-500">"Access input variables via {{variable_name}}. Helpers: now, uuid, random_int, random_float, random_bool, random_string, json_encode"</p>
                     </div>
                 }.into_any(),
-                "random" => view! {
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">"Faker Type"</label>
-                        <select
-                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
-                            prop:value=move || faker_type.get()
-                            on:change=move |ev| {
-                                let target = ev.target().unwrap();
-                                let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
-                                set_faker_type.set(select.value());
-                            }
-                        >
-                            <option value="">"Default (lorem ipsum)"</option>
-                            <option value="name">"Name"</option>
-                            <option value="email">"Email"</option>
-                            <option value="phone">"Phone"</option>
-                            <option value="address">"Address"</option>
-                            <option value="company">"Company"</option>
-                            <option value="uuid">"UUID"</option>
-                            <option value="sentence">"Sentence"</option>
-                            <option value="paragraph">"Paragraph"</option>
-                        </select>
-                    </div>
-                }.into_any(),
+                "random" => {
+                    if has_schema_properties() {
+                        // Use schema-driven faker configuration
+                        let schema_signal = output_schema.unwrap();
+                        view! {
+                            <div class="space-y-2">
+                                <div class="text-sm text-purple-700 font-medium mb-2">
+                                    "Schema-Driven Faker Configuration"
+                                </div>
+                                <SchemaFormGenerator
+                                    schema=schema_signal
+                                    mode=SchemaFormMode::FakerConfig
+                                    output=content
+                                    color="purple".to_string()
+                                    show_toggle=true
+                                />
+                            </div>
+                        }.into_any()
+                    } else {
+                        view! {
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">"Faker Type"</label>
+                                <select
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                    prop:value=move || faker_type.get()
+                                    on:change=move |ev| {
+                                        let target = ev.target().unwrap();
+                                        let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
+                                        set_faker_type.set(select.value());
+                                    }
+                                >
+                                    <option value="">"Default (lorem ipsum)"</option>
+                                    <option value="name">"Name"</option>
+                                    <option value="email">"Email"</option>
+                                    <option value="phone">"Phone"</option>
+                                    <option value="address">"Address"</option>
+                                    <option value="company">"Company"</option>
+                                    <option value="uuid">"UUID"</option>
+                                    <option value="sentence">"Sentence"</option>
+                                    <option value="paragraph">"Paragraph"</option>
+                                </select>
+                            </div>
+                        }.into_any()
+                    }
+                }
                 "stateful" => view! {
                     <div class="space-y-4">
                         <div>
@@ -1735,6 +1870,7 @@ pub fn ResourceTemplateEditForm() -> impl IntoView {
                     description=description set_description=set_description
                     mime_type=mime_type set_mime_type=set_mime_type
                     content=content
+                    tags=tags
                     input_schema=input_schema
                     set_input_schema=set_input_schema
                     output_schema=output_schema
@@ -1756,11 +1892,6 @@ pub fn ResourceTemplateEditForm() -> impl IntoView {
                     mock_db_url=mock_db_url set_mock_db_url=set_mock_db_url
                     mock_db_query=mock_db_query set_mock_db_query=set_mock_db_query
                 />
-
-                // Tags - directly in the form to avoid signal propagation issues
-                <div class="mt-4">
-                    <TagInput tags=tags />
-                </div>
 
                 <div class="mt-6 flex gap-3">
                     <button

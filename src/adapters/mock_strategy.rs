@@ -1,10 +1,16 @@
 use crate::adapters::state_manager::StateManager;
-use crate::config::{MockConfig, MockStrategyType, StateOperation, ScriptLang};
+use crate::config::{
+    MockConfig, MockStrategyType, StateOperation, ScriptLang,
+    FakerSchemaConfig, FakerFieldConfig, FakerFieldType, FakerArrayConfig
+};
 use anyhow::Result;
+use fake::faker::address::en::{CityName, CountryName, PostCode, StateAbbr, StreetName};
 use fake::faker::internet::en::{SafeEmail, Username};
 use fake::faker::lorem::en::{Paragraph, Sentence, Word};
-use fake::faker::name::en::{Name, Title};
+use fake::faker::name::en::{FirstName, LastName, Name, Title};
+use fake::faker::phone_number::en::PhoneNumber;
 use fake::Fake;
+use rand::Rng;
 use mlua::LuaSerdeExt;
 use rhai::{Engine, Scope};
 use rustpython_vm::convert::IntoObject;
@@ -332,6 +338,12 @@ impl MockStrategyHandler {
     }
 
     async fn generate_random(&self, config: &MockConfig) -> Result<Value> {
+        // If faker_schema is provided, use schema-driven generation
+        if let Some(faker_schema) = &config.faker_schema {
+            return self.generate_from_schema(faker_schema);
+        }
+
+        // Fall back to simple faker_type generation
         if let Some(faker_type) = &config.faker_type {
             match faker_type.as_str() {
                 "name" => Ok(json!(Name().fake::<String>())),
@@ -346,6 +358,221 @@ impl MockStrategyHandler {
         } else {
             Ok(Value::Null)
         }
+    }
+
+    /// Generate data from a schema-driven faker configuration
+    fn generate_from_schema(&self, schema_config: &FakerSchemaConfig) -> Result<Value> {
+        let mut result = serde_json::Map::new();
+
+        // Process all field configurations
+        for (path, field_config) in &schema_config.fields {
+            let value = self.generate_faker_value(field_config)?;
+            self.set_nested_value(&mut result, path, value, &schema_config.arrays)?;
+        }
+
+        Ok(Value::Object(result))
+    }
+
+    /// Generate a single faker value based on field configuration
+    fn generate_faker_value(&self, config: &FakerFieldConfig) -> Result<Value> {
+        match config.faker_type {
+            // Personal
+            FakerFieldType::FirstName => Ok(json!(FirstName().fake::<String>())),
+            FakerFieldType::LastName => Ok(json!(LastName().fake::<String>())),
+            FakerFieldType::FullName => Ok(json!(Name().fake::<String>())),
+            FakerFieldType::Username => Ok(json!(Username().fake::<String>())),
+
+            // Contact
+            FakerFieldType::Email => Ok(json!(SafeEmail().fake::<String>())),
+            FakerFieldType::Phone => Ok(json!(PhoneNumber().fake::<String>())),
+
+            // Address
+            FakerFieldType::StreetAddress => Ok(json!(StreetName().fake::<String>())),
+            FakerFieldType::City => Ok(json!(CityName().fake::<String>())),
+            FakerFieldType::State => Ok(json!(StateAbbr().fake::<String>())),
+            FakerFieldType::Country => Ok(json!(CountryName().fake::<String>())),
+            FakerFieldType::PostalCode => Ok(json!(PostCode().fake::<String>())),
+
+            // Text
+            FakerFieldType::Word => Ok(json!(Word().fake::<String>())),
+            FakerFieldType::Sentence => Ok(json!(Sentence(1..10).fake::<String>())),
+            FakerFieldType::Paragraph => Ok(json!(Paragraph(1..3).fake::<String>())),
+
+            // Numbers
+            FakerFieldType::Integer => {
+                let min = config.min.unwrap_or(0.0) as i64;
+                let max = config.max.unwrap_or(100.0) as i64;
+                let value: i64 = rand::thread_rng().gen_range(min..=max);
+                Ok(json!(value))
+            }
+            FakerFieldType::Float => {
+                let min = config.min.unwrap_or(0.0);
+                let max = config.max.unwrap_or(100.0);
+                let value: f64 = rand::thread_rng().gen_range(min..=max);
+                Ok(json!(value))
+            }
+
+            // Identifiers
+            FakerFieldType::Uuid => Ok(json!(uuid::Uuid::new_v4().to_string())),
+
+            // Special
+            FakerFieldType::Pattern => {
+                if let Some(pattern) = &config.pattern {
+                    // Use regex_generate crate or simple pattern replacement
+                    Ok(json!(self.generate_from_pattern(pattern)))
+                } else {
+                    Ok(json!(""))
+                }
+            }
+            FakerFieldType::Enum => {
+                if let Some(enum_values) = &config.enum_values {
+                    if !enum_values.is_empty() {
+                        let idx = rand::thread_rng().gen_range(0..enum_values.len());
+                        Ok(json!(enum_values[idx].clone()))
+                    } else {
+                        Ok(json!(""))
+                    }
+                } else {
+                    Ok(json!(""))
+                }
+            }
+            FakerFieldType::Constant => {
+                if let Some(constant) = &config.constant {
+                    Ok(constant.clone())
+                } else {
+                    Ok(Value::Null)
+                }
+            }
+
+            // Default
+            FakerFieldType::Lorem => Ok(json!(Sentence(1..5).fake::<String>())),
+        }
+    }
+
+    /// Generate string from a simple pattern (basic implementation)
+    fn generate_from_pattern(&self, pattern: &str) -> String {
+        let mut result = String::new();
+        let mut rng = rand::thread_rng();
+
+        for c in pattern.chars() {
+            match c {
+                '#' => result.push_str(&rng.gen_range(0..10).to_string()),
+                '?' => result.push(rng.gen_range(b'a'..=b'z') as char),
+                '*' => {
+                    if rng.gen_bool(0.5) {
+                        result.push_str(&rng.gen_range(0..10).to_string())
+                    } else {
+                        result.push(rng.gen_range(b'a'..=b'z') as char)
+                    }
+                }
+                _ => result.push(c),
+            }
+        }
+        result
+    }
+
+    /// Set a value at a nested path in the result object
+    fn set_nested_value(
+        &self,
+        result: &mut serde_json::Map<String, Value>,
+        path: &str,
+        value: Value,
+        array_configs: &std::collections::HashMap<String, FakerArrayConfig>,
+    ) -> Result<()> {
+        // Parse path segments (e.g., "user.address.city" or "items[*].name")
+        let segments: Vec<&str> = path.split('.').collect();
+
+        if segments.is_empty() {
+            return Ok(());
+        }
+
+        // Handle array wildcard paths specially
+        if path.contains("[*]") {
+            // Find the array path
+            let array_path_end = path.find("[*]").unwrap();
+            let array_path = &path[..array_path_end];
+            let item_field = &path[array_path_end + 4..]; // Skip "[*]."
+
+            // Get array config for size
+            let array_config = array_configs.get(array_path);
+            let (min_items, max_items) = if let Some(cfg) = array_config {
+                (cfg.min_items, cfg.max_items)
+            } else {
+                (1, 3) // Default
+            };
+
+            let count = rand::thread_rng().gen_range(min_items..=max_items);
+
+            // Navigate to/create the array
+            let array_segments: Vec<&str> = array_path.split('.').collect();
+            let mut current = result;
+
+            for (i, seg) in array_segments.iter().enumerate() {
+                if i == array_segments.len() - 1 {
+                    // Last segment - create/get the array
+                    let arr = current.entry(seg.to_string())
+                        .or_insert_with(|| Value::Array(vec![]));
+
+                    if let Value::Array(items) = arr {
+                        // Ensure we have enough items
+                        while items.len() < count {
+                            items.push(Value::Object(serde_json::Map::new()));
+                        }
+
+                        // Set the field on each item
+                        for item in items.iter_mut() {
+                            if let Value::Object(obj) = item {
+                                // Handle nested fields in item
+                                if item_field.contains('.') {
+                                    let nested_segments: Vec<&str> = item_field.split('.').collect();
+                                    let mut nested_current = obj;
+
+                                    for (j, nested_seg) in nested_segments.iter().enumerate() {
+                                        if j == nested_segments.len() - 1 {
+                                            nested_current.insert(nested_seg.to_string(), value.clone());
+                                        } else {
+                                            nested_current = nested_current
+                                                .entry(nested_seg.to_string())
+                                                .or_insert_with(|| Value::Object(serde_json::Map::new()))
+                                                .as_object_mut()
+                                                .unwrap();
+                                        }
+                                    }
+                                } else {
+                                    obj.insert(item_field.to_string(), value.clone());
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Navigate deeper
+                    current = current
+                        .entry(seg.to_string())
+                        .or_insert_with(|| Value::Object(serde_json::Map::new()))
+                        .as_object_mut()
+                        .ok_or_else(|| anyhow::anyhow!("Expected object at path segment: {}", seg))?;
+                }
+            }
+        } else {
+            // Simple non-array path
+            let mut current = result;
+
+            for (i, seg) in segments.iter().enumerate() {
+                if i == segments.len() - 1 {
+                    // Last segment - insert the value
+                    current.insert(seg.to_string(), value.clone());
+                } else {
+                    // Navigate deeper, creating objects as needed
+                    current = current
+                        .entry(seg.to_string())
+                        .or_insert_with(|| Value::Object(serde_json::Map::new()))
+                        .as_object_mut()
+                        .ok_or_else(|| anyhow::anyhow!("Expected object at path segment: {}", seg))?;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     async fn generate_stateful(&self, config: &MockConfig, args: Option<&Value>) -> Result<Value> {

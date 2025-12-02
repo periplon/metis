@@ -38,6 +38,8 @@ pub fn DataLakes() -> impl IntoView {
     let sort_order = RwSignal::new(SortOrder::Ascending);
     let current_page = RwSignal::new(0usize);
     let items_per_page = 10usize;
+    // Available tags - updated when data lakes load
+    let available_tags = RwSignal::new(Vec::<String>::new());
 
     let data_lakes = LocalResource::new(move || {
         let _ = refresh_trigger.get();
@@ -118,14 +120,25 @@ pub fn DataLakes() -> impl IntoView {
                 </div>
             </div>
 
+            // Filter bar - rendered once outside reactive block to prevent focus loss
+            <ListFilterBar
+                search_query=search_query
+                selected_tags=selected_tags
+                available_tags=Signal::derive(move || available_tags.get())
+                sort_field=sort_field
+                sort_order=sort_order
+                placeholder="Search data lakes by name or description..."
+            />
+
             // Content area
             <Suspense fallback=move || view! { <div class="text-gray-500">"Loading data lakes..."</div> }>
                 {move || {
                     data_lakes.get().map(|maybe_lakes| {
                         match maybe_lakes {
                             Some(list) if !list.is_empty() => {
-                                // Extract available tags from all data lakes
-                                let available_tags = extract_tags(&list, |d: &DataLake| d.tags.as_slice());
+                                // Update available tags signal
+                                let tags = extract_tags(&list, |d: &DataLake| d.tags.as_slice());
+                                available_tags.set(tags);
 
                                 // Filter items based on search and tags
                                 let mut filtered = filter_items(
@@ -140,25 +153,16 @@ pub fn DataLakes() -> impl IntoView {
                                 sort_items(&mut filtered, sort_field.get(), sort_order.get(), |d: &DataLake| &d.name);
 
                                 let total_filtered = filtered.len();
+                                let total_count = list.len();
                                 let pages = total_pages(total_filtered, items_per_page);
                                 let paginated = paginate_items(&filtered, current_page.get(), items_per_page);
 
                                 view! {
                                     <div>
-                                        // Filter bar with sorting
-                                        <ListFilterBar
-                                            search_query=search_query
-                                            selected_tags=selected_tags
-                                            available_tags=available_tags
-                                            sort_field=sort_field
-                                            sort_order=sort_order
-                                            placeholder="Search data lakes by name or description..."
-                                        />
-
                                         // Results info
-                                        {(total_filtered != list.len()).then(|| view! {
+                                        {(total_filtered != total_count).then(|| view! {
                                             <p class="text-sm text-gray-500 mb-4">
-                                                "Showing " {total_filtered} " of " {list.len()} " data lakes"
+                                                "Showing " {total_filtered} " of " {total_count} " data lakes"
                                             </p>
                                         })}
 

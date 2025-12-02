@@ -68,6 +68,7 @@ async fn test_execute_tool_mock() {
             script_lang: None,
             llm: None,
             database: None,
+            faker_schema: None,
         }),
         tags: vec![],
     }];

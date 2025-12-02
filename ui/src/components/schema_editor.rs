@@ -484,9 +484,8 @@ pub fn properties_to_schema(properties: &[SchemaProperty]) -> Value {
         }
     }
 
-    if !props.is_empty() {
-        schema.insert("properties".to_string(), Value::Object(props));
-    }
+    // Always include properties key (even if empty) for consistency
+    schema.insert("properties".to_string(), Value::Object(props));
     if !required.is_empty() {
         schema.insert("required".to_string(), json!(required));
     }
@@ -531,9 +530,8 @@ pub fn full_schema_to_value(
         }
     }
 
-    if !props.is_empty() {
-        schema.insert("properties".to_string(), Value::Object(props));
-    }
+    // Always include properties key (even if empty) for consistency
+    schema.insert("properties".to_string(), Value::Object(props));
     if !required.is_empty() {
         schema.insert("required".to_string(), json!(required));
     }
@@ -3000,22 +2998,43 @@ pub fn FullSchemaEditor(
     let (metadata, set_metadata) = signal(SchemaMetadata::default());
     let (definitions, set_definitions) = signal(Vec::<SchemaDefinition>::new());
     let (show_meta_panel, set_show_meta_panel) = signal(false);
+    // Track if we're syncing to prevent re-initialization loops
+    let (is_syncing, set_is_syncing) = signal(false);
+    // Track the last schema we generated to detect external changes
+    let (last_synced_schema, set_last_synced_schema) = signal(String::new());
 
-    // Initialize from schema
-    Effect::new(move |prev: Option<bool>| {
-        if prev.is_none() {
-            let s = schema.get();
-            set_properties.set(schema_to_properties(&s));
-            set_metadata.set(schema_to_metadata(&s));
-            set_definitions.set(schema_to_definitions(&s));
-            set_json_text.set(serde_json::to_string_pretty(&s).unwrap_or_default());
-            // Auto-expand metadata if it has content
-            let meta = schema_to_metadata(&s);
-            if !meta.schema_uri.is_empty() || !meta.id.is_empty() || !meta.title.is_empty() {
-                set_show_meta_panel.set(true);
-            }
+    // Helper to initialize internal state from schema
+    let initialize_from_schema = move |s: &Value| {
+        let props = schema_to_properties(s);
+        let defs = schema_to_definitions(s);
+        set_properties.set(props);
+        set_metadata.set(schema_to_metadata(s));
+        set_definitions.set(defs);
+        set_json_text.set(serde_json::to_string_pretty(s).unwrap_or_default());
+        set_last_synced_schema.set(serde_json::to_string(s).unwrap_or_default());
+        // Auto-expand metadata if it has content
+        let meta = schema_to_metadata(s);
+        if !meta.schema_uri.is_empty() || !meta.id.is_empty() || !meta.title.is_empty() {
+            set_show_meta_panel.set(true);
         }
-        true
+    };
+
+    // Watch for external schema changes (e.g., when edit form loads data)
+    Effect::new(move |_| {
+        let s = schema.get();
+        let schema_str = serde_json::to_string(&s).unwrap_or_default();
+
+        // Skip if we're currently syncing (to avoid loops)
+        if is_syncing.get() {
+            return;
+        }
+
+        // Check if the schema changed externally (not from our sync)
+        let last = last_synced_schema.get();
+        if schema_str != last {
+            // External change detected - re-initialize
+            initialize_from_schema(&s);
+        }
     });
 
     // Create a derived signal for available definition names (formatted as $ref values)
@@ -3031,12 +3050,18 @@ pub fn FullSchemaEditor(
     // Sync changes back to schema
     let sync_to_schema = move || {
         if !json_mode.get() {
+            let props = properties.get();
+            let defs = definitions.get();
             let new_schema = if show_definitions {
-                full_schema_to_value(&metadata.get(), &definitions.get(), &properties.get())
+                full_schema_to_value(&metadata.get(), &defs, &props)
             } else {
-                properties_to_schema(&properties.get())
+                properties_to_schema(&props)
             };
+            // Mark that we're syncing to prevent re-initialization
+            set_is_syncing.set(true);
+            set_last_synced_schema.set(serde_json::to_string(&new_schema).unwrap_or_default());
             set_schema.set(new_schema);
+            set_is_syncing.set(false);
         }
     };
 

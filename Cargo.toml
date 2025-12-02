@@ -25,7 +25,7 @@ config = "0.13"
 anyhow = "1.0"
 thiserror = "1.0"
 async-trait = "0.1"
-rmcp = { version = "0.9", features = ["server", "client", "macros", "transport-streamable-http-server", "transport-streamable-http-server-session", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "tower"] }
+rmcp = { version = "0.10", features = ["server", "client", "macros", "transport-streamable-http-server", "transport-streamable-http-server-session", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "tower"] }
 schemars = "0.8"
 tera = "1"
 fake = { version = "2.9", features = ["derive"] }
@@ -69,7 +69,7 @@ reqwest = { version = "0.11", features = ["json"] }
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 http-body-util = "0.1"
 tempfile = "3"
-rmcp = { version = "0.9", features = ["client", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
+rmcp = { version = "0.10", features = ["client", "transport-streamable-http-client", "transport-streamable-http-client-reqwest"] }
 
 [[bench]]
 name = "mock_strategies"

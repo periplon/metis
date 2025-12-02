@@ -226,8 +226,8 @@ pub fn ListFilterBar(
     search_query: RwSignal<String>,
     /// Selected tags signal
     selected_tags: RwSignal<HashSet<String>>,
-    /// Available tags for filtering
-    #[prop(into)] available_tags: Vec<String>,
+    /// Available tags for filtering (reactive signal)
+    #[prop(into)] available_tags: Signal<Vec<String>>,
     /// Sort field signal (optional)
     #[prop(optional)] sort_field: Option<RwSignal<SortField>>,
     /// Sort order signal (optional)
@@ -243,8 +243,6 @@ pub fn ListFilterBar(
     show_tags: bool,
 ) -> impl IntoView {
     let (show_tag_dropdown, set_show_tag_dropdown) = signal(false);
-    let tags_for_view = available_tags.clone();
-    let has_tags = !available_tags.is_empty();
     let show_sort = sort_field.is_some() && sort_order.is_some();
 
     // Build search input (static, not reactive to avoid focus loss)
@@ -289,80 +287,89 @@ pub fn ListFilterBar(
         None
     };
 
-    // Build tag filter dropdown (static structure)
-    let tag_dropdown = if show_tags && has_tags {
-        let tags = tags_for_view.clone();
+    // Build tag filter dropdown (reactive to available_tags changes)
+    let tag_dropdown = if show_tags {
         Some(view! {
-            <div class="relative">
-                <button
-                    class="inline-flex items-center px-3 py-2 border border-gray-300 rounded-md bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-green-500"
-                    on:click=move |_| set_show_tag_dropdown.update(|v| *v = !*v)
-                >
-                    <svg class="h-4 w-4 mr-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/>
-                    </svg>
-                    "Tags"
-                    {move || {
-                        let count = selected_tags.get().len();
-                        (count > 0).then(|| view! {
-                            <span class="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold leading-none text-green-100 bg-green-600 rounded-full">
-                                {count}
-                            </span>
-                        })
-                    }}
-                    <svg class="ml-2 h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-                    </svg>
-                </button>
+            // Only show when there are tags available
+            {move || {
+                let tags = available_tags.get();
+                if tags.is_empty() {
+                    None
+                } else {
+                    Some(view! {
+                        <div class="relative">
+                            <button
+                                class="inline-flex items-center px-3 py-2 border border-gray-300 rounded-md bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-green-500"
+                                on:click=move |_| set_show_tag_dropdown.update(|v| *v = !*v)
+                            >
+                                <svg class="h-4 w-4 mr-2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/>
+                                </svg>
+                                "Tags"
+                                {move || {
+                                    let count = selected_tags.get().len();
+                                    (count > 0).then(|| view! {
+                                        <span class="ml-2 inline-flex items-center justify-center px-2 py-0.5 text-xs font-bold leading-none text-green-100 bg-green-600 rounded-full">
+                                            {count}
+                                        </span>
+                                    })
+                                }}
+                                <svg class="ml-2 h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                                </svg>
+                            </button>
 
-                // Dropdown menu
-                {move || show_tag_dropdown.get().then(|| {
-                    let dropdown_tags = tags.clone();
-                    view! {
-                        <div class="absolute z-10 mt-1 w-56 bg-white rounded-md shadow-lg ring-1 ring-black ring-opacity-5">
-                            <div class="py-1 max-h-60 overflow-y-auto">
-                                {dropdown_tags.into_iter().map(|tag| {
-                                    let tag_for_check = tag.clone();
-                                    let tag_for_toggle = tag.clone();
-                                    view! {
-                                        <label class="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer">
-                                            <input
-                                                type="checkbox"
-                                                class="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
-                                                prop:checked=move || selected_tags.get().contains(&tag_for_check)
-                                                on:change=move |_| {
-                                                    selected_tags.update(|tags| {
-                                                        if tags.contains(&tag_for_toggle) {
-                                                            tags.remove(&tag_for_toggle);
-                                                        } else {
-                                                            tags.insert(tag_for_toggle.clone());
-                                                        }
-                                                    });
+                            // Dropdown menu
+                            {move || show_tag_dropdown.get().then(|| {
+                                let dropdown_tags = available_tags.get();
+                                view! {
+                                    <div class="absolute z-10 mt-1 w-56 bg-white rounded-md shadow-lg ring-1 ring-black ring-opacity-5">
+                                        <div class="py-1 max-h-60 overflow-y-auto">
+                                            {dropdown_tags.into_iter().map(|tag| {
+                                                let tag_for_check = tag.clone();
+                                                let tag_for_toggle = tag.clone();
+                                                view! {
+                                                    <label class="flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer">
+                                                        <input
+                                                            type="checkbox"
+                                                            class="h-4 w-4 text-green-600 focus:ring-green-500 border-gray-300 rounded"
+                                                            prop:checked=move || selected_tags.get().contains(&tag_for_check)
+                                                            on:change=move |_| {
+                                                                selected_tags.update(|tags| {
+                                                                    if tags.contains(&tag_for_toggle) {
+                                                                        tags.remove(&tag_for_toggle);
+                                                                    } else {
+                                                                        tags.insert(tag_for_toggle.clone());
+                                                                    }
+                                                                });
+                                                            }
+                                                        />
+                                                        <span class="ml-2">{tag}</span>
+                                                    </label>
                                                 }
-                                            />
-                                            <span class="ml-2">{tag}</span>
-                                        </label>
-                                    }
-                                }).collect::<Vec<_>>()}
-                            </div>
-                            // Clear all button
-                            {move || (!selected_tags.get().is_empty()).then(|| view! {
-                                <div class="border-t border-gray-100 px-4 py-2">
-                                    <button
-                                        class="text-sm text-red-600 hover:text-red-800"
-                                        on:click=move |_| {
-                                            selected_tags.set(HashSet::new());
-                                            set_show_tag_dropdown.set(false);
-                                        }
-                                    >
-                                        "Clear all"
-                                    </button>
-                                </div>
+                                            }).collect::<Vec<_>>()}
+                                        </div>
+                                        // Clear all button
+                                        {move || (!selected_tags.get().is_empty()).then(|| view! {
+                                            <div class="border-t border-gray-100 px-4 py-2">
+                                                <button
+                                                    class="text-sm text-red-600 hover:text-red-800"
+                                                    on:click=move |_| {
+                                                        selected_tags.set(HashSet::new());
+                                                        set_show_tag_dropdown.set(false);
+                                                    }
+                                                >
+                                                    "Clear all"
+                                                </button>
+                                            </div>
+                                        })}
+                                    </div>
+                                }
                             })}
                         </div>
-                    }
-                })}
-            </div>
+                    })
+                }
+            }}
         })
     } else {
         None

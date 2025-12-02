@@ -67,6 +67,7 @@ use tokio::sync::RwLock;
             script_lang: None,
             llm: None,
             database: None,
+            faker_schema: None,
         }),
         tags: vec![],
     }];

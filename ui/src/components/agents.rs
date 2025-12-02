@@ -705,6 +705,8 @@ pub fn Agents() -> impl IntoView {
     let sort_order = RwSignal::new(SortOrder::Ascending);
     let current_page = RwSignal::new(0usize);
     let items_per_page = 10usize;
+    // Available tags - updated when agents load
+    let available_tags = RwSignal::new(Vec::<String>::new());
 
     let agents = LocalResource::new(move || {
         let _ = refresh_trigger.get();
@@ -961,14 +963,25 @@ pub fn Agents() -> impl IntoView {
                 </div>
             </div>
 
+            // Filter bar - rendered once outside reactive block to prevent focus loss
+            <ListFilterBar
+                search_query=search_query
+                selected_tags=selected_tags
+                available_tags=Signal::derive(move || available_tags.get())
+                sort_field=sort_field
+                sort_order=sort_order
+                placeholder="Search agents..."
+            />
+
             // Content
             <Suspense fallback=move || view! { <div class="text-center py-8">"Loading agents..."</div> }>
                 {move || {
                     let agents_data = agents.get().flatten();
                     match agents_data {
                         Some(list) if !list.is_empty() => {
-                            // Extract all available tags
-                            let available_tags = extract_tags(&list, |a: &Agent| a.tags.as_slice());
+                            // Update available tags signal
+                            let tags = extract_tags(&list, |a: &Agent| a.tags.as_slice());
+                            available_tags.set(tags);
 
                             // Filter agents
                             let mut filtered_list = filter_items(
@@ -983,27 +996,18 @@ pub fn Agents() -> impl IntoView {
                             sort_items(&mut filtered_list, sort_field.get(), sort_order.get(), |a: &Agent| &a.name);
 
                             let total_filtered = filtered_list.len();
+                            let total_count = list.len();
                             let page_count = total_pages(total_filtered, items_per_page);
                             let paginated_list = paginate_items(&filtered_list, current_page.get(), items_per_page);
 
                             view! {
                                 <div>
-                                    // Filter bar
-                                    <ListFilterBar
-                                        search_query=search_query
-                                        selected_tags=selected_tags
-                                        available_tags=available_tags
-                                        sort_field=sort_field
-                                        sort_order=sort_order
-                                        placeholder="Search agents..."
-                                    />
-
                                     // Show results count when filtered
                                     {move || {
                                         if !search_query.get().is_empty() || !selected_tags.get().is_empty() {
                                             view! {
                                                 <div class="mb-4 text-sm text-gray-600 dark:text-gray-400">
-                                                    "Showing "{total_filtered}" of "{list.len()}" agents"
+                                                    "Showing "{total_filtered}" of "{total_count}" agents"
                                                 </div>
                                             }.into_any()
                                         } else {

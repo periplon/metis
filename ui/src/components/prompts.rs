@@ -100,6 +100,8 @@ pub fn Prompts() -> impl IntoView {
     let sort_order = RwSignal::new(SortOrder::Ascending);
     let current_page = RwSignal::new(0usize);
     let items_per_page = 10usize;
+    // Available tags - updated when prompts load
+    let available_tags = RwSignal::new(Vec::<String>::new());
 
     let prompts = LocalResource::new(move || {
         let _ = refresh_trigger.get();
@@ -370,13 +372,24 @@ pub fn Prompts() -> impl IntoView {
             }
             })}
 
+            // Filter bar - rendered once outside reactive block to prevent focus loss
+            <ListFilterBar
+                search_query=search_query
+                selected_tags=selected_tags
+                available_tags=Signal::derive(move || available_tags.get())
+                sort_field=sort_field
+                sort_order=sort_order
+                placeholder="Search prompts..."
+            />
+
             <Suspense fallback=move || view! { <LoadingState /> }>
                 {move || {
                     prompts.get().map(|data| {
                         match data {
                             Some(list) if !list.is_empty() => {
-                                // Extract tags
-                                let available_tags = extract_tags(&list, |p: &Prompt| p.tags.as_slice());
+                                // Update available tags signal
+                                let tags = extract_tags(&list, |p: &Prompt| p.tags.as_slice());
+                                available_tags.set(tags);
 
                                 // Filter items based on search and tags
                                 let mut filtered = filter_items(
@@ -391,27 +404,16 @@ pub fn Prompts() -> impl IntoView {
                                 sort_items(&mut filtered, sort_field.get(), sort_order.get(), |p: &Prompt| &p.name);
 
                                 let total = total_pages(filtered.len(), items_per_page);
+                                let total_count = list.len();
                                 let paginated = paginate_items(&filtered, current_page.get(), items_per_page);
 
-                                let show_filter_bar = !available_tags.is_empty() || !search_query.get().is_empty();
                                 let has_filters = !search_query.get().is_empty() || !selected_tags.get().is_empty();
 
                                 view! {
                                     <div>
-                                        {show_filter_bar.then(|| view! {
-                                            <ListFilterBar
-                                                search_query=search_query
-                                                selected_tags=selected_tags
-                                                available_tags=available_tags.clone()
-                                                sort_field=sort_field
-                                                sort_order=sort_order
-                                                placeholder="Search prompts..."
-                                            />
-                                        })}
-
                                         {(has_filters && !filtered.is_empty()).then(|| view! {
                                             <div class="mb-4 text-sm text-gray-600">
-                                                {format!("Showing {} of {} prompts", filtered.len(), list.len())}
+                                                {format!("Showing {} of {} prompts", filtered.len(), total_count)}
                                             </div>
                                         })}
 

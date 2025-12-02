@@ -134,6 +134,8 @@ pub fn Workflows() -> impl IntoView {
     let sort_order = RwSignal::new(SortOrder::Ascending);
     let current_page = RwSignal::new(0usize);
     let items_per_page = 10usize;
+    // Available tags - updated when workflows load
+    let available_tags = RwSignal::new(Vec::<String>::new());
 
     let workflows = LocalResource::new(move || {
         let _ = refresh_trigger.get();
@@ -483,13 +485,24 @@ pub fn Workflows() -> impl IntoView {
             }
             })}
 
+            // Filter bar - rendered once outside reactive block to prevent focus loss
+            <ListFilterBar
+                search_query=search_query
+                selected_tags=selected_tags
+                available_tags=Signal::derive(move || available_tags.get())
+                sort_field=sort_field
+                sort_order=sort_order
+                placeholder="Search workflows..."
+            />
+
             <Suspense fallback=move || view! { <LoadingState /> }>
                 {move || {
                     workflows.get().map(|data| {
                         match data {
                             Some(list) if !list.is_empty() => {
-                                // Extract all available tags
-                                let available_tags = extract_tags(&list, |w: &Workflow| w.tags.as_slice());
+                                // Update available tags signal
+                                let tags_list = extract_tags(&list, |w: &Workflow| w.tags.as_slice());
+                                available_tags.set(tags_list);
 
                                 // Filter workflows
                                 let query = search_query.get();
@@ -513,16 +526,6 @@ pub fn Workflows() -> impl IntoView {
 
                                 view! {
                                     <div>
-                                        // Filter bar
-                                        <ListFilterBar
-                                            search_query=search_query
-                                            selected_tags=selected_tags
-                                            available_tags=available_tags.clone()
-                                            sort_field=sort_field
-                                            sort_order=sort_order
-                                            placeholder="Search workflows..."
-                                        />
-
                                         // Results count when filtered
                                         {move || {
                                             if !query.is_empty() || !tags.is_empty() {

@@ -26,6 +26,7 @@ async fn test_generate_template() {
         script_lang: None,
         llm: None,
         database: None,
+        faker_schema: None,
     };
     let args = json!({ "name": "World" });
 
@@ -49,6 +50,7 @@ async fn test_generate_template_missing_args() {
         script_lang: None,
         llm: None,
         database: None,
+        faker_schema: None,
     };
     
     // Tera renders missing variables as empty string by default or errors depending on config. 
@@ -74,6 +76,7 @@ async fn test_generate_random() {
         script_lang: None,
         llm: None,
         database: None,
+        faker_schema: None,
     };
 
     let result = handler.generate(&config, None).await;
@@ -98,6 +101,7 @@ async fn test_generate_random_unknown_type() {
         script_lang: None,
         llm: None,
         database: None,
+        faker_schema: None,
     };
 
     let result = handler.generate(&config, None).await;
@@ -126,6 +130,7 @@ async fn test_generate_script() {
         script_lang: None,
         llm: None,
         database: None,
+        faker_schema: None,
     };
     let args = json!({ "name": "Script" });
 
@@ -152,6 +157,7 @@ async fn test_generate_script_lua() {
         script_lang: Some(ScriptLang::Lua),
         llm: None,
         database: None,
+        faker_schema: None,
     };
     let args = json!({ "name": "Lua" });
 
@@ -181,6 +187,7 @@ async fn test_generate_script_js() {
         script_lang: Some(ScriptLang::Js),
         llm: None,
         database: None,
+        faker_schema: None,
     };
     let args = json!({ "name": "JS" });
 
@@ -210,6 +217,7 @@ output = "Hello, " + input["name"] + "!"
         script_lang: Some(ScriptLang::Python),
         llm: None,
         database: None,
+        faker_schema: None,
     };
     let args = json!({ "name": "Python" });
 
@@ -236,6 +244,7 @@ async fn test_generate_pattern_basic() {
         script_lang: None,
         llm: None,
         database: None,
+        faker_schema: None,
     };
 
     let result = handler.generate(&config, None).await;
@@ -262,6 +271,7 @@ async fn test_generate_pattern_character_class() {
         script_lang: None,
         llm: None,
         database: None,
+        faker_schema: None,
     };
 
     let result = handler.generate(&config, None).await;
@@ -287,6 +297,7 @@ async fn test_generate_pattern_repetition() {
         script_lang: None,
         llm: None,
         database: None,
+        faker_schema: None,
     };
 
     let result = handler.generate(&config, None).await;
@@ -310,6 +321,7 @@ async fn test_generate_pattern_hex() {
         script_lang: None,
         llm: None,
         database: None,
+        faker_schema: None,
     };
 
     let result = handler.generate(&config, None).await;
@@ -346,6 +358,7 @@ async fn test_generate_file_random() {
         script_lang: None,
         llm: None,
         database: None,
+        faker_schema: None,
     };
 
     let result = handler.generate(&config, None).await;
@@ -386,6 +399,7 @@ async fn test_generate_file_sequential() {
         script_lang: None,
         llm: None,
         database: None,
+        faker_schema: None,
     };
 
     // First call should return id: 1
@@ -436,6 +450,7 @@ async fn test_generate_file_jsonlines() {
         script_lang: None,
         llm: None,
         database: None,
+        faker_schema: None,
     };
 
     let result = handler.generate(&config, None).await;
