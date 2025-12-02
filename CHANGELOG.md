@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.36.0 - 2025-12-02
+#### Features
+- **(ui)** add tabbed interface to Workflow create and edit forms - (96dcf8d) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.35.0 - 2025-12-02
 #### Features
 - **(ui)** add tabbed interface to Prompt create and edit forms - (8b1e4eb) - Joan Marc Carbo Arnau
