@@ -69,6 +69,13 @@ enum ViewMode {
     Card,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum PromptFormTab {
+    Basic,
+    Arguments,
+    Messages,
+}
+
 /// Build JSON object from prompt form fields (all string values)
 fn build_json_from_prompt_fields(fields: &HashMap<String, String>) -> serde_json::Value {
     let mut obj = serde_json::Map::new();
@@ -672,6 +679,7 @@ pub fn PromptForm() -> impl IntoView {
     let (messages_json, set_messages_json) = signal(String::new());
     let (error, set_error) = signal(Option::<String>::None);
     let (saving, set_saving) = signal(false);
+    let (active_tab, set_active_tab) = signal(PromptFormTab::Basic);
 
     let on_submit = move |ev: web_sys::SubmitEvent| {
         ev.prevent_default();
@@ -768,61 +776,139 @@ pub fn PromptForm() -> impl IntoView {
                     </div>
                 })}
 
-                <div class="space-y-4">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">"Name *"</label>
-                        <input
-                            type="text"
-                            required=true
-                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
-                            placeholder="my-prompt"
-                            prop:value=move || name.get()
-                            on:input=move |ev| {
-                                let target = ev.target().unwrap();
-                                let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
-                                set_name.set(input.value());
-                            }
-                        />
-                    </div>
+                // Tab Navigation
+                <div class="border-b border-gray-200 mb-6">
+                    <nav class="flex -mb-px space-x-8">
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == PromptFormTab::Basic {
+                                    "border-purple-500 text-purple-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(PromptFormTab::Basic)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                                "Basic"
+                            </span>
+                        </button>
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == PromptFormTab::Arguments {
+                                    "border-purple-500 text-purple-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(PromptFormTab::Arguments)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>
+                                </svg>
+                                "Arguments"
+                            </span>
+                        </button>
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == PromptFormTab::Messages {
+                                    "border-purple-500 text-purple-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(PromptFormTab::Messages)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+                                </svg>
+                                "Messages"
+                            </span>
+                        </button>
+                    </nav>
+                </div>
 
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">"Description *"</label>
-                        <input
-                            type="text"
-                            required=true
-                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
-                            placeholder="What this prompt does"
-                            prop:value=move || description.get()
-                            on:input=move |ev| {
-                                let target = ev.target().unwrap();
-                                let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
-                                set_description.set(input.value());
-                            }
-                        />
+                // Basic Tab
+                <div style=move || if active_tab.get() == PromptFormTab::Basic { "display: block" } else { "display: none" }>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">"Name *"</label>
+                            <input
+                                type="text"
+                                required=true
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                placeholder="my-prompt"
+                                prop:value=move || name.get()
+                                on:input=move |ev| {
+                                    let target = ev.target().unwrap();
+                                    let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                    set_name.set(input.value());
+                                }
+                            />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">"Description *"</label>
+                            <input
+                                type="text"
+                                required=true
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                placeholder="What this prompt does"
+                                prop:value=move || description.get()
+                                on:input=move |ev| {
+                                    let target = ev.target().unwrap();
+                                    let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                    set_description.set(input.value());
+                                }
+                            />
+                        </div>
                     </div>
-
-                    <div>
+                    <div class="mt-4">
                         <label class="block text-sm font-medium text-gray-700 mb-1">"Tags"</label>
                         <TagInput tags=tags />
                         <p class="mt-1 text-xs text-gray-500">"Press Enter or comma to add tags"</p>
                     </div>
+                </div>
 
-                    <div>
-                        <FullSchemaEditor
-                            label="Arguments"
-                            color="purple"
-                            schema=args_schema
-                            set_schema=set_args_schema
-                            show_definitions=true
-                        />
-                    </div>
+                // Arguments Tab
+                <div style=move || if active_tab.get() == PromptFormTab::Arguments { "display: block" } else { "display: none" }>
+                    <FullSchemaEditor
+                        label="Arguments Schema"
+                        color="purple"
+                        schema=args_schema
+                        set_schema=set_args_schema
+                        show_definitions=true
+                        description="Define the arguments that users can pass to this prompt"
+                    />
+                </div>
 
+                // Messages Tab
+                <div style=move || if active_tab.get() == PromptFormTab::Messages { "display: block" } else { "display: none" }>
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">"Messages (JSON Array)"</label>
                         <textarea
-                            rows=6
+                            rows=12
                             class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono text-sm"
-                            placeholder=r#"[{"role": "user", "content": "Hello"}]"#
+                            placeholder=r#"[
+  {
+    "role": "system",
+    "content": "You are a helpful assistant."
+  },
+  {
+    "role": "user",
+    "content": "Hello, {{name}}!"
+  }
+]"#
                             prop:value=move || messages_json.get()
                             on:input=move |ev| {
                                 let target = ev.target().unwrap();
@@ -830,7 +916,7 @@ pub fn PromptForm() -> impl IntoView {
                                 set_messages_json.set(textarea.value());
                             }
                         />
-                        <p class="mt-1 text-xs text-gray-500">"Optional array of prompt messages"</p>
+                        <p class="mt-1 text-xs text-gray-500">"Optional array of prompt messages with role (system/user/assistant) and content"</p>
                     </div>
                 </div>
 
@@ -874,6 +960,7 @@ pub fn PromptEditForm() -> impl IntoView {
     let (loading, set_loading) = signal(true);
     let (original_name, set_original_name) = signal(String::new());
     let (has_loaded, set_has_loaded) = signal(false);
+    let (active_tab, set_active_tab) = signal(PromptFormTab::Basic);
 
     // Load existing prompt (only once)
     Effect::new(move |_| {
@@ -1023,61 +1110,139 @@ pub fn PromptEditForm() -> impl IntoView {
                     </div>
                 })}
 
-                <div class="space-y-4">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">"Name *"</label>
-                        <input
-                            type="text"
-                            required=true
-                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
-                            placeholder="my-prompt"
-                            prop:value=move || name.get()
-                            on:input=move |ev| {
-                                let target = ev.target().unwrap();
-                                let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
-                                set_name.set(input.value());
-                            }
-                        />
-                    </div>
+                // Tab Navigation
+                <div class="border-b border-gray-200 mb-6">
+                    <nav class="flex -mb-px space-x-8">
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == PromptFormTab::Basic {
+                                    "border-purple-500 text-purple-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(PromptFormTab::Basic)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                                "Basic"
+                            </span>
+                        </button>
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == PromptFormTab::Arguments {
+                                    "border-purple-500 text-purple-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(PromptFormTab::Arguments)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>
+                                </svg>
+                                "Arguments"
+                            </span>
+                        </button>
+                        <button
+                            type="button"
+                            class=move || format!(
+                                "py-2 px-1 border-b-2 font-medium text-sm transition-colors {}",
+                                if active_tab.get() == PromptFormTab::Messages {
+                                    "border-purple-500 text-purple-600"
+                                } else {
+                                    "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                                }
+                            )
+                            on:click=move |_| set_active_tab.set(PromptFormTab::Messages)
+                        >
+                            <span class="flex items-center gap-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+                                </svg>
+                                "Messages"
+                            </span>
+                        </button>
+                    </nav>
+                </div>
 
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">"Description *"</label>
-                        <input
-                            type="text"
-                            required=true
-                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
-                            placeholder="What this prompt does"
-                            prop:value=move || description.get()
-                            on:input=move |ev| {
-                                let target = ev.target().unwrap();
-                                let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
-                                set_description.set(input.value());
-                            }
-                        />
+                // Basic Tab
+                <div style=move || if active_tab.get() == PromptFormTab::Basic { "display: block" } else { "display: none" }>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">"Name *"</label>
+                            <input
+                                type="text"
+                                required=true
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                placeholder="my-prompt"
+                                prop:value=move || name.get()
+                                on:input=move |ev| {
+                                    let target = ev.target().unwrap();
+                                    let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                    set_name.set(input.value());
+                                }
+                            />
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">"Description *"</label>
+                            <input
+                                type="text"
+                                required=true
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500"
+                                placeholder="What this prompt does"
+                                prop:value=move || description.get()
+                                on:input=move |ev| {
+                                    let target = ev.target().unwrap();
+                                    let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                    set_description.set(input.value());
+                                }
+                            />
+                        </div>
                     </div>
-
-                    <div>
+                    <div class="mt-4">
                         <label class="block text-sm font-medium text-gray-700 mb-1">"Tags"</label>
                         <TagInput tags=tags />
                         <p class="mt-1 text-xs text-gray-500">"Press Enter or comma to add tags"</p>
                     </div>
+                </div>
 
-                    <div>
-                        <FullSchemaEditor
-                            label="Arguments"
-                            color="purple"
-                            schema=args_schema
-                            set_schema=set_args_schema
-                            show_definitions=true
-                        />
-                    </div>
+                // Arguments Tab
+                <div style=move || if active_tab.get() == PromptFormTab::Arguments { "display: block" } else { "display: none" }>
+                    <FullSchemaEditor
+                        label="Arguments Schema"
+                        color="purple"
+                        schema=args_schema
+                        set_schema=set_args_schema
+                        show_definitions=true
+                        description="Define the arguments that users can pass to this prompt"
+                    />
+                </div>
 
+                // Messages Tab
+                <div style=move || if active_tab.get() == PromptFormTab::Messages { "display: block" } else { "display: none" }>
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">"Messages (JSON Array)"</label>
                         <textarea
-                            rows=6
+                            rows=12
                             class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono text-sm"
-                            placeholder=r#"[{"role": "user", "content": "Hello"}]"#
+                            placeholder=r#"[
+  {
+    "role": "system",
+    "content": "You are a helpful assistant."
+  },
+  {
+    "role": "user",
+    "content": "Hello, {{name}}!"
+  }
+]"#
                             prop:value=move || messages_json.get()
                             on:input=move |ev| {
                                 let target = ev.target().unwrap();
@@ -1085,7 +1250,7 @@ pub fn PromptEditForm() -> impl IntoView {
                                 set_messages_json.set(textarea.value());
                             }
                         />
-                        <p class="mt-1 text-xs text-gray-500">"Optional array of prompt messages"</p>
+                        <p class="mt-1 text-xs text-gray-500">"Optional array of prompt messages with role (system/user/assistant) and content"</p>
                     </div>
                 </div>
 
