@@ -11,7 +11,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::adapters::api_handler::ApiState;
+use crate::adapters::api_handler::{ApiState, sync_item_to_s3_if_active, delete_item_from_s3_if_active};
 use crate::adapters::mock_strategy::MockStrategyHandler;
 use crate::config::{DataLakeConfig, DataLakeSchemaRef, DataRecord, FakerSchemaConfig};
 use crate::persistence::models::ArchetypeType;
@@ -411,6 +411,10 @@ pub async fn create_data_lake(
 
         match store.archetypes().create(ArchetypeType::DataLake.as_str(), &dto.name, &definition).await {
             Ok(()) => {
+                // Auto-sync to S3 if configured
+                if let Err(e) = sync_item_to_s3_if_active(&state, "data_lakes", &dto.name, &dto).await {
+                    tracing::warn!("Failed to sync data lake to S3: {}", e);
+                }
                 return (StatusCode::CREATED, Json(ApiResponse::success(dto)));
             }
             Err(crate::persistence::error::PersistenceError::Duplicate { .. }) => {
@@ -443,6 +447,11 @@ pub async fn create_data_lake(
     settings.data_lakes.push(data_lake);
     drop(settings);
 
+    // Auto-sync to S3 if configured
+    if let Err(e) = sync_item_to_s3_if_active(&state, "data_lakes", &dto.name, &dto).await {
+        tracing::warn!("Failed to sync data lake to S3: {}", e);
+    }
+
     (StatusCode::CREATED, Json(ApiResponse::success(dto)))
 }
 
@@ -466,6 +475,16 @@ pub async fn update_data_lake(
 
         match store.archetypes().update(ArchetypeType::DataLake.as_str(), &name, &definition, None).await {
             Ok(_) => {
+                // Auto-sync to S3 if configured
+                // If name changed, delete old key first
+                if dto.name != name {
+                    if let Err(e) = delete_item_from_s3_if_active(&state, "data_lakes", &name).await {
+                        tracing::warn!("Failed to delete old data lake from S3: {}", e);
+                    }
+                }
+                if let Err(e) = sync_item_to_s3_if_active(&state, "data_lakes", &dto.name, &dto).await {
+                    tracing::warn!("Failed to sync data lake to S3: {}", e);
+                }
                 return (StatusCode::OK, Json(ApiResponse::success(dto)));
             }
             Err(crate::persistence::error::PersistenceError::NotFound { .. }) => {
@@ -505,6 +524,17 @@ pub async fn update_data_lake(
         data_lake.enable_sql_queries = dto.enable_sql_queries;
         drop(settings);
 
+        // Auto-sync to S3 if configured
+        // If name changed, delete old key first
+        if dto.name != name {
+            if let Err(e) = delete_item_from_s3_if_active(&state, "data_lakes", &name).await {
+                tracing::warn!("Failed to delete old data lake from S3: {}", e);
+            }
+        }
+        if let Err(e) = sync_item_to_s3_if_active(&state, "data_lakes", &dto.name, &dto).await {
+            tracing::warn!("Failed to sync data lake to S3: {}", e);
+        }
+
         (StatusCode::OK, Json(ApiResponse::success(dto)))
     } else {
         (StatusCode::NOT_FOUND, Json(ApiResponse::<DataLakeDto>::error("Data lake not found")))
@@ -528,6 +558,10 @@ pub async fn delete_data_lake(
 
         match store.archetypes().delete(ArchetypeType::DataLake.as_str(), &name).await {
             Ok(true) => {
+                // Auto-delete from S3 if configured
+                if let Err(e) = delete_item_from_s3_if_active(&state, "data_lakes", &name).await {
+                    tracing::warn!("Failed to delete data lake from S3: {}", e);
+                }
                 return (StatusCode::OK, Json(ApiResponse::<()>::ok()));
             }
             Ok(false) => {
@@ -549,6 +583,11 @@ pub async fn delete_data_lake(
     settings.data_lakes.retain(|d| d.name != name);
 
     if settings.data_lakes.len() < initial_len {
+        drop(settings);
+        // Auto-delete from S3 if configured
+        if let Err(e) = delete_item_from_s3_if_active(&state, "data_lakes", &name).await {
+            tracing::warn!("Failed to delete data lake from S3: {}", e);
+        }
         (StatusCode::OK, Json(ApiResponse::<()>::ok()))
     } else {
         (StatusCode::NOT_FOUND, Json(ApiResponse::<()>::error("Data lake not found")))

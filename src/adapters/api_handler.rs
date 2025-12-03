@@ -1081,6 +1081,11 @@ pub async fn create_resource(
         // Use URI as the name for resources
         match store.archetypes().create(ArchetypeType::Resource.as_str(), &dto.uri, &definition).await {
             Ok(()) => {
+                // Auto-sync to S3 if configured
+                let safe_name = sanitize_uri_for_s3(&dto.uri);
+                if let Err(e) = sync_item_to_s3_if_active(&state, "resources", &safe_name, &dto).await {
+                    tracing::warn!("Failed to sync resource to S3: {}", e);
+                }
                 if let Some(broadcaster) = &state.broadcaster {
                     broadcaster.notify_resources_changed().await;
                     broadcaster.notify_tools_changed().await;
@@ -1117,6 +1122,12 @@ pub async fn create_resource(
     settings.resources.push(resource);
     drop(settings);
 
+    // Auto-sync to S3 if configured
+    let safe_name = sanitize_uri_for_s3(&dto.uri);
+    if let Err(e) = sync_item_to_s3_if_active(&state, "resources", &safe_name, &dto).await {
+        tracing::warn!("Failed to sync resource to S3: {}", e);
+    }
+
     // Notify connected MCP clients about the resource list change
     // Resources are also exposed as tools, so notify both
     if let Some(broadcaster) = &state.broadcaster {
@@ -1149,6 +1160,11 @@ pub async fn update_resource(
 
         match store.archetypes().update(ArchetypeType::Resource.as_str(), &decoded_uri, &definition, None).await {
             Ok(_) => {
+                // Auto-sync to S3 if configured
+                let safe_name = sanitize_uri_for_s3(&dto.uri);
+                if let Err(e) = sync_item_to_s3_if_active(&state, "resources", &safe_name, &dto).await {
+                    tracing::warn!("Failed to sync resource to S3: {}", e);
+                }
                 if let Some(broadcaster) = &state.broadcaster {
                     broadcaster.notify_resources_changed().await;
                     broadcaster.notify_tools_changed().await;
@@ -1180,6 +1196,12 @@ pub async fn update_resource(
         resource.mock = dto.mock.clone();
         drop(settings);
 
+        // Auto-sync to S3 if configured
+        let safe_name = sanitize_uri_for_s3(&dto.uri);
+        if let Err(e) = sync_item_to_s3_if_active(&state, "resources", &safe_name, &dto).await {
+            tracing::warn!("Failed to sync resource to S3: {}", e);
+        }
+
         // Notify connected MCP clients about the resource list change
         // Resources are also exposed as tools, so notify both
         if let Some(broadcaster) = &state.broadcaster {
@@ -1204,6 +1226,11 @@ pub async fn delete_resource(
     if let Some(store) = &state.data_store {
         match store.archetypes().delete(ArchetypeType::Resource.as_str(), &decoded_uri).await {
             Ok(true) => {
+                // Auto-delete from S3 if configured
+                let safe_name = sanitize_uri_for_s3(&decoded_uri);
+                if let Err(e) = delete_item_from_s3_if_active(&state, "resources", &safe_name).await {
+                    tracing::warn!("Failed to delete resource from S3: {}", e);
+                }
                 if let Some(broadcaster) = &state.broadcaster {
                     broadcaster.notify_resources_changed().await;
                     broadcaster.notify_tools_changed().await;
@@ -1230,6 +1257,12 @@ pub async fn delete_resource(
 
     if settings.resources.len() < initial_len {
         drop(settings);
+
+        // Auto-delete from S3 if configured
+        let safe_name = sanitize_uri_for_s3(&decoded_uri);
+        if let Err(e) = delete_item_from_s3_if_active(&state, "resources", &safe_name).await {
+            tracing::warn!("Failed to delete resource from S3: {}", e);
+        }
 
         // Notify connected MCP clients about the resource list change
         // Resources are also exposed as tools, so notify both
@@ -1340,6 +1373,10 @@ pub async fn create_tool(
 
         match store.archetypes().create(ArchetypeType::Tool.as_str(), &dto.name, &definition).await {
             Ok(()) => {
+                // Auto-sync to S3 if configured
+                if let Err(e) = sync_item_to_s3_if_active(&state, "tools", &dto.name, &dto).await {
+                    tracing::warn!("Failed to sync tool to S3: {}", e);
+                }
                 // Notify connected MCP clients about the tool list change
                 if let Some(broadcaster) = &state.broadcaster {
                     broadcaster.notify_tools_changed().await;
@@ -1376,6 +1413,11 @@ pub async fn create_tool(
     settings.tools.push(tool);
     drop(settings);
 
+    // Auto-sync to S3 if configured
+    if let Err(e) = sync_item_to_s3_if_active(&state, "tools", &dto.name, &dto).await {
+        tracing::warn!("Failed to sync tool to S3: {}", e);
+    }
+
     // Notify connected MCP clients about the tool list change
     if let Some(broadcaster) = &state.broadcaster {
         broadcaster.notify_tools_changed().await;
@@ -1405,6 +1447,10 @@ pub async fn update_tool(
 
         match store.archetypes().update(ArchetypeType::Tool.as_str(), &name, &definition, None).await {
             Ok(_) => {
+                // Auto-sync to S3 if configured
+                if let Err(e) = sync_item_to_s3_if_active(&state, "tools", &dto.name, &dto).await {
+                    tracing::warn!("Failed to sync tool to S3: {}", e);
+                }
                 // Notify connected MCP clients about the tool list change
                 if let Some(broadcaster) = &state.broadcaster {
                     broadcaster.notify_tools_changed().await;
@@ -1435,6 +1481,11 @@ pub async fn update_tool(
         tool.mock = dto.mock.clone();
         drop(settings);
 
+        // Auto-sync to S3 if configured
+        if let Err(e) = sync_item_to_s3_if_active(&state, "tools", &dto.name, &dto).await {
+            tracing::warn!("Failed to sync tool to S3: {}", e);
+        }
+
         // Notify connected MCP clients about the tool list change
         if let Some(broadcaster) = &state.broadcaster {
             broadcaster.notify_tools_changed().await;
@@ -1455,6 +1506,10 @@ pub async fn delete_tool(
     if let Some(store) = &state.data_store {
         match store.archetypes().delete(ArchetypeType::Tool.as_str(), &name).await {
             Ok(true) => {
+                // Auto-delete from S3 if configured
+                if let Err(e) = delete_item_from_s3_if_active(&state, "tools", &name).await {
+                    tracing::warn!("Failed to delete tool from S3: {}", e);
+                }
                 // Notify connected MCP clients about the tool list change
                 if let Some(broadcaster) = &state.broadcaster {
                     broadcaster.notify_tools_changed().await;
@@ -1481,6 +1536,11 @@ pub async fn delete_tool(
 
     if settings.tools.len() < initial_len {
         drop(settings);
+
+        // Auto-delete from S3 if configured
+        if let Err(e) = delete_item_from_s3_if_active(&state, "tools", &name).await {
+            tracing::warn!("Failed to delete tool from S3: {}", e);
+        }
 
         // Notify connected MCP clients about the tool list change
         if let Some(broadcaster) = &state.broadcaster {
@@ -1585,6 +1645,10 @@ pub async fn create_prompt(
 
         match store.archetypes().create(ArchetypeType::Prompt.as_str(), &dto.name, &definition).await {
             Ok(()) => {
+                // Auto-sync to S3 if configured
+                if let Err(e) = sync_item_to_s3_if_active(&state, "prompts", &dto.name, &dto).await {
+                    tracing::warn!("Failed to sync prompt to S3: {}", e);
+                }
                 if let Some(broadcaster) = &state.broadcaster {
                     broadcaster.notify_prompts_changed().await;
                 }
@@ -1620,6 +1684,11 @@ pub async fn create_prompt(
     settings.prompts.push(prompt);
     drop(settings);
 
+    // Auto-sync to S3 if configured
+    if let Err(e) = sync_item_to_s3_if_active(&state, "prompts", &dto.name, &dto).await {
+        tracing::warn!("Failed to sync prompt to S3: {}", e);
+    }
+
     // Notify connected MCP clients about the prompt list change
     if let Some(broadcaster) = &state.broadcaster {
         broadcaster.notify_prompts_changed().await;
@@ -1648,6 +1717,10 @@ pub async fn update_prompt(
 
         match store.archetypes().update(ArchetypeType::Prompt.as_str(), &name, &definition, None).await {
             Ok(_) => {
+                // Auto-sync to S3 if configured
+                if let Err(e) = sync_item_to_s3_if_active(&state, "prompts", &dto.name, &dto).await {
+                    tracing::warn!("Failed to sync prompt to S3: {}", e);
+                }
                 if let Some(broadcaster) = &state.broadcaster {
                     broadcaster.notify_prompts_changed().await;
                 }
@@ -1690,6 +1763,11 @@ pub async fn update_prompt(
         });
         drop(settings);
 
+        // Auto-sync to S3 if configured
+        if let Err(e) = sync_item_to_s3_if_active(&state, "prompts", &dto.name, &dto).await {
+            tracing::warn!("Failed to sync prompt to S3: {}", e);
+        }
+
         // Notify connected MCP clients about the prompt list change
         if let Some(broadcaster) = &state.broadcaster {
             broadcaster.notify_prompts_changed().await;
@@ -1710,6 +1788,10 @@ pub async fn delete_prompt(
     if let Some(store) = &state.data_store {
         match store.archetypes().delete(ArchetypeType::Prompt.as_str(), &name).await {
             Ok(true) => {
+                // Auto-delete from S3 if configured
+                if let Err(e) = delete_item_from_s3_if_active(&state, "prompts", &name).await {
+                    tracing::warn!("Failed to delete prompt from S3: {}", e);
+                }
                 if let Some(broadcaster) = &state.broadcaster {
                     broadcaster.notify_prompts_changed().await;
                 }
@@ -1735,6 +1817,11 @@ pub async fn delete_prompt(
 
     if settings.prompts.len() < initial_len {
         drop(settings);
+
+        // Auto-delete from S3 if configured
+        if let Err(e) = delete_item_from_s3_if_active(&state, "prompts", &name).await {
+            tracing::warn!("Failed to delete prompt from S3: {}", e);
+        }
 
         // Notify connected MCP clients about the prompt list change
         if let Some(broadcaster) = &state.broadcaster {
@@ -1839,6 +1926,10 @@ pub async fn create_workflow(
 
         match store.archetypes().create(ArchetypeType::Workflow.as_str(), &dto.name, &definition).await {
             Ok(()) => {
+                // Auto-sync to S3 if configured
+                if let Err(e) = sync_item_to_s3_if_active(&state, "workflows", &dto.name, &dto).await {
+                    tracing::warn!("Failed to sync workflow to S3: {}", e);
+                }
                 if let Some(broadcaster) = &state.broadcaster {
                     broadcaster.notify_tools_changed().await;
                 }
@@ -1874,6 +1965,11 @@ pub async fn create_workflow(
     settings.workflows.push(workflow);
     drop(settings);
 
+    // Auto-sync to S3 if configured
+    if let Err(e) = sync_item_to_s3_if_active(&state, "workflows", &dto.name, &dto).await {
+        tracing::warn!("Failed to sync workflow to S3: {}", e);
+    }
+
     // Workflows are exposed as tools, so notify about tool list change
     if let Some(broadcaster) = &state.broadcaster {
         broadcaster.notify_tools_changed().await;
@@ -1902,6 +1998,10 @@ pub async fn update_workflow(
 
         match store.archetypes().update(ArchetypeType::Workflow.as_str(), &name, &definition, None).await {
             Ok(_) => {
+                // Auto-sync to S3 if configured
+                if let Err(e) = sync_item_to_s3_if_active(&state, "workflows", &dto.name, &dto).await {
+                    tracing::warn!("Failed to sync workflow to S3: {}", e);
+                }
                 if let Some(broadcaster) = &state.broadcaster {
                     broadcaster.notify_tools_changed().await;
                 }
@@ -1931,6 +2031,11 @@ pub async fn update_workflow(
         workflow.on_error = dto.on_error.clone();
         drop(settings);
 
+        // Auto-sync to S3 if configured
+        if let Err(e) = sync_item_to_s3_if_active(&state, "workflows", &dto.name, &dto).await {
+            tracing::warn!("Failed to sync workflow to S3: {}", e);
+        }
+
         // Workflows are exposed as tools, so notify about tool list change
         if let Some(broadcaster) = &state.broadcaster {
             broadcaster.notify_tools_changed().await;
@@ -1951,6 +2056,10 @@ pub async fn delete_workflow(
     if let Some(store) = &state.data_store {
         match store.archetypes().delete(ArchetypeType::Workflow.as_str(), &name).await {
             Ok(true) => {
+                // Auto-delete from S3 if configured
+                if let Err(e) = delete_item_from_s3_if_active(&state, "workflows", &name).await {
+                    tracing::warn!("Failed to delete workflow from S3: {}", e);
+                }
                 if let Some(broadcaster) = &state.broadcaster {
                     broadcaster.notify_tools_changed().await;
                 }
@@ -1976,6 +2085,11 @@ pub async fn delete_workflow(
 
     if settings.workflows.len() < initial_len {
         drop(settings);
+
+        // Auto-delete from S3 if configured
+        if let Err(e) = delete_item_from_s3_if_active(&state, "workflows", &name).await {
+            tracing::warn!("Failed to delete workflow from S3: {}", e);
+        }
 
         // Workflows are exposed as tools, so notify about tool list change
         if let Some(broadcaster) = &state.broadcaster {
@@ -2099,6 +2213,11 @@ pub async fn create_resource_template(
         // Use uri_template as the name
         match store.archetypes().create(ArchetypeType::ResourceTemplate.as_str(), &dto.uri_template, &definition).await {
             Ok(()) => {
+                // Auto-sync to S3 if configured
+                let safe_name = sanitize_uri_template_for_s3(&dto.uri_template);
+                if let Err(e) = sync_item_to_s3_if_active(&state, "resource_templates", &safe_name, &dto).await {
+                    tracing::warn!("Failed to sync resource template to S3: {}", e);
+                }
                 if let Some(broadcaster) = &state.broadcaster {
                     broadcaster.notify_resources_changed().await;
                     broadcaster.notify_tools_changed().await;
@@ -2141,6 +2260,12 @@ pub async fn create_resource_template(
     settings.resource_templates.push(template);
     drop(settings);
 
+    // Auto-sync to S3 if configured
+    let safe_name = sanitize_uri_template_for_s3(&dto.uri_template);
+    if let Err(e) = sync_item_to_s3_if_active(&state, "resource_templates", &safe_name, &dto).await {
+        tracing::warn!("Failed to sync resource template to S3: {}", e);
+    }
+
     // Resource templates affect resource list and are also exposed as tools
     if let Some(broadcaster) = &state.broadcaster {
         broadcaster.notify_resources_changed().await;
@@ -2174,6 +2299,11 @@ pub async fn update_resource_template(
 
         match store.archetypes().update(ArchetypeType::ResourceTemplate.as_str(), &decoded_uri, &definition, None).await {
             Ok(_) => {
+                // Auto-sync to S3 if configured
+                let safe_name = sanitize_uri_template_for_s3(&dto.uri_template);
+                if let Err(e) = sync_item_to_s3_if_active(&state, "resource_templates", &safe_name, &dto).await {
+                    tracing::warn!("Failed to sync resource template to S3: {}", e);
+                }
                 if let Some(broadcaster) = &state.broadcaster {
                     broadcaster.notify_resources_changed().await;
                     broadcaster.notify_tools_changed().await;
@@ -2210,6 +2340,12 @@ pub async fn update_resource_template(
         template.mock = dto.mock.clone();
         drop(settings);
 
+        // Auto-sync to S3 if configured
+        let safe_name = sanitize_uri_template_for_s3(&dto.uri_template);
+        if let Err(e) = sync_item_to_s3_if_active(&state, "resource_templates", &safe_name, &dto).await {
+            tracing::warn!("Failed to sync resource template to S3: {}", e);
+        }
+
         // Resource templates affect resource list and are also exposed as tools
         if let Some(broadcaster) = &state.broadcaster {
             broadcaster.notify_resources_changed().await;
@@ -2238,6 +2374,11 @@ pub async fn delete_resource_template(
     if let Some(store) = &state.data_store {
         match store.archetypes().delete(ArchetypeType::ResourceTemplate.as_str(), &decoded_uri).await {
             Ok(true) => {
+                // Auto-delete from S3 if configured
+                let safe_name = sanitize_uri_template_for_s3(&decoded_uri);
+                if let Err(e) = delete_item_from_s3_if_active(&state, "resource_templates", &safe_name).await {
+                    tracing::warn!("Failed to delete resource template from S3: {}", e);
+                }
                 if let Some(broadcaster) = &state.broadcaster {
                     broadcaster.notify_resources_changed().await;
                     broadcaster.notify_tools_changed().await;
@@ -2266,6 +2407,12 @@ pub async fn delete_resource_template(
 
     if settings.resource_templates.len() < initial_len {
         drop(settings);
+
+        // Auto-delete from S3 if configured
+        let safe_name = sanitize_uri_template_for_s3(&decoded_uri);
+        if let Err(e) = delete_item_from_s3_if_active(&state, "resource_templates", &safe_name).await {
+            tracing::warn!("Failed to delete resource template from S3: {}", e);
+        }
 
         // Resource templates affect resource list and are also exposed as tools
         if let Some(broadcaster) = &state.broadcaster {
@@ -2606,6 +2753,94 @@ async fn upload_item_to_s3<T: Serialize>(
     Ok(())
 }
 
+/// Sync a single item to S3 if S3 backend is configured and active.
+/// This is called automatically when items are created or updated through the UI.
+/// Returns Ok(true) if synced, Ok(false) if S3 not active, Err on failure.
+pub async fn sync_item_to_s3_if_active<T: Serialize>(
+    state: &ApiState,
+    subdir: &str,
+    name: &str,
+    item: &T,
+) -> Result<bool, String> {
+    let settings = state.settings.read().await;
+
+    // Check if S3 is configured and active
+    let s3_config = match &settings.s3 {
+        Some(cfg) if cfg.is_active() => cfg.clone(),
+        _ => return Ok(false), // S3 not active, nothing to do
+    };
+
+    drop(settings); // Release the lock before async operations
+
+    // Build S3 client
+    let sdk_config = build_s3_config(&s3_config, &state.secrets)
+        .await
+        .map_err(|e| format!("Failed to configure S3 client: {}", e))?;
+    let client = aws_sdk_s3::Client::new(&sdk_config);
+
+    let bucket = s3_config.bucket.as_ref().ok_or("S3 bucket not configured")?;
+    let prefix = s3_config.get_prefix();
+
+    // Upload the item
+    upload_item_to_s3(&client, bucket, &prefix, subdir, name, item).await?;
+
+    tracing::info!("Auto-synced {} '{}' to S3", subdir, name);
+    Ok(true)
+}
+
+/// Delete a single item from S3 if S3 backend is configured and active.
+/// This is called automatically when items are deleted through the UI.
+/// Returns Ok(true) if deleted, Ok(false) if S3 not active, Err on failure.
+pub async fn delete_item_from_s3_if_active(
+    state: &ApiState,
+    subdir: &str,
+    name: &str,
+) -> Result<bool, String> {
+    let settings = state.settings.read().await;
+
+    // Check if S3 is configured and active
+    let s3_config = match &settings.s3 {
+        Some(cfg) if cfg.is_active() => cfg.clone(),
+        _ => return Ok(false), // S3 not active, nothing to do
+    };
+
+    drop(settings); // Release the lock before async operations
+
+    // Build S3 client
+    let sdk_config = build_s3_config(&s3_config, &state.secrets)
+        .await
+        .map_err(|e| format!("Failed to configure S3 client: {}", e))?;
+    let client = aws_sdk_s3::Client::new(&sdk_config);
+
+    let bucket = s3_config.bucket.as_ref().ok_or("S3 bucket not configured")?;
+    let prefix = s3_config.get_prefix();
+    let key = format!("{}{}/{}.yaml", prefix, subdir, name);
+
+    // Delete the item from S3
+    client
+        .delete_object()
+        .bucket(bucket)
+        .key(&key)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to delete {} from S3: {}", key, e))?;
+
+    tracing::info!("Auto-deleted {} '{}' from S3: {}", subdir, name, key);
+    Ok(true)
+}
+
+/// Sanitize a URI for use as an S3 key filename.
+/// Replaces characters that are problematic in S3 keys.
+fn sanitize_uri_for_s3(uri: &str) -> String {
+    uri.replace(['/', ':', '?', '#', ' '], "_")
+}
+
+/// Sanitize a URI template for use as an S3 key filename.
+/// Replaces characters that are problematic in S3 keys.
+fn sanitize_uri_template_for_s3(uri_template: &str) -> String {
+    uri_template.replace(['/', ':', '?', '#', ' ', '{', '}'], "_")
+}
+
 /// POST /api/config/save-s3 - Save current configuration to S3
 /// Supports optimistic locking via expected_version in request body
 /// Also uploads individual schemas, tools, resources, prompts, agents, and workflows
@@ -2845,6 +3080,13 @@ pub async fn save_config_to_s3(
         }
     }
 
+    // Upload data lakes
+    for data_lake in &settings.data_lakes {
+        if let Err(e) = upload_item_to_s3(&client, bucket, &prefix, "data_lakes", &data_lake.name, data_lake).await {
+            upload_errors.push(e);
+        }
+    }
+
     // Log any upload errors but don't fail the whole operation
     if !upload_errors.is_empty() {
         tracing::warn!("Some individual item uploads failed: {:?}", upload_errors);
@@ -2852,7 +3094,7 @@ pub async fn save_config_to_s3(
 
     let total_items = settings.schemas.len() + settings.tools.len() + settings.resources.len()
         + settings.resource_templates.len() + settings.prompts.len()
-        + settings.agents.len() + settings.workflows.len();
+        + settings.agents.len() + settings.workflows.len() + settings.data_lakes.len();
     let successful_items = total_items - upload_errors.len();
     tracing::info!("Uploaded {}/{} individual items to S3", successful_items, total_items);
 
@@ -3719,6 +3961,10 @@ pub async fn create_agent(
 
         match store.archetypes().create(ArchetypeType::Agent.as_str(), &dto.name, &definition).await {
             Ok(()) => {
+                // Auto-sync to S3 if configured
+                if let Err(e) = sync_item_to_s3_if_active(&state, "agents", &dto.name, &dto).await {
+                    tracing::warn!("Failed to sync agent to S3: {}", e);
+                }
                 *state.test_agent_handler.write().await = None;
                 if let Some(tool_handler) = &state.tool_handler {
                     if let Err(e) = tool_handler.reinitialize_agents().await {
@@ -3756,9 +4002,14 @@ pub async fn create_agent(
         );
     }
 
-    let agent: AgentConfig = dto.into();
+    let agent: AgentConfig = dto.clone().into();
     settings.agents.push(agent.clone());
     drop(settings);
+
+    // Auto-sync to S3 if configured
+    if let Err(e) = sync_item_to_s3_if_active(&state, "agents", &dto.name, &dto).await {
+        tracing::warn!("Failed to sync agent to S3: {}", e);
+    }
 
     // Reset cached agent handler so it re-initializes with new agent
     *state.test_agent_handler.write().await = None;
@@ -3798,6 +4049,10 @@ pub async fn update_agent(
 
         match store.archetypes().update(ArchetypeType::Agent.as_str(), &name, &definition, None).await {
             Ok(_) => {
+                // Auto-sync to S3 if configured
+                if let Err(e) = sync_item_to_s3_if_active(&state, "agents", &dto.name, &dto).await {
+                    tracing::warn!("Failed to sync agent to S3: {}", e);
+                }
                 *state.test_agent_handler.write().await = None;
                 if let Some(tool_handler) = &state.tool_handler {
                     if let Err(e) = tool_handler.reinitialize_agents().await {
@@ -3825,9 +4080,14 @@ pub async fn update_agent(
     let mut settings = state.settings.write().await;
 
     if let Some(agent) = settings.agents.iter_mut().find(|a| a.name == name) {
-        *agent = dto.into();
+        *agent = dto.clone().into();
         let result = AgentDto::from(&*agent);
         drop(settings);
+
+        // Auto-sync to S3 if configured
+        if let Err(e) = sync_item_to_s3_if_active(&state, "agents", &dto.name, &dto).await {
+            tracing::warn!("Failed to sync agent to S3: {}", e);
+        }
 
         // Reset cached agent handler so it re-initializes with updated agent
         *state.test_agent_handler.write().await = None;
@@ -3859,6 +4119,10 @@ pub async fn delete_agent(
     if let Some(store) = &state.data_store {
         match store.archetypes().delete(ArchetypeType::Agent.as_str(), &name).await {
             Ok(true) => {
+                // Auto-delete from S3 if configured
+                if let Err(e) = delete_item_from_s3_if_active(&state, "agents", &name).await {
+                    tracing::warn!("Failed to delete agent from S3: {}", e);
+                }
                 *state.test_agent_handler.write().await = None;
                 if let Some(tool_handler) = &state.tool_handler {
                     if let Err(e) = tool_handler.reinitialize_agents().await {
@@ -3890,6 +4154,11 @@ pub async fn delete_agent(
 
     if settings.agents.len() < initial_len {
         drop(settings);
+
+        // Auto-delete from S3 if configured
+        if let Err(e) = delete_item_from_s3_if_active(&state, "agents", &name).await {
+            tracing::warn!("Failed to delete agent from S3: {}", e);
+        }
 
         // Reset cached agent handler so it re-initializes without deleted agent
         *state.test_agent_handler.write().await = None;
@@ -4892,6 +5161,10 @@ pub async fn create_schema(
 
         match store.archetypes().create(ArchetypeType::Schema.as_str(), &dto.name, &definition).await {
             Ok(()) => {
+                // Auto-sync to S3 if configured
+                if let Err(e) = sync_item_to_s3_if_active(&state, "schemas", &dto.name, &dto).await {
+                    tracing::warn!("Failed to sync schema to S3: {}", e);
+                }
                 return (StatusCode::CREATED, Json(ApiResponse::success(dto)));
             }
             Err(crate::persistence::error::PersistenceError::Duplicate { .. }) => {
@@ -4924,6 +5197,11 @@ pub async fn create_schema(
     settings.schemas.push(schema);
     drop(settings);
 
+    // Auto-sync to S3 if configured
+    if let Err(e) = sync_item_to_s3_if_active(&state, "schemas", &dto.name, &dto).await {
+        tracing::warn!("Failed to sync schema to S3: {}", e);
+    }
+
     (StatusCode::CREATED, Json(ApiResponse::success(dto)))
 }
 
@@ -4947,6 +5225,16 @@ pub async fn update_schema(
 
         match store.archetypes().update(ArchetypeType::Schema.as_str(), &name, &definition, None).await {
             Ok(_) => {
+                // Auto-sync to S3 if configured
+                // If name changed, delete old key first
+                if dto.name != name {
+                    if let Err(e) = delete_item_from_s3_if_active(&state, "schemas", &name).await {
+                        tracing::warn!("Failed to delete old schema from S3: {}", e);
+                    }
+                }
+                if let Err(e) = sync_item_to_s3_if_active(&state, "schemas", &dto.name, &dto).await {
+                    tracing::warn!("Failed to sync schema to S3: {}", e);
+                }
                 return (StatusCode::OK, Json(ApiResponse::success(dto)));
             }
             Err(crate::persistence::error::PersistenceError::NotFound { .. }) => {
@@ -4981,6 +5269,17 @@ pub async fn update_schema(
         schema.schema = dto.schema.clone();
         drop(settings);
 
+        // Auto-sync to S3 if configured
+        // If name changed, delete old key first
+        if dto.name != name {
+            if let Err(e) = delete_item_from_s3_if_active(&state, "schemas", &name).await {
+                tracing::warn!("Failed to delete old schema from S3: {}", e);
+            }
+        }
+        if let Err(e) = sync_item_to_s3_if_active(&state, "schemas", &dto.name, &dto).await {
+            tracing::warn!("Failed to sync schema to S3: {}", e);
+        }
+
         (StatusCode::OK, Json(ApiResponse::success(dto)))
     } else {
         (StatusCode::NOT_FOUND, Json(ApiResponse::<SchemaDto>::error("Schema not found")))
@@ -4996,6 +5295,10 @@ pub async fn delete_schema(
     if let Some(store) = &state.data_store {
         match store.archetypes().delete(ArchetypeType::Schema.as_str(), &name).await {
             Ok(true) => {
+                // Auto-delete from S3 if configured
+                if let Err(e) = delete_item_from_s3_if_active(&state, "schemas", &name).await {
+                    tracing::warn!("Failed to delete schema from S3: {}", e);
+                }
                 return (StatusCode::OK, Json(ApiResponse::<()>::ok()));
             }
             Ok(false) => {
@@ -5017,6 +5320,11 @@ pub async fn delete_schema(
     settings.schemas.retain(|s| s.name != name);
 
     if settings.schemas.len() < initial_len {
+        drop(settings);
+        // Auto-delete from S3 if configured
+        if let Err(e) = delete_item_from_s3_if_active(&state, "schemas", &name).await {
+            tracing::warn!("Failed to delete schema from S3: {}", e);
+        }
         (StatusCode::OK, Json(ApiResponse::<()>::ok()))
     } else {
         (StatusCode::NOT_FOUND, Json(ApiResponse::<()>::error("Schema not found")))
