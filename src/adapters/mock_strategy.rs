@@ -360,6 +360,12 @@ impl MockStrategyHandler {
         }
     }
 
+    /// Public method to generate data from a faker schema configuration
+    /// Used by data lake record generation
+    pub fn generate_from_faker_config(&self, schema_config: &FakerSchemaConfig) -> Result<Value> {
+        self.generate_from_schema(schema_config)
+    }
+
     /// Generate data from a schema-driven faker configuration
     fn generate_from_schema(&self, schema_config: &FakerSchemaConfig) -> Result<Value> {
         let mut result = serde_json::Map::new();

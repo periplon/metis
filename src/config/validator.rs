@@ -237,6 +237,7 @@ mod tests {
             schemas: vec![],
             data_lakes: vec![],
             database: None,
+            file_storage: None,
         };
 
         let result = ConfigValidator::validate(&settings);
@@ -267,6 +268,7 @@ mod tests {
             schemas: vec![],
             data_lakes: vec![],
             database: None,
+            file_storage: None,
         };
 
         let result = ConfigValidator::validate(&settings);
@@ -320,6 +322,7 @@ mod tests {
             schemas: vec![],
             data_lakes: vec![],
             database: None,
+            file_storage: None,
         };
 
         let result = ConfigValidator::validate(&settings);

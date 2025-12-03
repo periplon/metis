@@ -54,6 +54,10 @@ pub struct ApiState {
     pub tool_handler: Option<Arc<crate::adapters::tool_handler::BasicToolHandler>>,
     /// Database store for archetypes (when database persistence is enabled)
     pub data_store: Option<Arc<DataStore>>,
+    /// File storage handler for data lake records
+    pub file_storage: Option<Arc<crate::adapters::file_storage::FileStorageHandler>>,
+    /// DataFusion handler for SQL queries
+    pub datafusion: Option<Arc<crate::adapters::datafusion_handler::DataFusionHandler>>,
 }
 
 /// Tool handler for workflow testing that uses mock strategies
@@ -747,6 +751,72 @@ impl From<&crate::persistence::PersistenceConfig> for DatabaseConfigDto {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
+pub struct S3DataConfigDto {
+    pub bucket: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access_key_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret_access_key: Option<String>,
+    #[serde(default)]
+    pub force_path_style: bool,
+    #[serde(default)]
+    pub allow_http: bool,
+}
+
+impl From<&crate::config::S3DataConfig> for S3DataConfigDto {
+    fn from(c: &crate::config::S3DataConfig) -> Self {
+        Self {
+            bucket: c.bucket.clone(),
+            prefix: c.prefix.clone(),
+            region: c.region.clone(),
+            endpoint: c.endpoint.clone(),
+            access_key_id: c.access_key_id.clone(),
+            secret_access_key: c.secret_access_key.clone(),
+            force_path_style: c.force_path_style,
+            allow_http: c.allow_http,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct FileStorageConfigDto {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub s3: Option<S3DataConfigDto>,
+    #[serde(default)]
+    pub default_format: crate::config::DataLakeFileFormat,
+    #[serde(default = "default_batch_size")]
+    pub batch_size: usize,
+    #[serde(default = "default_max_file_size")]
+    pub max_file_size_bytes: usize,
+}
+
+fn default_batch_size() -> usize { 1000 }
+fn default_max_file_size() -> usize { 128 * 1024 * 1024 } // 128MB
+
+impl From<&crate::config::FileStorageConfig> for FileStorageConfigDto {
+    fn from(c: &crate::config::FileStorageConfig) -> Self {
+        Self {
+            enabled: c.enabled,
+            local_path: c.local_path.clone(),
+            s3: c.s3.as_ref().map(S3DataConfigDto::from),
+            default_format: c.default_format.clone(),
+            batch_size: c.batch_size,
+            max_file_size_bytes: c.max_file_size_bytes,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
 pub struct ServerSettingsDto {
     pub auth: AuthConfigDto,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -755,6 +825,8 @@ pub struct ServerSettingsDto {
     pub s3: Option<S3ConfigDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub database: Option<DatabaseConfigDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_storage: Option<FileStorageConfigDto>,
 }
 
 /// GET /api/config/settings - Get editable server settings
@@ -780,6 +852,7 @@ pub async fn get_server_settings(
         rate_limit: settings.rate_limit.as_ref().map(RateLimitConfigDto::from),
         s3: Some(s3_dto),
         database: settings.database.as_ref().map(DatabaseConfigDto::from),
+        file_storage: settings.file_storage.as_ref().map(FileStorageConfigDto::from),
     };
 
     (StatusCode::OK, Json(ApiResponse::success(dto)))
@@ -859,11 +932,38 @@ pub async fn update_server_settings(
         }
     }
 
+    // Update file storage settings
+    if let Some(fs_dto) = dto.file_storage {
+        if fs_dto.enabled {
+            settings.file_storage = Some(crate::config::FileStorageConfig {
+                enabled: fs_dto.enabled,
+                local_path: fs_dto.local_path,
+                s3: fs_dto.s3.map(|s3| crate::config::S3DataConfig {
+                    bucket: s3.bucket,
+                    prefix: s3.prefix,
+                    region: s3.region,
+                    endpoint: s3.endpoint,
+                    access_key_id: s3.access_key_id,
+                    secret_access_key: s3.secret_access_key,
+                    force_path_style: s3.force_path_style,
+                    allow_http: s3.allow_http,
+                }),
+                default_format: fs_dto.default_format,
+                batch_size: fs_dto.batch_size,
+                max_file_size_bytes: fs_dto.max_file_size_bytes,
+            });
+        } else {
+            // Disabled means remove file storage config
+            settings.file_storage = None;
+        }
+    }
+
     let response_dto = ServerSettingsDto {
         auth: AuthConfigDto::from(&settings.auth),
         rate_limit: settings.rate_limit.as_ref().map(RateLimitConfigDto::from),
         s3: settings.s3.as_ref().map(S3ConfigDto::from),
         database: settings.database.as_ref().map(DatabaseConfigDto::from),
+        file_storage: settings.file_storage.as_ref().map(FileStorageConfigDto::from),
     };
 
     (StatusCode::OK, Json(ApiResponse::success(response_dto)))
@@ -2894,21 +2994,12 @@ async fn build_s3_config(
     use aws_config::BehaviorVersion;
     use crate::adapters::secrets::keys;
 
-    let mut loader = aws_config::defaults(BehaviorVersion::latest());
-
-    if let Some(region) = &config.region {
-        loader = loader.region(aws_config::Region::new(region.clone()));
-    }
-
-    if let Some(endpoint) = &config.endpoint {
-        loader = loader.endpoint_url(endpoint);
-    }
-
     // Check for credentials in secrets store (UI) first, then environment
     let access_key = secrets.get_or_env(keys::AWS_ACCESS_KEY_ID).await;
     let secret_key = secrets.get_or_env(keys::AWS_SECRET_ACCESS_KEY).await;
 
-    // If we have credentials from secrets store or env, use them explicitly
+    // If we have explicit credentials, use no_credentials() to skip the default
+    // credential chain (which includes EC2 IMDS that causes timeouts outside AWS)
     if let (Some(access_key), Some(secret_key)) = (access_key, secret_key) {
         let credentials = aws_sdk_s3::config::Credentials::new(
             access_key,
@@ -2917,13 +3008,37 @@ async fn build_s3_config(
             None, // expiry
             "metis-secrets-store",
         );
-        loader = loader.credentials_provider(credentials);
-        tracing::debug!("Using AWS credentials from secrets store/environment");
-    } else {
-        tracing::debug!("No explicit AWS credentials found, using default credential chain");
-    }
 
-    Ok(loader.load().await)
+        let mut loader = aws_config::defaults(BehaviorVersion::latest())
+            .no_credentials()  // Skip default credential chain (including IMDS)
+            .credentials_provider(credentials);
+
+        if let Some(region) = &config.region {
+            loader = loader.region(aws_config::Region::new(region.clone()));
+        }
+
+        if let Some(endpoint) = &config.endpoint {
+            loader = loader.endpoint_url(endpoint);
+        }
+
+        tracing::debug!("Using explicit AWS credentials (IMDS disabled)");
+        Ok(loader.load().await)
+    } else {
+        // No explicit credentials - use default credential chain
+        // This will try environment vars, shared config, IMDS, etc.
+        let mut loader = aws_config::defaults(BehaviorVersion::latest());
+
+        if let Some(region) = &config.region {
+            loader = loader.region(aws_config::Region::new(region.clone()));
+        }
+
+        if let Some(endpoint) = &config.endpoint {
+            loader = loader.endpoint_url(endpoint);
+        }
+
+        tracing::debug!("No explicit AWS credentials found, using default credential chain");
+        Ok(loader.load().await)
+    }
 }
 
 // ============================================================================

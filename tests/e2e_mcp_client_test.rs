@@ -69,6 +69,7 @@ impl TestServer {
             schemas: vec![],
             data_lakes: vec![],
             database: None,
+            file_storage: None,
         }));
 
         let state_manager = Arc::new(StateManager::new());
@@ -89,7 +90,7 @@ impl TestServer {
         let passphrase_store = metis::adapters::secrets::create_passphrase_store();
 
         let app =
-            metis::create_app(metis_server, health_handler, metrics_handler, settings, state_manager, secrets_store, passphrase_store, tool_handler, None).await;
+            metis::create_app(metis_server, health_handler, metrics_handler, settings, state_manager, secrets_store, passphrase_store, tool_handler, None, None, None).await;
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

@@ -1,7 +1,9 @@
 pub mod api_handler;
 pub mod auth_middleware;
 pub mod data_lake_handler;
+pub mod datafusion_handler;
 pub mod encryption;
+pub mod file_storage;
 pub mod health_handler;
 pub mod jwks;
 pub mod mcp_client;

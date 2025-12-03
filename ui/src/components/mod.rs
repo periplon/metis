@@ -5,6 +5,7 @@ pub mod config;
 pub mod data_lakes;
 pub mod json_editor;
 pub mod list_filter;
+pub mod sql_editor;
 pub mod logs;
 pub mod resources;
 pub mod resource_templates;

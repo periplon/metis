@@ -419,7 +419,7 @@ pub async fn list_data_lakes() -> Result<Vec<DataLake>, String> {
 }
 
 pub async fn get_data_lake(name: &str) -> Result<DataLake, String> {
-    let url = format!("{}/data-lakes/{}", API_BASE, name);
+    let url = format!("{}/data-lakes/{}", API_BASE, urlencoding_encode(name));
     fetch_json::<DataLake>(&url).await
 }
 
@@ -429,12 +429,12 @@ pub async fn create_data_lake(data_lake: &DataLake) -> Result<DataLake, String> 
 }
 
 pub async fn update_data_lake(name: &str, data_lake: &DataLake) -> Result<DataLake, String> {
-    let url = format!("{}/data-lakes/{}", API_BASE, name);
+    let url = format!("{}/data-lakes/{}", API_BASE, urlencoding_encode(name));
     put_json::<DataLake, DataLake>(&url, data_lake).await
 }
 
 pub async fn delete_data_lake(name: &str) -> Result<(), String> {
-    let url = format!("{}/data-lakes/{}", API_BASE, name);
+    let url = format!("{}/data-lakes/{}", API_BASE, urlencoding_encode(name));
     delete_request(&url).await
 }
 
@@ -471,7 +471,7 @@ pub async fn list_records(
     limit: Option<usize>,
     offset: Option<usize>,
 ) -> Result<ListRecordsResponse, String> {
-    let mut url = format!("{}/data-lakes/{}/records", API_BASE, data_lake);
+    let mut url = format!("{}/data-lakes/{}/records", API_BASE, urlencoding_encode(data_lake));
 
     let mut params = Vec::new();
     if let Some(schema) = schema_name {
@@ -493,31 +493,31 @@ pub async fn list_records(
 
 /// Get a specific record by ID
 pub async fn get_record(data_lake: &str, id: &str) -> Result<DataRecord, String> {
-    let url = format!("{}/data-lakes/{}/records/{}", API_BASE, data_lake, id);
+    let url = format!("{}/data-lakes/{}/records/{}", API_BASE, urlencoding_encode(data_lake), urlencoding_encode(id));
     fetch_json::<DataRecord>(&url).await
 }
 
 /// Create a new record
 pub async fn create_record(data_lake: &str, request: &CreateRecordRequest) -> Result<DataRecord, String> {
-    let url = format!("{}/data-lakes/{}/records", API_BASE, data_lake);
+    let url = format!("{}/data-lakes/{}/records", API_BASE, urlencoding_encode(data_lake));
     post_json::<CreateRecordRequest, DataRecord>(&url, request).await
 }
 
 /// Update an existing record
 pub async fn update_record(data_lake: &str, id: &str, request: &UpdateRecordRequest) -> Result<DataRecord, String> {
-    let url = format!("{}/data-lakes/{}/records/{}", API_BASE, data_lake, id);
+    let url = format!("{}/data-lakes/{}/records/{}", API_BASE, urlencoding_encode(data_lake), urlencoding_encode(id));
     put_json::<UpdateRecordRequest, DataRecord>(&url, request).await
 }
 
 /// Delete a record
 pub async fn delete_record(data_lake: &str, id: &str) -> Result<(), String> {
-    let url = format!("{}/data-lakes/{}/records/{}", API_BASE, data_lake, id);
+    let url = format!("{}/data-lakes/{}/records/{}", API_BASE, urlencoding_encode(data_lake), urlencoding_encode(id));
     delete_request(&url).await
 }
 
 /// Count records in a data lake
 pub async fn count_records(data_lake: &str, schema_name: Option<&str>) -> Result<CountRecordsResponse, String> {
-    let mut url = format!("{}/data-lakes/{}/records/count", API_BASE, data_lake);
+    let mut url = format!("{}/data-lakes/{}/records/count", API_BASE, urlencoding_encode(data_lake));
 
     if let Some(schema) = schema_name {
         url = format!("{}?schema={}", url, urlencoding_encode(schema));
@@ -528,19 +528,58 @@ pub async fn count_records(data_lake: &str, schema_name: Option<&str>) -> Result
 
 /// Generate records using a mock strategy
 pub async fn generate_records(data_lake: &str, request: &GenerateRecordsRequest) -> Result<GenerateRecordsResponse, String> {
-    let url = format!("{}/data-lakes/{}/records/generate", API_BASE, data_lake);
+    let url = format!("{}/data-lakes/{}/records/generate", API_BASE, urlencoding_encode(data_lake));
     post_json::<GenerateRecordsRequest, GenerateRecordsResponse>(&url, request).await
 }
 
 /// Delete all records in a data lake (optionally filtered by schema)
 pub async fn delete_all_records(data_lake: &str, schema_name: Option<&str>) -> Result<(), String> {
-    let mut url = format!("{}/data-lakes/{}/records", API_BASE, data_lake);
+    let mut url = format!("{}/data-lakes/{}/records", API_BASE, urlencoding_encode(data_lake));
 
     if let Some(schema) = schema_name {
         url = format!("{}?schema={}", url, urlencoding_encode(schema));
     }
 
     delete_request(&url).await
+}
+
+/// Request for bulk delete records
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct BulkDeleteRecordsRequest {
+    pub ids: Vec<String>,
+}
+
+/// Response for bulk delete records
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct BulkDeleteRecordsResponse {
+    pub deleted: usize,
+    pub failed: usize,
+    pub errors: Vec<String>,
+}
+
+/// Bulk delete multiple records by IDs
+pub async fn bulk_delete_records(data_lake: &str, ids: Vec<String>) -> Result<BulkDeleteRecordsResponse, String> {
+    let url = format!("{}/data-lakes/{}/records/bulk-delete", API_BASE, urlencoding_encode(data_lake));
+    let request = BulkDeleteRecordsRequest { ids };
+    post_json::<BulkDeleteRecordsRequest, BulkDeleteRecordsResponse>(&url, &request).await
+}
+
+/// Execute SQL query via DataFusion
+pub async fn execute_query(data_lake: &str, request: &crate::types::SqlQueryRequest) -> Result<crate::types::SqlQueryResponse, String> {
+    let url = format!("{}/data-lakes/{}/query", API_BASE, urlencoding_encode(data_lake));
+    post_json::<crate::types::SqlQueryRequest, crate::types::SqlQueryResponse>(&url, request).await
+}
+
+/// List data files for a data lake
+pub async fn list_files(data_lake: &str) -> Result<Vec<crate::types::FileInfo>, String> {
+    let url = format!("{}/data-lakes/{}/files", API_BASE, urlencoding_encode(data_lake));
+    fetch_json::<Vec<crate::types::FileInfo>>(&url).await
+}
+
+/// Sync records to file storage
+pub async fn sync_to_files(data_lake: &str, request: &crate::types::SyncRequest) -> Result<crate::types::SyncResponse, String> {
+    let url = format!("{}/data-lakes/{}/sync", API_BASE, urlencoding_encode(data_lake));
+    post_json::<crate::types::SyncRequest, crate::types::SyncResponse>(&url, request).await
 }
 
 // ============================================================================

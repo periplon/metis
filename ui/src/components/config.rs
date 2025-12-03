@@ -96,6 +96,7 @@ pub fn Config() -> impl IntoView {
                                         poll_interval_secs: 30,
                                     }),
                                     database: None,
+                                    file_storage: None,
                                 };
                                 view! {
                                     <div class="space-y-6">
@@ -255,6 +256,26 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
     let (db_seed_on_startup, set_db_seed_on_startup) = signal(initial_db.seed_on_startup);
     let (db_snapshot_interval, set_db_snapshot_interval) = signal(initial_db.snapshot_interval);
 
+    // File storage configuration
+    let initial_file_storage = initial_settings.file_storage.clone().unwrap_or(crate::types::FileStorageConfig {
+        enabled: false,
+        local_path: None,
+        s3: None,
+        default_format: crate::types::DataLakeFileFormat::Parquet,
+        batch_size: 1000,
+        max_file_size_bytes: 128 * 1024 * 1024, // 128MB default
+    });
+
+    let (file_storage_enabled, set_file_storage_enabled) = signal(initial_file_storage.enabled);
+    let (file_storage_local_path, set_file_storage_local_path) = signal(initial_file_storage.local_path.unwrap_or_default());
+    let (file_storage_s3_bucket, set_file_storage_s3_bucket) = signal(initial_file_storage.s3.as_ref().map(|s| s.bucket.clone()).unwrap_or_default());
+    let (file_storage_s3_prefix, set_file_storage_s3_prefix) = signal(initial_file_storage.s3.as_ref().and_then(|s| s.prefix.clone()).unwrap_or_default());
+    let (file_storage_s3_region, set_file_storage_s3_region) = signal(initial_file_storage.s3.as_ref().and_then(|s| s.region.clone()).unwrap_or_default());
+    let (file_storage_s3_endpoint, set_file_storage_s3_endpoint) = signal(initial_file_storage.s3.as_ref().and_then(|s| s.endpoint.clone()).unwrap_or_default());
+    let (file_storage_format, set_file_storage_format) = signal(initial_file_storage.default_format);
+    let (file_storage_batch_size, set_file_storage_batch_size) = signal(initial_file_storage.batch_size);
+    let (file_storage_max_file_size, _set_file_storage_max_file_size) = signal(initial_file_storage.max_file_size_bytes);
+
     let (saving, set_saving) = signal(false);
     let (message, set_message) = signal(Option::<(String, bool)>::None);
 
@@ -309,6 +330,47 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
             None
         };
 
+        // File storage config - only include if enabled
+        let file_storage_config = if file_storage_enabled.get() {
+            let local_path = file_storage_local_path.get();
+            let s3_bucket = file_storage_s3_bucket.get();
+
+            let s3_config = if !s3_bucket.is_empty() {
+                Some(crate::types::S3DataConfig {
+                    bucket: s3_bucket,
+                    prefix: {
+                        let p = file_storage_s3_prefix.get();
+                        if p.is_empty() { None } else { Some(p) }
+                    },
+                    region: {
+                        let r = file_storage_s3_region.get();
+                        if r.is_empty() { None } else { Some(r) }
+                    },
+                    endpoint: {
+                        let e = file_storage_s3_endpoint.get();
+                        if e.is_empty() { None } else { Some(e) }
+                    },
+                    access_key_id: None,
+                    secret_access_key: None,
+                    force_path_style: false,
+                    allow_http: false,
+                })
+            } else {
+                None
+            };
+
+            Some(crate::types::FileStorageConfig {
+                enabled: true,
+                local_path: if local_path.is_empty() { None } else { Some(local_path) },
+                s3: s3_config,
+                default_format: file_storage_format.get(),
+                batch_size: file_storage_batch_size.get(),
+                max_file_size_bytes: file_storage_max_file_size.get(),
+            })
+        } else {
+            None
+        };
+
         let settings = ServerSettings {
             auth: AuthConfig {
                 enabled: auth_enabled.get(),
@@ -333,6 +395,7 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
                 poll_interval_secs: s3_poll_interval.get(),
             }),
             database: database_config,
+            file_storage: file_storage_config.clone(),
         };
 
         wasm_bindgen_futures::spawn_local(async move {
@@ -396,6 +459,47 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
             None
         };
 
+        // File storage config - only include if enabled
+        let file_storage_config = if file_storage_enabled.get() {
+            let local_path = file_storage_local_path.get();
+            let s3_bucket = file_storage_s3_bucket.get();
+
+            let s3_config = if !s3_bucket.is_empty() {
+                Some(crate::types::S3DataConfig {
+                    bucket: s3_bucket,
+                    prefix: {
+                        let p = file_storage_s3_prefix.get();
+                        if p.is_empty() { None } else { Some(p) }
+                    },
+                    region: {
+                        let r = file_storage_s3_region.get();
+                        if r.is_empty() { None } else { Some(r) }
+                    },
+                    endpoint: {
+                        let e = file_storage_s3_endpoint.get();
+                        if e.is_empty() { None } else { Some(e) }
+                    },
+                    access_key_id: None,
+                    secret_access_key: None,
+                    force_path_style: false,
+                    allow_http: false,
+                })
+            } else {
+                None
+            };
+
+            Some(crate::types::FileStorageConfig {
+                enabled: true,
+                local_path: if local_path.is_empty() { None } else { Some(local_path) },
+                s3: s3_config,
+                default_format: file_storage_format.get(),
+                batch_size: file_storage_batch_size.get(),
+                max_file_size_bytes: file_storage_max_file_size.get(),
+            })
+        } else {
+            None
+        };
+
         let settings = ServerSettings {
             auth: AuthConfig {
                 enabled: auth_enabled.get(),
@@ -420,6 +524,7 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
                 poll_interval_secs: s3_poll_interval.get(),
             }),
             database: database_config,
+            file_storage: file_storage_config.clone(),
         };
 
         wasm_bindgen_futures::spawn_local(async move {
@@ -491,6 +596,47 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
             None
         };
 
+        // File storage config - only include if enabled
+        let file_storage_config = if file_storage_enabled.get() {
+            let local_path = file_storage_local_path.get();
+            let s3_bucket = file_storage_s3_bucket.get();
+
+            let s3_config = if !s3_bucket.is_empty() {
+                Some(crate::types::S3DataConfig {
+                    bucket: s3_bucket,
+                    prefix: {
+                        let p = file_storage_s3_prefix.get();
+                        if p.is_empty() { None } else { Some(p) }
+                    },
+                    region: {
+                        let r = file_storage_s3_region.get();
+                        if r.is_empty() { None } else { Some(r) }
+                    },
+                    endpoint: {
+                        let e = file_storage_s3_endpoint.get();
+                        if e.is_empty() { None } else { Some(e) }
+                    },
+                    access_key_id: None,
+                    secret_access_key: None,
+                    force_path_style: false,
+                    allow_http: false,
+                })
+            } else {
+                None
+            };
+
+            Some(crate::types::FileStorageConfig {
+                enabled: true,
+                local_path: if local_path.is_empty() { None } else { Some(local_path) },
+                s3: s3_config,
+                default_format: file_storage_format.get(),
+                batch_size: file_storage_batch_size.get(),
+                max_file_size_bytes: file_storage_max_file_size.get(),
+            })
+        } else {
+            None
+        };
+
         let settings = ServerSettings {
             auth: AuthConfig {
                 enabled: auth_enabled.get(),
@@ -515,6 +661,7 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
                 poll_interval_secs: s3_poll_interval.get(),
             }),
             database: database_config,
+            file_storage: file_storage_config.clone(),
         };
 
         wasm_bindgen_futures::spawn_local(async move {
@@ -838,6 +985,19 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
                         on:click=move |_| set_active_tab.set("database")
                     >
                         "Database"
+                    </button>
+                    <button
+                        class=move || format!(
+                            "whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm {}",
+                            if active_tab.get() == "file_storage" {
+                                "border-purple-500 text-purple-600"
+                            } else {
+                                "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                            }
+                        )
+                        on:click=move |_| set_active_tab.set("file_storage")
+                    >
+                        "File Storage"
                     </button>
                     <button
                         class=move || format!(
@@ -1382,6 +1542,139 @@ fn SettingsEditorCard(initial_settings: ServerSettings) -> impl IntoView {
                                     "Make sure to save to disk before restarting."
                                 </p>
                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                // File Storage Section
+                <div class=move || if active_tab.get() == "file_storage" { "block" } else { "hidden" }>
+                    <h4 class="text-md font-semibold text-gray-700 mb-4 flex items-center">
+                        <span class="w-2 h-2 bg-purple-500 rounded-full mr-2"></span>
+                        "File Storage"
+                    </h4>
+                    <div class="space-y-4 pl-4">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <label class="font-medium text-gray-700">"Enable File Storage"</label>
+                                <p class="text-sm text-gray-500">"Store data lake records as Parquet/JSONL files"</p>
+                            </div>
+                            <ToggleSwitch
+                                enabled=file_storage_enabled
+                                on_toggle=move |v| set_file_storage_enabled.set(v)
+                            />
+                        </div>
+
+                        <Show when=move || file_storage_enabled.get()>
+                            <div class="space-y-4 mt-4 p-4 bg-purple-50 rounded-lg">
+                                // Local Path
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-1">"Local Path"</label>
+                                    <input
+                                        type="text"
+                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-purple-500 focus:border-purple-500"
+                                        placeholder="/data/files or leave empty for S3-only"
+                                        prop:value=move || file_storage_local_path.get()
+                                        on:input=move |ev| set_file_storage_local_path.set(event_target_value(&ev))
+                                    />
+                                    <p class="text-xs text-gray-500 mt-1">"Leave empty to use S3 storage only"</p>
+                                </div>
+
+                                // S3 Configuration
+                                <div class="border-t border-purple-200 pt-4 mt-4">
+                                    <h5 class="text-sm font-medium text-purple-800 mb-3">"S3 Storage (Alternative)"</h5>
+                                    <div class="space-y-3">
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700 mb-1">"S3 Bucket"</label>
+                                            <input
+                                                type="text"
+                                                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-purple-500 focus:border-purple-500"
+                                                placeholder="my-data-bucket"
+                                                prop:value=move || file_storage_s3_bucket.get()
+                                                on:input=move |ev| set_file_storage_s3_bucket.set(event_target_value(&ev))
+                                            />
+                                        </div>
+                                        <div class="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <label class="block text-sm font-medium text-gray-700 mb-1">"Prefix"</label>
+                                                <input
+                                                    type="text"
+                                                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-purple-500 focus:border-purple-500"
+                                                    placeholder="data/"
+                                                    prop:value=move || file_storage_s3_prefix.get()
+                                                    on:input=move |ev| set_file_storage_s3_prefix.set(event_target_value(&ev))
+                                                />
+                                            </div>
+                                            <div>
+                                                <label class="block text-sm font-medium text-gray-700 mb-1">"Region"</label>
+                                                <input
+                                                    type="text"
+                                                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-purple-500 focus:border-purple-500"
+                                                    placeholder="us-east-1"
+                                                    prop:value=move || file_storage_s3_region.get()
+                                                    on:input=move |ev| set_file_storage_s3_region.set(event_target_value(&ev))
+                                                />
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700 mb-1">"Custom Endpoint (Optional)"</label>
+                                            <input
+                                                type="text"
+                                                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-purple-500 focus:border-purple-500"
+                                                placeholder="http://localhost:9000 (for MinIO/LocalStack)"
+                                                prop:value=move || file_storage_s3_endpoint.get()
+                                                on:input=move |ev| set_file_storage_s3_endpoint.set(event_target_value(&ev))
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+
+                                // Format and Batch Size
+                                <div class="border-t border-purple-200 pt-4 mt-4">
+                                    <h5 class="text-sm font-medium text-purple-800 mb-3">"Default Settings"</h5>
+                                    <div class="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700 mb-1">"Default Format"</label>
+                                            <select
+                                                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-purple-500 focus:border-purple-500"
+                                                on:change=move |ev| {
+                                                    let value = event_target_value(&ev);
+                                                    set_file_storage_format.set(match value.as_str() {
+                                                        "jsonl" => crate::types::DataLakeFileFormat::Jsonl,
+                                                        _ => crate::types::DataLakeFileFormat::Parquet,
+                                                    });
+                                                }
+                                            >
+                                                <option value="parquet" selected=move || file_storage_format.get() == crate::types::DataLakeFileFormat::Parquet>"Parquet"</option>
+                                                <option value="jsonl" selected=move || file_storage_format.get() == crate::types::DataLakeFileFormat::Jsonl>"JSONL"</option>
+                                            </select>
+                                            <p class="text-xs text-gray-500 mt-1">"Parquet for analytics, JSONL for streaming"</p>
+                                        </div>
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700 mb-1">"Batch Size"</label>
+                                            <input
+                                                type="number"
+                                                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-purple-500 focus:border-purple-500"
+                                                min="1"
+                                                max="100000"
+                                                prop:value=move || file_storage_batch_size.get().to_string()
+                                                on:input=move |ev| {
+                                                    if let Ok(n) = event_target_value(&ev).parse() {
+                                                        set_file_storage_batch_size.set(n);
+                                                    }
+                                                }
+                                            />
+                                            <p class="text-xs text-gray-500 mt-1">"Records per file batch"</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </Show>
+
+                        <div class="p-3 bg-purple-50 border border-purple-200 rounded-lg mt-4">
+                            <p class="text-sm text-purple-800">
+                                <strong>"Note:"</strong>
+                                " File storage configuration changes require a server restart to take effect."
+                            </p>
                         </div>
                     </div>
                 </div>

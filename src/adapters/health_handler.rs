@@ -110,6 +110,7 @@ mod tests {
             schemas: vec![],
             data_lakes: vec![],
             database: None,
+            file_storage: None,
         };
         let handler = HealthHandler::new(Arc::new(RwLock::new(settings)));
 
@@ -141,6 +142,7 @@ mod tests {
             schemas: vec![],
             data_lakes: vec![],
             database: None,
+            file_storage: None,
         };
         let handler = HealthHandler::new(Arc::new(RwLock::new(settings)));
 
@@ -173,6 +175,7 @@ mod tests {
             schemas: vec![],
             data_lakes: vec![],
             database: None,
+            file_storage: None,
         };
         let handler = HealthHandler::new(Arc::new(RwLock::new(settings)));
 

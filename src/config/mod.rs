@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use thiserror::Error;
 
 pub mod data_lake;
+pub mod file_storage;
 pub mod s3;
 pub mod s3_watcher;
 pub mod schema;
@@ -12,6 +13,7 @@ pub mod validator;
 pub mod watcher;
 
 pub use data_lake::{DataLakeConfig, DataLakeSchemaRef, DataRecord, GenerateRecordsRequest, ValidationResult, ValidationError};
+pub use file_storage::{DataLakeFileFormat, DataLakeStorageMode, FileStorageConfig, S3DataConfig};
 pub use s3::S3Config;
 pub use s3_watcher::S3Watcher;
 pub use schema::SchemaConfig;
@@ -77,6 +79,10 @@ pub struct Settings {
     /// Config files are used for initial seeding only
     #[serde(default)]
     pub database: Option<PersistenceConfig>,
+    /// File storage configuration for data lake records (optional)
+    /// Enables storing records in Parquet/JSONL files on local filesystem or S3
+    #[serde(default)]
+    pub file_storage: Option<FileStorageConfig>,
 }
 
 /// Configuration for embedded secrets (can be encrypted with AGE)
@@ -557,6 +563,13 @@ impl Settings {
         if let Some(s3_config) = &settings.s3 {
             s3_config.validate().map_err(|errors| {
                 anyhow::anyhow!("S3 configuration validation failed:\n{}", errors.join("\n"))
+            })?;
+        }
+
+        // Validate file storage configuration if present
+        if let Some(file_storage) = &settings.file_storage {
+            file_storage.validate().map_err(|error| {
+                anyhow::anyhow!("File storage configuration validation failed:\n{}", error)
             })?;
         }
 

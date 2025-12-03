@@ -1,3 +1,4 @@
+use crate::adapters::file_storage::FileStorageHandler;
 use crate::adapters::mock_strategy::MockStrategyHandler;
 use crate::config::{ResourceConfig, ResourceTemplateConfig, Settings};
 use crate::domain::{Resource, ResourcePort, ResourceTemplate};
@@ -10,6 +11,8 @@ use tokio::sync::RwLock;
 pub struct InMemoryResourceHandler {
     settings: Arc<RwLock<Settings>>,
     mock_strategy: Arc<MockStrategyHandler>,
+    /// Optional file storage handler for data lake resources
+    file_storage: Option<Arc<FileStorageHandler>>,
 }
 
 impl InMemoryResourceHandler {
@@ -17,6 +20,20 @@ impl InMemoryResourceHandler {
         Self {
             settings,
             mock_strategy,
+            file_storage: None,
+        }
+    }
+
+    /// Create a new handler with file storage support for data lake resources
+    pub fn with_file_storage(
+        settings: Arc<RwLock<Settings>>,
+        mock_strategy: Arc<MockStrategyHandler>,
+        file_storage: Arc<FileStorageHandler>,
+    ) -> Self {
+        Self {
+            settings,
+            mock_strategy,
+            file_storage: Some(file_storage),
         }
     }
 
@@ -53,13 +70,43 @@ impl InMemoryResourceHandler {
         }
         resolved
     }
+
+    /// Handle data lake resource URIs (datalake://{lake}/{schema})
+    async fn get_data_lake_resource(&self, uri: &str) -> Result<crate::domain::ResourceReadResult> {
+        let file_storage = self.file_storage.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("File storage not configured"))?;
+
+        // Parse datalake://{lake}/{schema}
+        let path = uri.strip_prefix("datalake://")
+            .ok_or_else(|| anyhow::anyhow!("Invalid data lake URI"))?;
+
+        let parts: Vec<&str> = path.split('/').collect();
+        if parts.len() != 2 {
+            return Err(anyhow::anyhow!("Invalid data lake URI format. Expected: datalake://{{lake}}/{{schema}}"));
+        }
+
+        let lake_name = parts[0];
+        let schema_name = parts[1];
+
+        // Read all records from files
+        let records = file_storage.read_all_records(lake_name, schema_name).await
+            .map_err(|e| anyhow::anyhow!("Failed to read data lake records: {}", e))?;
+
+        let content = serde_json::to_string_pretty(&records)?;
+
+        Ok(crate::domain::ResourceReadResult {
+            uri: uri.to_string(),
+            mime_type: Some("application/json".to_string()),
+            content,
+        })
+    }
 }
 
 #[async_trait]
 impl ResourcePort for InMemoryResourceHandler {
     async fn list_resources(&self) -> Result<Vec<Resource>> {
         let settings = self.settings.read().await;
-        let resources = settings
+        let mut resources: Vec<Resource> = settings
             .resources
             .iter()
             .map(|r| {
@@ -88,12 +135,32 @@ impl ResourcePort for InMemoryResourceHandler {
                 }
             })
             .collect();
+
+        // Add data lake resources if file storage is enabled
+        if self.file_storage.is_some() {
+            for data_lake in &settings.data_lakes {
+                if data_lake.uses_files() {
+                    for schema_ref in &data_lake.schemas {
+                        resources.push(Resource {
+                            uri: format!("datalake://{}/{}", data_lake.name, schema_ref.schema_name),
+                            name: format!("{}/{} Records", data_lake.name, schema_ref.alias.as_ref().unwrap_or(&schema_ref.schema_name)),
+                            description: Some(format!(
+                                "Data lake records for {} in {}. Format: {:?}",
+                                schema_ref.schema_name, data_lake.name, data_lake.file_format
+                            )),
+                            mime_type: Some("application/json".to_string()),
+                        });
+                    }
+                }
+            }
+        }
+
         Ok(resources)
     }
 
     async fn list_resource_templates(&self) -> Result<Vec<ResourceTemplate>> {
         let settings = self.settings.read().await;
-        let templates = settings
+        let mut templates: Vec<ResourceTemplate> = settings
             .resource_templates
             .iter()
             .map(|r| {
@@ -128,10 +195,35 @@ impl ResourcePort for InMemoryResourceHandler {
                 }
             })
             .collect();
+
+        // Add SQL query resource template for data lakes with SQL enabled
+        if self.file_storage.is_some() {
+            for data_lake in &settings.data_lakes {
+                if data_lake.enable_sql_queries {
+                    templates.push(ResourceTemplate {
+                        uri_template: format!("datalake://{}/query?sql={{sql}}&schema={{schema}}", data_lake.name),
+                        name: format!("{} SQL Query", data_lake.name),
+                        description: Some(format!(
+                            "Execute SQL query against {} data lake. Use $table as placeholder for the table name.\n\n\
+                            **Example:** SELECT * FROM $table WHERE id = '123'\n\n\
+                            **Variables:**\n- sql: The SQL query to execute\n- schema: Schema name to query",
+                            data_lake.name
+                        )),
+                        mime_type: Some("application/json".to_string()),
+                    });
+                }
+            }
+        }
+
         Ok(templates)
     }
 
     async fn get_resource(&self, uri: &str) -> Result<crate::domain::ResourceReadResult> {
+        // Handle datalake:// URIs
+        if uri.starts_with("datalake://") {
+            return self.get_data_lake_resource(uri).await;
+        }
+
         if let Some(config) = self.find_resource_config(uri).await {
             let content = if let Some(mock_config) = &config.mock {
                 let result = self.mock_strategy.generate(mock_config, None).await?;

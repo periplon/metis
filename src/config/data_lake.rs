@@ -27,6 +27,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::file_storage::{DataLakeFileFormat, DataLakeStorageMode};
 use super::MockStrategyType;
 
 /// Configuration for a Data Lake (data model + records)
@@ -46,6 +47,25 @@ pub struct DataLakeConfig {
     /// Optional metadata for this data lake
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
+
+    // --- File Storage Configuration ---
+    /// Storage mode for records in this data lake
+    /// - "database": Store only in database (default, backward compatible)
+    /// - "file": Store only in files (Parquet/JSONL)
+    /// - "both": Store in both database and files (write-through)
+    #[serde(default)]
+    pub storage_mode: DataLakeStorageMode,
+
+    /// File format when using file storage
+    /// - "parquet": Apache Parquet (default, best for analytics)
+    /// - "jsonl": JSON Lines (human-readable, good for streaming)
+    #[serde(default)]
+    pub file_format: DataLakeFileFormat,
+
+    /// Enable DataFusion SQL queries for this data lake
+    /// When true, data lake contents can be queried via SQL
+    #[serde(default)]
+    pub enable_sql_queries: bool,
 }
 
 /// Reference to a schema within a data lake
@@ -125,7 +145,38 @@ impl DataLakeConfig {
             tags: Vec::new(),
             schemas: Vec::new(),
             metadata: None,
+            storage_mode: DataLakeStorageMode::default(),
+            file_format: DataLakeFileFormat::default(),
+            enable_sql_queries: false,
         }
+    }
+
+    /// Set the storage mode for this data lake
+    pub fn with_storage_mode(mut self, mode: DataLakeStorageMode) -> Self {
+        self.storage_mode = mode;
+        self
+    }
+
+    /// Set the file format for this data lake
+    pub fn with_file_format(mut self, format: DataLakeFileFormat) -> Self {
+        self.file_format = format;
+        self
+    }
+
+    /// Enable SQL queries for this data lake
+    pub fn with_sql_queries(mut self, enabled: bool) -> Self {
+        self.enable_sql_queries = enabled;
+        self
+    }
+
+    /// Check if records should be stored in the database
+    pub fn uses_database(&self) -> bool {
+        self.storage_mode.uses_database()
+    }
+
+    /// Check if records should be stored in files
+    pub fn uses_files(&self) -> bool {
+        self.storage_mode.uses_files()
     }
 
     /// Add a schema reference to this data lake

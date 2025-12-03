@@ -90,6 +90,8 @@ pub async fn create_app(
     passphrase_store: SharedPassphraseStore,
     tool_handler: Arc<crate::adapters::tool_handler::BasicToolHandler>,
     data_store: Option<Arc<DataStore>>,
+    file_storage: Option<Arc<crate::adapters::file_storage::FileStorageHandler>>,
+    datafusion: Option<Arc<crate::adapters::datafusion_handler::DataFusionHandler>>,
 ) -> Router {
     // Get the broadcaster before moving metis_server into the closure
     let broadcaster = metis_server.broadcaster().clone();
@@ -185,6 +187,8 @@ pub async fn create_app(
         broadcaster: Some(broadcaster.clone()),
         tool_handler: Some(tool_handler.clone()),
         data_store,
+        file_storage,
+        datafusion,
     };
 
     // API routes for Web UI
@@ -239,7 +243,12 @@ pub async fn create_app(
         .route("/data-lakes/:name/records", get(data_lake_handler::list_records).post(data_lake_handler::create_record).delete(data_lake_handler::delete_all_records))
         .route("/data-lakes/:name/records/count", get(data_lake_handler::count_records))
         .route("/data-lakes/:name/records/generate", post(data_lake_handler::generate_records))
+        .route("/data-lakes/:name/records/bulk-delete", post(data_lake_handler::bulk_delete_records))
         .route("/data-lakes/:name/records/:id", get(data_lake_handler::get_record).put(data_lake_handler::update_record).delete(data_lake_handler::delete_record))
+        // File Storage & SQL Queries
+        .route("/data-lakes/:name/query", post(data_lake_handler::execute_query))
+        .route("/data-lakes/:name/files", get(data_lake_handler::list_files))
+        .route("/data-lakes/:name/sync", post(data_lake_handler::sync_to_files))
         // LLM models discovery
         .route("/llm/models/:provider", get(api_handler::fetch_llm_models))
         // Database & Version History

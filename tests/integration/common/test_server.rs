@@ -41,6 +41,7 @@ impl TestServer {
             rate_limit: None,
             s3: None,
             database: None,
+            file_storage: None,
             config_path: None,
             mcp_servers: vec![],
             version: 1,
@@ -70,14 +71,16 @@ impl TestServer {
 
         // Create app
         let app = metis::create_app(
-            metis_server, 
-            health_handler, 
-            metrics_handler, 
+            metis_server,
+            health_handler,
+            metrics_handler,
             settings,
             state_manager,
             secrets_store,
             passphrase_store,
             tool_handler,
+            None,
+            None,
             None
         ).await;
 

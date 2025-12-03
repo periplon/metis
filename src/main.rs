@@ -174,7 +174,7 @@ async fn main() -> anyhow::Result<()> {
     // Initialize mock strategy handler
     let mock_strategy = Arc::new(MockStrategyHandler::new(state_manager.clone()));
 
-    // Initialize handlers
+    // Initialize handlers (file_storage will be added later after secrets are loaded)
     let resource_handler = Arc::new(InMemoryResourceHandler::new(
         settings.clone(),
         mock_strategy.clone(),
@@ -211,6 +211,41 @@ async fn main() -> anyhow::Result<()> {
         let passphrase = cli.secret_passphrase.as_deref();
         load_secrets_from_config(&settings_read.secrets, &secrets_store, passphrase).await;
     }
+
+    // Initialize file storage if configured (after secrets are loaded so S3 credentials are available)
+    let file_storage: Option<Arc<metis::adapters::file_storage::FileStorageHandler>> = {
+        let settings_read = settings.read().await;
+        if let Some(config) = &settings_read.file_storage {
+            match metis::adapters::file_storage::FileStorageHandler::new(
+                config.clone(),
+                Some(&secrets_store),
+            ).await {
+                Ok(handler) => {
+                    info!("File storage initialized: {}", config.backend_description());
+                    Some(Arc::new(handler))
+                }
+                Err(e) => {
+                    warn!("Failed to initialize file storage: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    };
+
+    // Initialize DataFusion handler if file storage is enabled
+    let datafusion: Option<Arc<metis::adapters::datafusion_handler::DataFusionHandler>> =
+        if let Some(fs) = &file_storage {
+            info!("DataFusion SQL query handler initialized");
+            Some(Arc::new(
+                metis::adapters::datafusion_handler::DataFusionHandler::with_file_storage(
+                    Arc::clone(fs),
+                ),
+            ))
+        } else {
+            None
+        };
 
     // Create agent handler with secrets support
     let agent_handler = metis::agents::handler::AgentHandler::new_with_secrets(
@@ -272,7 +307,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // Create application using the library function
-    let app = metis::create_app(metis_server, health_handler, metrics_handler, settings, state_manager, secrets_store, passphrase_store, tool_handler, data_store).await;
+    let app = metis::create_app(metis_server, health_handler, metrics_handler, settings, state_manager, secrets_store, passphrase_store, tool_handler, data_store, file_storage, datafusion).await;
 
     // Start server
     let addr: SocketAddr = format!("{}:{}", host, port).parse()?;

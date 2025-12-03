@@ -179,6 +179,8 @@ pub struct ServerSettings {
     pub s3: Option<S3Config>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub database: Option<DatabaseConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_storage: Option<FileStorageConfig>,
 }
 
 /// Static resource with fixed URI (no input variables, only output schema)
@@ -760,6 +762,25 @@ pub struct RollbackRequest {
 // Data Lake Types
 // ============================================================================
 
+/// Storage mode for data lakes
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DataLakeStorageMode {
+    #[default]
+    Database,
+    File,
+    Both,
+}
+
+/// File format for data lake storage
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DataLakeFileFormat {
+    #[default]
+    Parquet,
+    Jsonl,
+}
+
 /// Data Lake configuration (data model + records)
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct DataLake {
@@ -773,6 +794,15 @@ pub struct DataLake {
     pub schemas: Vec<DataLakeSchemaRef>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
+    /// Storage mode: database, file, or both
+    #[serde(default)]
+    pub storage_mode: DataLakeStorageMode,
+    /// File format: parquet or jsonl
+    #[serde(default)]
+    pub file_format: DataLakeFileFormat,
+    /// Enable SQL queries via DataFusion
+    #[serde(default)]
+    pub enable_sql_queries: bool,
 }
 
 /// Reference to a schema within a data lake
@@ -825,4 +855,97 @@ pub struct GenerateRecordsRequest {
     pub strategy: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub strategy_config: Option<Value>,
+}
+
+/// Request to execute SQL query via DataFusion
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SqlQueryRequest {
+    /// SQL query to execute (use $table as placeholder for table name)
+    pub sql: String,
+    /// Schema to query (required)
+    pub schema_name: String,
+}
+
+/// Response from a SQL query
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct SqlQueryResponse {
+    pub columns: Vec<String>,
+    pub rows: Vec<Value>,
+    pub total_rows: usize,
+}
+
+/// Request to sync records to file storage
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct SyncRequest {
+    /// Optional: sync only this schema (if omitted, sync all schemas)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema_name: Option<String>,
+    /// Format to use for sync (overrides data lake default)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub format: Option<DataLakeFileFormat>,
+}
+
+/// Response from sync operation
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct SyncResponse {
+    pub files_written: usize,
+    pub records_synced: usize,
+    pub paths: Vec<String>,
+}
+
+/// File info for data lake files
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct FileInfo {
+    pub path: String,
+    pub size_bytes: usize,
+    pub last_modified: String,
+    pub format: String,
+}
+
+// ============================================================================
+// File Storage Configuration Types
+// ============================================================================
+
+/// Global file storage configuration for data lakes
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct FileStorageConfig {
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub s3: Option<S3DataConfig>,
+    #[serde(default)]
+    pub default_format: DataLakeFileFormat,
+    #[serde(default = "default_batch_size")]
+    pub batch_size: usize,
+    #[serde(default = "default_max_file_size")]
+    pub max_file_size_bytes: usize,
+}
+
+fn default_batch_size() -> usize {
+    1000
+}
+
+fn default_max_file_size() -> usize {
+    128 * 1024 * 1024 // 128MB
+}
+
+/// S3 configuration for file storage (separate from S3Config for config sync)
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct S3DataConfig {
+    pub bucket: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access_key_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret_access_key: Option<String>,
+    #[serde(default)]
+    pub force_path_style: bool,
+    #[serde(default)]
+    pub allow_http: bool,
 }

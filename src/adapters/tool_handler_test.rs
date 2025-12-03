@@ -39,6 +39,7 @@ async fn test_execute_tool_static() {
         schemas: vec![],
         data_lakes: vec![],
         database: None,
+        file_storage: None,
     };
     let handler = BasicToolHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -92,6 +93,7 @@ async fn test_execute_tool_mock() {
         schemas: vec![],
         data_lakes: vec![],
         database: None,
+        file_storage: None,
     };
     let handler = BasicToolHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -133,6 +135,7 @@ async fn test_execute_tool_echo_fallback() {
         schemas: vec![],
         data_lakes: vec![],
         database: None,
+        file_storage: None,
     };
     let handler = BasicToolHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -164,6 +167,7 @@ async fn test_execute_tool_not_found() {
         schemas: vec![],
         data_lakes: vec![],
         database: None,
+        file_storage: None,
     };
     let handler = BasicToolHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -214,6 +218,7 @@ async fn test_list_tools() {
         schemas: vec![],
         data_lakes: vec![],
         database: None,
+        file_storage: None,
     };
     let handler = BasicToolHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 

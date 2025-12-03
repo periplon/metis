@@ -59,18 +59,8 @@ impl S3Watcher {
         config: &S3Config,
         credentials: Option<AwsCredentials>,
     ) -> anyhow::Result<aws_config::SdkConfig> {
-        let mut loader = aws_config::defaults(BehaviorVersion::latest());
-
-        if let Some(region) = &config.region {
-            loader = loader.region(aws_config::Region::new(region.clone()));
-        }
-
-        // If custom endpoint is specified
-        if let Some(endpoint) = &config.endpoint {
-            loader = loader.endpoint_url(endpoint);
-        }
-
-        // If explicit credentials are provided, use them
+        // If explicit credentials are provided, use no_credentials() to skip the default
+        // credential chain (which includes EC2 IMDS that causes timeouts outside AWS)
         if let Some(creds) = credentials {
             let aws_creds = aws_sdk_s3::config::Credentials::new(
                 creds.access_key_id,
@@ -79,13 +69,36 @@ impl S3Watcher {
                 None, // expiry
                 "metis-s3-watcher",
             );
-            loader = loader.credentials_provider(aws_creds);
-            debug!("S3 watcher using explicit credentials");
-        } else {
-            debug!("S3 watcher using default credential chain");
-        }
 
-        Ok(loader.load().await)
+            let mut loader = aws_config::defaults(BehaviorVersion::latest())
+                .no_credentials()  // Skip default credential chain (including IMDS)
+                .credentials_provider(aws_creds);
+
+            if let Some(region) = &config.region {
+                loader = loader.region(aws_config::Region::new(region.clone()));
+            }
+
+            if let Some(endpoint) = &config.endpoint {
+                loader = loader.endpoint_url(endpoint);
+            }
+
+            debug!("S3 watcher using explicit credentials (IMDS disabled)");
+            Ok(loader.load().await)
+        } else {
+            // No explicit credentials - use default credential chain
+            let mut loader = aws_config::defaults(BehaviorVersion::latest());
+
+            if let Some(region) = &config.region {
+                loader = loader.region(aws_config::Region::new(region.clone()));
+            }
+
+            if let Some(endpoint) = &config.endpoint {
+                loader = loader.endpoint_url(endpoint);
+            }
+
+            debug!("S3 watcher using default credential chain");
+            Ok(loader.load().await)
+        }
     }
 
     /// Start watching for configuration changes (legacy - doesn't fetch S3 content)

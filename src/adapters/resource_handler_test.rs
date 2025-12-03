@@ -38,6 +38,7 @@ use tokio::sync::RwLock;
         schemas: vec![],
         data_lakes: vec![],
         database: None,
+        file_storage: None,
     };
     let handler = InMemoryResourceHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -91,6 +92,7 @@ use tokio::sync::RwLock;
         schemas: vec![],
         data_lakes: vec![],
         database: None,
+        file_storage: None,
     };
     let handler = InMemoryResourceHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -121,6 +123,7 @@ use tokio::sync::RwLock;
         schemas: vec![],
         data_lakes: vec![],
         database: None,
+        file_storage: None,
     };
     let handler = InMemoryResourceHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 
@@ -172,6 +175,7 @@ use tokio::sync::RwLock;
         schemas: vec![],
         data_lakes: vec![],
         database: None,
+        file_storage: None,
     };
     let handler = InMemoryResourceHandler::new(Arc::new(RwLock::new(settings)), mock_strategy);
 

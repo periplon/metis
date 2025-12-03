@@ -63,6 +63,14 @@ secrecy = "0.10"
 sha2 = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
 
+# DataFusion and Arrow ecosystem for file storage and analytics
+datafusion = "44"
+datafusion-functions-json = "0.44"
+arrow = { version = "54", features = ["json", "prettyprint"] }
+parquet = { version = "54", features = ["async"] }
+object_store = { version = "0.11", features = ["aws"] }
+bytes = "1"
+
 [dev-dependencies]
 tower = { version = "0.4", features = ["util"] }
 reqwest = { version = "0.11", features = ["json"] }
