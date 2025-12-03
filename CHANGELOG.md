@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.40.0 - 2025-12-03
+#### Features
+- add stateless MCP session mode for simplified client connections - (5a9db99) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.39.0 - 2025-12-03
 #### Features
 - add S3 auto-sync for all archetype CRUD operations - (e89eb1f) - Joan Marc Carbo Arnau
