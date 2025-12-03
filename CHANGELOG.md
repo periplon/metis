@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.38.0 - 2025-12-03
+#### Features
+- add data lake file storage and DataFusion SQL query support - (b9bb57b) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.37.0 - 2025-12-02
 #### Features
 - **(ui)** add tabbed interface to Agent and Schema forms - (499650f) - Joan Marc Carbo Arnau
