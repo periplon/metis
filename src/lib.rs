@@ -97,8 +97,14 @@ pub async fn create_app(
     let broadcaster = metis_server.broadcaster().clone();
 
     // Create rmcp HTTP transport service
+    // Use stateless mode (stateful_mode: false) to handle each request independently
+    // without requiring session management. This simplifies client implementations
+    // and avoids issues with stale session IDs after server restarts.
     let session_manager = Arc::new(LocalSessionManager::default());
-    let config = StreamableHttpServerConfig::default();
+    let config = StreamableHttpServerConfig {
+        stateful_mode: false, // Disable session tracking - each request is independent
+        ..Default::default()
+    };
     let mcp_service = StreamableHttpService::new(
         move || Ok(metis_server.clone()),
         session_manager,

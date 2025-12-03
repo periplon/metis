@@ -15,6 +15,7 @@ pub mod resource_handler;
 pub mod rmcp_server;
 pub mod sampling_handler;
 pub mod secrets;
+pub mod session_manager;
 pub mod state_manager;
 pub mod tool_handler;
 pub mod ui_handler;
