@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.41.0 - 2025-12-04
+#### Features
+- **(ui)** add fake data strategy and foreign key extensions to schema editor - (4b4602e) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.40.0 - 2025-12-03
 #### Features
 - add stateless MCP session mode for simplified client connections - (5a9db99) - Joan Marc Carbo Arnau
