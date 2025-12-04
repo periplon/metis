@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.41.1 - 2025-12-04
+#### Bug Fixes
+- **(ui)** fix pagination next button rendering in RSX - (0b4c1fe) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.41.0 - 2025-12-04
 #### Features
 - **(ui)** add fake data strategy and foreign key extensions to schema editor - (4b4602e) - Joan Marc Carbo Arnau
