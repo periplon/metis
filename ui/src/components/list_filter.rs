@@ -491,7 +491,7 @@ pub fn Pagination(
                             </button>
                             <button
                                 class="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                                disabled=move || page >= pages - 1
+                                disabled={move || page + 1 >= pages}
                                 on:click=move |_| current_page.update(|p| *p += 1)
                             >
                                 "Next"
@@ -542,7 +542,7 @@ pub fn Pagination(
                                     // Next button
                                     <button
                                         class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                                        disabled=move || page >= pages - 1
+                                        disabled={move || page + 1 >= pages}
                                         on:click=move |_| current_page.update(|p| *p += 1)
                                     >
                                         <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
