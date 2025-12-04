@@ -10,6 +10,7 @@ use leptos_router::hooks::use_params_map;
 use leptos_router::components::A;
 use std::collections::HashSet;
 use js_sys;
+use wasm_bindgen::JsCast;
 use crate::api;
 use crate::types::{
     DataLake, DataLakeSchemaRef, DataRecord, CreateRecordRequest, UpdateRecordRequest,
@@ -401,7 +402,9 @@ pub fn DataLakeForm() -> impl IntoView {
     let (name, set_name) = signal(String::new());
     let (description, set_description) = signal(String::new());
     let tags = RwSignal::new(Vec::<String>::new());
-    let (schema_refs, set_schema_refs) = signal(Vec::<DataLakeSchemaRef>::new());
+    // Use (id, schema_ref) tuples for stable keys in For loop
+    let (schema_refs, set_schema_refs) = signal(Vec::<(u64, DataLakeSchemaRef)>::new());
+    let (next_schema_ref_id, set_next_schema_ref_id) = signal(1u64);
     let (saving, set_saving) = signal(false);
     let (error, set_error) = signal(Option::<String>::None);
 
@@ -415,21 +418,24 @@ pub fn DataLakeForm() -> impl IntoView {
         api::list_schemas().await.ok().unwrap_or_default()
     });
 
+    // Add by tag state
+    let (show_tag_dropdown, set_show_tag_dropdown) = signal(false);
+
     let add_schema_ref = move |_| {
+        let id = next_schema_ref_id.get();
+        set_next_schema_ref_id.set(id + 1);
         set_schema_refs.update(|refs| {
-            refs.push(DataLakeSchemaRef {
+            refs.push((id, DataLakeSchemaRef {
                 schema_name: String::new(),
                 schema_version: None,
                 alias: None,
-            });
+            }));
         });
     };
 
-    let remove_schema_ref = move |index: usize| {
+    let remove_schema_ref = move |id: u64| {
         set_schema_refs.update(|refs| {
-            if index < refs.len() {
-                refs.remove(index);
-            }
+            refs.retain(|(ref_id, _)| *ref_id != id);
         });
     };
 
@@ -437,7 +443,7 @@ pub fn DataLakeForm() -> impl IntoView {
         ev.prevent_default();
 
         // Validate at least one schema
-        if schema_refs.get().is_empty() || schema_refs.get().iter().all(|s| s.schema_name.is_empty()) {
+        if schema_refs.get().is_empty() || schema_refs.get().iter().all(|(_, s)| s.schema_name.is_empty()) {
             set_error.set(Some("Please add at least one schema reference".to_string()));
             return;
         }
@@ -447,7 +453,7 @@ pub fn DataLakeForm() -> impl IntoView {
 
         let name_val = name.get();
         let desc_val = description.get();
-        let schemas = schema_refs.get().into_iter().filter(|s| !s.schema_name.is_empty()).collect::<Vec<_>>();
+        let schemas = schema_refs.get().into_iter().filter_map(|(_, s)| if !s.schema_name.is_empty() { Some(s) } else { None }).collect::<Vec<_>>();
         let storage_mode_val = storage_mode.get();
         let file_format_val = file_format.get();
         let enable_sql_val = enable_sql_queries.get();
@@ -577,13 +583,94 @@ pub fn DataLakeForm() -> impl IntoView {
                         <div>
                             <div class="flex justify-between items-center mb-2">
                                 <label class="block text-sm font-medium text-gray-700">"Schema References"</label>
-                                <button
-                                    type="button"
-                                    class="px-3 py-1 text-sm bg-cyan-50 text-cyan-700 rounded hover:bg-cyan-100"
-                                    on:click=add_schema_ref
-                                >
-                                    "+ Add Schema"
-                                </button>
+                                <div class="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        class="px-3 py-1 text-sm bg-cyan-50 text-cyan-700 rounded hover:bg-cyan-100"
+                                        on:click=add_schema_ref
+                                    >
+                                        "+ Add Schema"
+                                    </button>
+                                    <div class="relative">
+                                        <button
+                                            type="button"
+                                            class="px-3 py-1 text-sm bg-purple-50 text-purple-700 rounded hover:bg-purple-100 flex items-center gap-1"
+                                            on:click=move |_| set_show_tag_dropdown.update(|v| *v = !*v)
+                                        >
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/>
+                                            </svg>
+                                            "Add by Tag"
+                                        </button>
+                                        <Show when=move || show_tag_dropdown.get()>
+                                        <div class="absolute left-0 mt-1 w-56 bg-white rounded-lg shadow-lg border border-gray-200 z-10 max-h-64 overflow-y-auto">
+                                            {move || {
+                                                let schemas = available_schemas.get().unwrap_or_default();
+                                                // Extract unique tags from all schemas
+                                                let mut all_tags: Vec<String> = schemas.iter()
+                                                    .flat_map(|s| s.tags.iter().cloned())
+                                                    .collect();
+                                                all_tags.sort();
+                                                all_tags.dedup();
+
+                                                if all_tags.is_empty() {
+                                                    view! {
+                                                        <div class="p-3 text-sm text-gray-500 italic">"No tags found in schemas"</div>
+                                                    }.into_any()
+                                                } else {
+                                                    all_tags.into_iter().map(|tag| {
+                                                        let tag_for_click = tag.clone();
+                                                        let tag_for_count = tag.clone();
+                                                        let schemas_clone = schemas.clone();
+                                                        let count = schemas_clone.iter()
+                                                            .filter(|s| s.tags.contains(&tag_for_count))
+                                                            .count();
+                                                        view! {
+                                                            <button
+                                                                type="button"
+                                                                class="w-full px-3 py-2 text-left text-sm hover:bg-purple-50 flex justify-between items-center"
+                                                                on:click=move |_| {
+                                                                    let schemas = available_schemas.get().unwrap_or_default();
+                                                                    let tag = tag_for_click.clone();
+                                                                    // Find all schemas with this tag
+                                                                    let matching_schemas: Vec<_> = schemas.iter()
+                                                                        .filter(|s| s.tags.contains(&tag))
+                                                                        .collect();
+
+                                                                    // Add schemas that aren't already in the list
+                                                                    let existing_names: HashSet<_> = schema_refs.get().iter()
+                                                                        .map(|(_, r)| r.schema_name.clone())
+                                                                        .collect();
+                                                                    for schema in matching_schemas {
+                                                                        if !existing_names.contains(&schema.name) {
+                                                                            let id = next_schema_ref_id.get();
+                                                                            set_next_schema_ref_id.set(id + 1);
+                                                                            set_schema_refs.update(|refs| {
+                                                                                refs.push((id, DataLakeSchemaRef {
+                                                                                    schema_name: schema.name.clone(),
+                                                                                    schema_version: None,
+                                                                                    alias: None,
+                                                                                }));
+                                                                            });
+                                                                        }
+                                                                    }
+                                                                    set_show_tag_dropdown.set(false);
+                                                                }
+                                                            >
+                                                                <span class="flex items-center gap-2">
+                                                                    <span class="w-2 h-2 bg-purple-400 rounded-full"></span>
+                                                                    {tag.clone()}
+                                                                </span>
+                                                                <span class="text-xs text-gray-400">{count} " schemas"</span>
+                                                            </button>
+                                                        }
+                                                    }).collect_view().into_any()
+                                                }
+                                            }}
+                                        </div>
+                                    </Show>
+                                    </div>
+                                </div>
                             </div>
                             <p class="text-xs text-gray-500 mb-3">
                                 "Select schemas that will be used to store records in this data lake."
@@ -605,10 +692,10 @@ pub fn DataLakeForm() -> impl IntoView {
                                         <div class="space-y-3">
                                             <For
                                                 each=move || {
-                                                    schema_refs.get().into_iter().enumerate().collect::<Vec<_>>()
+                                                    schema_refs.get()
                                                 }
-                                                key=|(i, _)| *i
-                                                children=move |(index, schema_ref)| {
+                                                key=|(id, _)| *id
+                                                children=move |(id, schema_ref)| {
                                                     let schemas_for_select = schemas.clone();
                                                     view! {
                                                         <div class="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
@@ -621,7 +708,7 @@ pub fn DataLakeForm() -> impl IntoView {
                                                                         on:change=move |ev| {
                                                                             let value = event_target_value(&ev);
                                                                             set_schema_refs.update(|refs| {
-                                                                                if let Some(r) = refs.get_mut(index) {
+                                                                                if let Some((_, r)) = refs.iter_mut().find(|(ref_id, _)| *ref_id == id) {
                                                                                     r.schema_name = value;
                                                                                 }
                                                                             });
@@ -647,7 +734,7 @@ pub fn DataLakeForm() -> impl IntoView {
                                                                         on:input=move |ev| {
                                                                             let value = event_target_value(&ev);
                                                                             set_schema_refs.update(|refs| {
-                                                                                if let Some(r) = refs.get_mut(index) {
+                                                                                if let Some((_, r)) = refs.iter_mut().find(|(ref_id, _)| *ref_id == id) {
                                                                                     r.schema_version = if value.is_empty() { None } else { Some(value) };
                                                                                 }
                                                                             });
@@ -664,7 +751,7 @@ pub fn DataLakeForm() -> impl IntoView {
                                                                         on:input=move |ev| {
                                                                             let value = event_target_value(&ev);
                                                                             set_schema_refs.update(|refs| {
-                                                                                if let Some(r) = refs.get_mut(index) {
+                                                                                if let Some((_, r)) = refs.iter_mut().find(|(ref_id, _)| *ref_id == id) {
                                                                                     r.alias = if value.is_empty() { None } else { Some(value) };
                                                                                 }
                                                                             });
@@ -675,7 +762,7 @@ pub fn DataLakeForm() -> impl IntoView {
                                                             <button
                                                                 type="button"
                                                                 class="mt-5 p-1 text-red-500 hover:bg-red-50 rounded"
-                                                                on:click=move |_| remove_schema_ref(index)
+                                                                on:click=move |_| remove_schema_ref(id)
                                                             >
                                                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
@@ -810,7 +897,9 @@ pub fn DataLakeEditForm() -> impl IntoView {
     let (name, set_name) = signal(String::new());
     let (description, set_description) = signal(String::new());
     let tags = RwSignal::new(Vec::<String>::new());
-    let (schema_refs, set_schema_refs) = signal(Vec::<DataLakeSchemaRef>::new());
+    // Use (id, schema_ref) tuples for stable keys in For loop
+    let (schema_refs, set_schema_refs) = signal(Vec::<(u64, DataLakeSchemaRef)>::new());
+    let (next_schema_ref_id, set_next_schema_ref_id) = signal(1u64);
     let (saving, set_saving) = signal(false);
     let (error, set_error) = signal(Option::<String>::None);
     let (loaded, set_loaded) = signal(false);
@@ -825,6 +914,9 @@ pub fn DataLakeEditForm() -> impl IntoView {
         api::list_schemas().await.ok().unwrap_or_default()
     });
 
+    // Add by tag state
+    let (show_tag_dropdown, set_show_tag_dropdown) = signal(false);
+
     // Load existing data lake
     Effect::new(move |_| {
         let lake_name = original_name();
@@ -835,7 +927,15 @@ pub fn DataLakeEditForm() -> impl IntoView {
                         set_name.set(lake.name);
                         set_description.set(lake.description.unwrap_or_default());
                         tags.set(lake.tags);
-                        set_schema_refs.set(lake.schemas);
+                        // Convert schemas to tuples with IDs
+                        let schemas_with_ids: Vec<(u64, DataLakeSchemaRef)> = lake.schemas
+                            .into_iter()
+                            .enumerate()
+                            .map(|(i, s)| ((i + 1) as u64, s))
+                            .collect();
+                        let next_id = schemas_with_ids.len() as u64 + 1;
+                        set_schema_refs.set(schemas_with_ids);
+                        set_next_schema_ref_id.set(next_id);
                         set_storage_mode.set(lake.storage_mode);
                         set_file_format.set(lake.file_format);
                         set_enable_sql_queries.set(lake.enable_sql_queries);
@@ -850,27 +950,27 @@ pub fn DataLakeEditForm() -> impl IntoView {
     });
 
     let add_schema_ref = move |_| {
+        let id = next_schema_ref_id.get();
+        set_next_schema_ref_id.set(id + 1);
         set_schema_refs.update(|refs| {
-            refs.push(DataLakeSchemaRef {
+            refs.push((id, DataLakeSchemaRef {
                 schema_name: String::new(),
                 schema_version: None,
                 alias: None,
-            });
+            }));
         });
     };
 
-    let remove_schema_ref = move |index: usize| {
+    let remove_schema_ref = move |id: u64| {
         set_schema_refs.update(|refs| {
-            if index < refs.len() {
-                refs.remove(index);
-            }
+            refs.retain(|(ref_id, _)| *ref_id != id);
         });
     };
 
     let on_submit = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
 
-        if schema_refs.get().is_empty() || schema_refs.get().iter().all(|s| s.schema_name.is_empty()) {
+        if schema_refs.get().is_empty() || schema_refs.get().iter().all(|(_, s)| s.schema_name.is_empty()) {
             set_error.set(Some("Please add at least one schema reference".to_string()));
             return;
         }
@@ -881,7 +981,7 @@ pub fn DataLakeEditForm() -> impl IntoView {
         let orig_name = original_name();
         let name_val = name.get();
         let desc_val = description.get();
-        let schemas = schema_refs.get().into_iter().filter(|s| !s.schema_name.is_empty()).collect::<Vec<_>>();
+        let schemas = schema_refs.get().into_iter().filter_map(|(_, s)| if !s.schema_name.is_empty() { Some(s) } else { None }).collect::<Vec<_>>();
 
         let storage_mode_val = storage_mode.get();
         let file_format_val = file_format.get();
@@ -1016,13 +1116,94 @@ pub fn DataLakeEditForm() -> impl IntoView {
                         <div>
                             <div class="flex justify-between items-center mb-2">
                                 <label class="block text-sm font-medium text-gray-700">"Schema References"</label>
-                                <button
-                                    type="button"
-                                    class="px-3 py-1 text-sm bg-cyan-50 text-cyan-700 rounded hover:bg-cyan-100"
-                                    on:click=add_schema_ref
-                                >
-                                    "+ Add Schema"
-                                </button>
+                                <div class="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        class="px-3 py-1 text-sm bg-cyan-50 text-cyan-700 rounded hover:bg-cyan-100"
+                                        on:click=add_schema_ref
+                                    >
+                                        "+ Add Schema"
+                                    </button>
+                                    <div class="relative">
+                                        <button
+                                            type="button"
+                                            class="px-3 py-1 text-sm bg-purple-50 text-purple-700 rounded hover:bg-purple-100 flex items-center gap-1"
+                                            on:click=move |_| set_show_tag_dropdown.update(|v| *v = !*v)
+                                        >
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/>
+                                            </svg>
+                                            "Add by Tag"
+                                        </button>
+                                        <Show when=move || show_tag_dropdown.get()>
+                                        <div class="absolute right-0 mt-1 w-56 bg-white rounded-lg shadow-lg border border-gray-200 z-10 max-h-64 overflow-y-auto">
+                                            {move || {
+                                                let schemas = available_schemas.get().unwrap_or_default();
+                                                // Extract unique tags from all schemas
+                                                let mut all_tags: Vec<String> = schemas.iter()
+                                                    .flat_map(|s| s.tags.iter().cloned())
+                                                    .collect();
+                                                all_tags.sort();
+                                                all_tags.dedup();
+
+                                                if all_tags.is_empty() {
+                                                    view! {
+                                                        <div class="p-3 text-sm text-gray-500 italic">"No tags found in schemas"</div>
+                                                    }.into_any()
+                                                } else {
+                                                    all_tags.into_iter().map(|tag| {
+                                                        let tag_for_click = tag.clone();
+                                                        let tag_for_count = tag.clone();
+                                                        let schemas_clone = schemas.clone();
+                                                        let count = schemas_clone.iter()
+                                                            .filter(|s| s.tags.contains(&tag_for_count))
+                                                            .count();
+                                                        view! {
+                                                            <button
+                                                                type="button"
+                                                                class="w-full px-3 py-2 text-left text-sm hover:bg-purple-50 flex justify-between items-center"
+                                                                on:click=move |_| {
+                                                                    let schemas = available_schemas.get().unwrap_or_default();
+                                                                    let tag = tag_for_click.clone();
+                                                                    // Find all schemas with this tag
+                                                                    let matching_schemas: Vec<_> = schemas.iter()
+                                                                        .filter(|s| s.tags.contains(&tag))
+                                                                        .collect();
+
+                                                                    // Add schemas that aren't already in the list
+                                                                    let existing_names: HashSet<_> = schema_refs.get().iter()
+                                                                        .map(|(_, r)| r.schema_name.clone())
+                                                                        .collect();
+                                                                    for schema in matching_schemas {
+                                                                        if !existing_names.contains(&schema.name) {
+                                                                            let id = next_schema_ref_id.get();
+                                                                            set_next_schema_ref_id.set(id + 1);
+                                                                            set_schema_refs.update(|refs| {
+                                                                                refs.push((id, DataLakeSchemaRef {
+                                                                                    schema_name: schema.name.clone(),
+                                                                                    schema_version: None,
+                                                                                    alias: None,
+                                                                                }));
+                                                                            });
+                                                                        }
+                                                                    }
+                                                                    set_show_tag_dropdown.set(false);
+                                                                }
+                                                            >
+                                                                <span class="flex items-center gap-2">
+                                                                    <span class="w-2 h-2 bg-purple-400 rounded-full"></span>
+                                                                    {tag.clone()}
+                                                                </span>
+                                                                <span class="text-xs text-gray-400">{count} " schemas"</span>
+                                                            </button>
+                                                        }
+                                                    }).collect_view().into_any()
+                                                }
+                                            }}
+                                        </div>
+                                    </Show>
+                                    </div>
+                                </div>
                             </div>
 
                             <Suspense fallback=move || view! { <div class="text-gray-500 text-sm">"Loading schemas..."</div> }>
@@ -1032,10 +1213,10 @@ pub fn DataLakeEditForm() -> impl IntoView {
                                         <div class="space-y-3">
                                             <For
                                                 each=move || {
-                                                    schema_refs.get().into_iter().enumerate().collect::<Vec<_>>()
+                                                    schema_refs.get()
                                                 }
-                                                key=|(i, _)| *i
-                                                children=move |(index, schema_ref)| {
+                                                key=|(id, _)| *id
+                                                children=move |(id, schema_ref)| {
                                                     let schemas_for_select = schemas.clone();
                                                     view! {
                                                         <div class="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
@@ -1048,7 +1229,7 @@ pub fn DataLakeEditForm() -> impl IntoView {
                                                                         on:change=move |ev| {
                                                                             let value = event_target_value(&ev);
                                                                             set_schema_refs.update(|refs| {
-                                                                                if let Some(r) = refs.get_mut(index) {
+                                                                                if let Some((_, r)) = refs.iter_mut().find(|(ref_id, _)| *ref_id == id) {
                                                                                     r.schema_name = value;
                                                                                 }
                                                                             });
@@ -1074,7 +1255,7 @@ pub fn DataLakeEditForm() -> impl IntoView {
                                                                         on:input=move |ev| {
                                                                             let value = event_target_value(&ev);
                                                                             set_schema_refs.update(|refs| {
-                                                                                if let Some(r) = refs.get_mut(index) {
+                                                                                if let Some((_, r)) = refs.iter_mut().find(|(ref_id, _)| *ref_id == id) {
                                                                                     r.schema_version = if value.is_empty() { None } else { Some(value) };
                                                                                 }
                                                                             });
@@ -1091,7 +1272,7 @@ pub fn DataLakeEditForm() -> impl IntoView {
                                                                         on:input=move |ev| {
                                                                             let value = event_target_value(&ev);
                                                                             set_schema_refs.update(|refs| {
-                                                                                if let Some(r) = refs.get_mut(index) {
+                                                                                if let Some((_, r)) = refs.iter_mut().find(|(ref_id, _)| *ref_id == id) {
                                                                                     r.alias = if value.is_empty() { None } else { Some(value) };
                                                                                 }
                                                                             });
@@ -1102,7 +1283,7 @@ pub fn DataLakeEditForm() -> impl IntoView {
                                                             <button
                                                                 type="button"
                                                                 class="mt-5 p-1 text-red-500 hover:bg-red-50 rounded"
-                                                                on:click=move |_| remove_schema_ref(index)
+                                                                on:click=move |_| remove_schema_ref(id)
                                                             >
                                                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
@@ -1276,6 +1457,23 @@ pub fn DataLakeRecords() -> impl IntoView {
         refs
     });
 
+    // Import from file state
+    let (show_import_modal, set_show_import_modal) = signal(false);
+    let (import_schema, set_import_schema) = signal(String::new());
+    let (import_file_content, set_import_file_content) = signal(String::new());
+    let (import_file_name, set_import_file_name) = signal(String::new());
+    let (import_file_type, set_import_file_type) = signal(String::new()); // "json" or "csv"
+    let (importing, set_importing) = signal(false);
+    let (import_progress, set_import_progress) = signal((0usize, 0usize)); // (completed, total)
+    let (import_error, set_import_error) = signal(Option::<String>::None);
+    let (generate_ids, set_generate_ids) = signal(true);
+    let (id_field_name, set_id_field_name) = signal("id".to_string());
+    // Field mapping state
+    let schema_properties: RwSignal<Vec<String>> = RwSignal::new(Vec::new()); // Schema property names
+    let input_fields: RwSignal<Vec<String>> = RwSignal::new(Vec::new()); // Detected input file fields
+    let field_mapping: RwSignal<std::collections::HashMap<String, String>> = RwSignal::new(std::collections::HashMap::new()); // input field -> schema property
+    let (loading_schema_props, set_loading_schema_props) = signal(false);
+
     // Files tab state
     let (_files_refresh, set_files_refresh) = signal(0u32);
     let (files_loading, set_files_loading) = signal(false);
@@ -1284,6 +1482,100 @@ pub fn DataLakeRecords() -> impl IntoView {
     let (syncing, set_syncing) = signal(false);
     let (sync_schema, set_sync_schema) = signal(Option::<String>::None);
     let (show_sync_modal, set_show_sync_modal) = signal(false);
+
+    // Effect: Fetch schema properties when import schema is selected
+    Effect::new(move |_| {
+        let schema_name = import_schema.get();
+        if schema_name.is_empty() {
+            schema_properties.set(Vec::new());
+            return;
+        }
+        set_loading_schema_props.set(true);
+        wasm_bindgen_futures::spawn_local(async move {
+            match api::get_schema(&schema_name).await {
+                Ok(schema) => {
+                    // Extract property names from schema
+                    let props: Vec<String> = schema.schema
+                        .get("properties")
+                        .and_then(|p| p.as_object())
+                        .map(|obj| obj.keys().cloned().collect())
+                        .unwrap_or_default();
+                    schema_properties.set(props);
+                    // Auto-map matching fields
+                    let current_input = input_fields.get();
+                    if !current_input.is_empty() {
+                        field_mapping.update(|mapping| {
+                            for input_field in &current_input {
+                                // Auto-map if names match exactly or case-insensitively
+                                let schema_props = schema_properties.get();
+                                if let Some(matching_prop) = schema_props.iter().find(|p| {
+                                    *p == input_field || p.to_lowercase() == input_field.to_lowercase()
+                                }) {
+                                    mapping.insert(input_field.clone(), matching_prop.clone());
+                                }
+                            }
+                        });
+                    }
+                }
+                Err(_) => {
+                    schema_properties.set(Vec::new());
+                }
+            }
+            set_loading_schema_props.set(false);
+        });
+    });
+
+    // Effect: Detect input fields when file content changes
+    Effect::new(move |_| {
+        let content = import_file_content.get();
+        let file_type = import_file_type.get();
+
+        if content.is_empty() {
+            input_fields.set(Vec::new());
+            field_mapping.set(std::collections::HashMap::new());
+            return;
+        }
+
+        let detected_fields: Vec<String> = if file_type == "json" {
+            match serde_json::from_str::<serde_json::Value>(&content) {
+                Ok(serde_json::Value::Array(arr)) => {
+                    // Get fields from first object
+                    arr.first()
+                        .and_then(|v| v.as_object())
+                        .map(|obj| obj.keys().cloned().collect())
+                        .unwrap_or_default()
+                }
+                Ok(serde_json::Value::Object(obj)) => {
+                    obj.keys().cloned().collect()
+                }
+                _ => Vec::new(),
+            }
+        } else if file_type == "csv" {
+            // Get headers from first line
+            content.lines().next()
+                .map(|line| line.split(',').map(|s| s.trim().to_string()).collect())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        input_fields.set(detected_fields.clone());
+
+        // Auto-map matching fields
+        let schema_props = schema_properties.get();
+        if !schema_props.is_empty() {
+            field_mapping.update(|mapping| {
+                mapping.clear();
+                for input_field in &detected_fields {
+                    if let Some(matching_prop) = schema_props.iter().find(|p| {
+                        *p == input_field || p.to_lowercase() == input_field.to_lowercase()
+                    }) {
+                        mapping.insert(input_field.clone(), matching_prop.clone());
+                    }
+                }
+            });
+        }
+    });
 
     // Load data lake info
     let data_lake = LocalResource::new(move || {
@@ -1476,6 +1768,25 @@ pub fn DataLakeRecords() -> impl IntoView {
 
                 // Actions
                 <div class="flex items-center gap-3">
+                    <button
+                        class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2"
+                        on:click=move |_| {
+                            set_import_error.set(None);
+                            set_import_file_content.set(String::new());
+                            set_import_file_name.set(String::new());
+                            set_import_file_type.set(String::new());
+                            set_import_schema.set(String::new());
+                            schema_properties.set(Vec::new());
+                            input_fields.set(Vec::new());
+                            field_mapping.set(std::collections::HashMap::new());
+                            set_show_import_modal.set(true);
+                        }
+                    >
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                        </svg>
+                        "Import from File"
+                    </button>
                     <button
                         class="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 flex items-center gap-2"
                         on:click=move |_| set_show_generate_modal.set(true)
@@ -2254,6 +2565,496 @@ pub fn DataLakeRecords() -> impl IntoView {
                         set_refresh_trigger.update(|n| *n += 1);
                     }
                 />
+            </Show>
+
+            // Import from file modal
+            <Show when=move || show_import_modal.get()>
+                <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div class="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-lg font-semibold">"Import Records from File"</h3>
+                            <button
+                                class="text-gray-400 hover:text-gray-600"
+                                on:click=move |_| set_show_import_modal.set(false)
+                            >
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                </svg>
+                            </button>
+                        </div>
+
+                        // Error display
+                        <Show when=move || import_error.get().is_some()>
+                            <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4 text-sm whitespace-pre-wrap">
+                                {move || import_error.get().unwrap_or_default()}
+                            </div>
+                        </Show>
+
+                        // Progress display
+                        <Show when=move || importing.get()>
+                            <div class="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded mb-4">
+                                <div class="flex items-center gap-2">
+                                    <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-green-600"></div>
+                                    <span>
+                                        "Importing record "
+                                        {move || import_progress.get().0 + 1}
+                                        " of "
+                                        {move || import_progress.get().1}
+                                        "..."
+                                    </span>
+                                </div>
+                            </div>
+                        </Show>
+
+                        // Schema selection
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">"Target Schema"</label>
+                            <Suspense>
+                                {move || {
+                                    data_lake.get().flatten().map(|lake| {
+                                        let schemas = lake.schemas.clone();
+                                        view! {
+                                            <select
+                                                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-cyan-500 focus:border-cyan-500"
+                                                prop:value=move || import_schema.get()
+                                                on:change=move |ev| set_import_schema.set(event_target_value(&ev))
+                                            >
+                                                <option value="">"Select a schema..."</option>
+                                                {schemas.iter().map(|s| {
+                                                    let schema_name = s.schema_name.clone();
+                                                    view! {
+                                                        <option value=schema_name.clone()>{schema_name.clone()}</option>
+                                                    }
+                                                }).collect::<Vec<_>>()}
+                                            </select>
+                                        }
+                                    })
+                                }}
+                            </Suspense>
+                        </div>
+
+                        // File upload
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">"File (JSON or CSV)"</label>
+                            <div class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-cyan-500 transition-colors">
+                                <input
+                                    type="file"
+                                    accept=".json,.csv"
+                                    class="hidden"
+                                    id="import-file-input"
+                                    on:change=move |ev| {
+                                        let target = ev.target().unwrap();
+                                        let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                        if let Some(files) = input.files() {
+                                            if let Some(file) = files.get(0) {
+                                                let file_name = file.name();
+                                                let file_type = if file_name.ends_with(".csv") {
+                                                    "csv".to_string()
+                                                } else {
+                                                    "json".to_string()
+                                                };
+                                                set_import_file_name.set(file_name);
+                                                set_import_file_type.set(file_type);
+
+                                                // Read file content
+                                                let reader = web_sys::FileReader::new().unwrap();
+                                                let reader_clone = reader.clone();
+                                                let onload = wasm_bindgen::closure::Closure::wrap(Box::new(move |_: web_sys::Event| {
+                                                    if let Ok(result) = reader_clone.result() {
+                                                        if let Some(text) = result.as_string() {
+                                                            set_import_file_content.set(text);
+                                                        }
+                                                    }
+                                                }) as Box<dyn FnMut(_)>);
+                                                reader.set_onload(Some(onload.as_ref().unchecked_ref()));
+                                                onload.forget();
+                                                reader.read_as_text(&file).ok();
+                                            }
+                                        }
+                                    }
+                                />
+                                <label for="import-file-input" class="cursor-pointer">
+                                    {move || {
+                                        if import_file_name.get().is_empty() {
+                                            view! {
+                                                <div>
+                                                    <svg class="w-12 h-12 mx-auto text-gray-400 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                                                    </svg>
+                                                    <p class="text-sm text-gray-600">"Click to select a JSON or CSV file"</p>
+                                                    <p class="text-xs text-gray-400 mt-1">"Supported formats: .json (array of objects), .csv"</p>
+                                                </div>
+                                            }.into_any()
+                                        } else {
+                                            view! {
+                                                <div>
+                                                    <svg class="w-12 h-12 mx-auto text-green-500 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                                    </svg>
+                                                    <p class="text-sm font-medium text-gray-900">{move || import_file_name.get()}</p>
+                                                    <p class="text-xs text-gray-500">
+                                                        {move || format!("Type: {}", import_file_type.get().to_uppercase())}
+                                                    </p>
+                                                    <p class="text-xs text-cyan-600 mt-1">"Click to change file"</p>
+                                                </div>
+                                            }.into_any()
+                                        }
+                                    }}
+                                </label>
+                            </div>
+                        </div>
+
+                        // Field mapping section
+                        <Show when=move || !input_fields.get().is_empty() && !schema_properties.get().is_empty()>
+                            <div class="mb-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+                                <div class="flex justify-between items-center mb-3">
+                                    <h4 class="text-sm font-medium text-gray-700">"Field Mapping"</h4>
+                                    <span class="text-xs text-blue-600">
+                                        {move || {
+                                            let mapped = field_mapping.get().len();
+                                            let total = input_fields.get().len();
+                                            format!("{}/{} fields mapped", mapped, total)
+                                        }}
+                                    </span>
+                                </div>
+                                <p class="text-xs text-gray-500 mb-3">
+                                    "Map input file fields to schema properties. Fields with matching names are auto-mapped."
+                                </p>
+                                <div class="space-y-2 max-h-48 overflow-y-auto">
+                                    {move || {
+                                        let fields = input_fields.get();
+                                        let props = schema_properties.get();
+                                        let mapping = field_mapping.get();
+                                        fields.into_iter().map(|input_field| {
+                                            let input_field_clone = input_field.clone();
+                                            let input_field_for_select = input_field.clone();
+                                            let input_field_for_display = input_field.clone();
+                                            let props_clone = props.clone();
+                                            let current_mapping = mapping.get(&input_field).cloned().unwrap_or_default();
+                                            view! {
+                                                <div class="flex items-center gap-2 py-1">
+                                                    <div class="w-1/3 text-sm text-gray-700 font-mono bg-white px-2 py-1 rounded border border-gray-200 truncate" title=input_field_for_display.clone()>
+                                                        {input_field_for_display.clone()}
+                                                    </div>
+                                                    <svg class="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8l4 4m0 0l-4 4m4-4H3"/>
+                                                    </svg>
+                                                    <select
+                                                        class="flex-1 px-2 py-1 text-sm border border-gray-300 rounded focus:ring-blue-500 focus:border-blue-500"
+                                                        prop:value=current_mapping.clone()
+                                                        on:change=move |ev| {
+                                                            let value = event_target_value(&ev);
+                                                            let field = input_field_for_select.clone();
+                                                            field_mapping.update(|m| {
+                                                                if value.is_empty() {
+                                                                    m.remove(&field);
+                                                                } else {
+                                                                    m.insert(field, value);
+                                                                }
+                                                            });
+                                                        }
+                                                    >
+                                                        <option value="">"-- Skip this field --"</option>
+                                                        {props_clone.iter().map(|prop| {
+                                                            let prop_clone = prop.clone();
+                                                            let selected = current_mapping == *prop;
+                                                            view! {
+                                                                <option value=prop_clone.clone() selected=selected>{prop_clone.clone()}</option>
+                                                            }
+                                                        }).collect::<Vec<_>>()}
+                                                    </select>
+                                                    {move || {
+                                                        let mapping = field_mapping.get();
+                                                        if mapping.contains_key(&input_field_clone) {
+                                                            view! {
+                                                                <svg class="w-4 h-4 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                                                                </svg>
+                                                            }.into_any()
+                                                        } else {
+                                                            view! {
+                                                                <svg class="w-4 h-4 text-gray-300 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                                                </svg>
+                                                            }.into_any()
+                                                        }
+                                                    }}
+                                                </div>
+                                            }
+                                        }).collect_view()
+                                    }}
+                                </div>
+                            </div>
+                        </Show>
+
+                        // Loading schema properties indicator
+                        <Show when=move || loading_schema_props.get()>
+                            <div class="mb-4 flex items-center gap-2 text-blue-600 text-sm">
+                                <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                                "Loading schema properties..."
+                            </div>
+                        </Show>
+
+                        // ID generation options
+                        <div class="mb-4 p-4 bg-gray-50 rounded-lg">
+                            <h4 class="text-sm font-medium text-gray-700 mb-3">"ID Generation"</h4>
+                            <div class="space-y-3">
+                                <label class="flex items-center gap-2">
+                                    <input
+                                        type="checkbox"
+                                        class="rounded border-gray-300 text-cyan-600 focus:ring-cyan-500"
+                                        prop:checked=move || generate_ids.get()
+                                        on:change=move |ev| {
+                                            let target = ev.target().unwrap();
+                                            let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                            set_generate_ids.set(input.checked());
+                                        }
+                                    />
+                                    <span class="text-sm text-gray-600">"Generate UUIDs for records without an ID"</span>
+                                </label>
+                                <div>
+                                    <label class="block text-xs text-gray-500 mb-1">"ID field name"</label>
+                                    <input
+                                        type="text"
+                                        class="w-full px-3 py-2 text-sm border border-gray-300 rounded focus:ring-cyan-500 focus:border-cyan-500"
+                                        placeholder="id"
+                                        prop:value=move || id_field_name.get()
+                                        on:input=move |ev| set_id_field_name.set(event_target_value(&ev))
+                                    />
+                                    <p class="text-xs text-gray-400 mt-1">"The field name to check for existing IDs and to add generated IDs"</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        // Preview count
+                        <div class="mb-4">
+                            {move || {
+                                let content = import_file_content.get();
+                                let file_type = import_file_type.get();
+                                if content.is_empty() {
+                                    view! { <span class="text-gray-500 text-sm">"Select a file to see preview"</span> }.into_any()
+                                } else if file_type == "json" {
+                                    match serde_json::from_str::<serde_json::Value>(&content) {
+                                        Ok(serde_json::Value::Array(arr)) => {
+                                            view! {
+                                                <span class="text-green-600 text-sm font-medium">
+                                                    {arr.len()} " record(s) detected"
+                                                </span>
+                                            }.into_any()
+                                        }
+                                        Ok(_) => {
+                                            view! {
+                                                <span class="text-green-600 text-sm font-medium">
+                                                    "1 record detected"
+                                                </span>
+                                            }.into_any()
+                                        }
+                                        Err(e) => {
+                                            view! {
+                                                <span class="text-red-500 text-sm">
+                                                    "Invalid JSON: " {e.to_string()}
+                                                </span>
+                                            }.into_any()
+                                        }
+                                    }
+                                } else if file_type == "csv" {
+                                    let line_count = content.lines().count();
+                                    if line_count > 1 {
+                                        view! {
+                                            <span class="text-green-600 text-sm font-medium">
+                                                {line_count - 1} " record(s) detected (excluding header)"
+                                            </span>
+                                        }.into_any()
+                                    } else {
+                                        view! {
+                                            <span class="text-yellow-600 text-sm">
+                                                "No data rows found in CSV"
+                                            </span>
+                                        }.into_any()
+                                    }
+                                } else {
+                                    view! { <span class="text-gray-500 text-sm">"Unknown file type"</span> }.into_any()
+                                }
+                            }}
+                        </div>
+
+                        // Actions
+                        <div class="flex justify-end gap-3">
+                            <button
+                                class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded"
+                                on:click=move |_| set_show_import_modal.set(false)
+                                disabled=move || importing.get()
+                            >
+                                "Cancel"
+                            </button>
+                            <button
+                                class="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 flex items-center gap-2"
+                                disabled=move || importing.get() || import_file_content.get().is_empty() || import_schema.get().is_empty()
+                                on:click=move |_| {
+                                    let lake_name = data_lake_name();
+                                    let schema_name = import_schema.get();
+                                    let content = import_file_content.get();
+                                    let file_type = import_file_type.get();
+                                    let should_generate_ids = generate_ids.get();
+                                    let id_field = id_field_name.get();
+                                    let mapping = field_mapping.get();
+
+                                    if schema_name.is_empty() {
+                                        set_import_error.set(Some("Please select a schema".to_string()));
+                                        return;
+                                    }
+
+                                    // Parse the file content into records
+                                    let records_result: Result<Vec<serde_json::Value>, String> = if file_type == "json" {
+                                        match serde_json::from_str::<serde_json::Value>(&content) {
+                                            Ok(serde_json::Value::Array(arr)) => Ok(arr),
+                                            Ok(obj) => Ok(vec![obj]),
+                                            Err(e) => Err(format!("Invalid JSON: {}", e)),
+                                        }
+                                    } else if file_type == "csv" {
+                                        // Parse CSV
+                                        let mut lines = content.lines();
+                                        let headers: Vec<&str> = match lines.next() {
+                                            Some(header_line) => header_line.split(',').map(|s| s.trim()).collect(),
+                                            None => return set_import_error.set(Some("CSV file is empty".to_string())),
+                                        };
+
+                                        let mut records = Vec::new();
+                                        for line in lines {
+                                            if line.trim().is_empty() {
+                                                continue;
+                                            }
+                                            let values: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
+                                            let mut obj = serde_json::Map::new();
+                                            for (i, header) in headers.iter().enumerate() {
+                                                let value = values.get(i).copied().unwrap_or("");
+                                                // Try to parse as number or boolean, otherwise keep as string
+                                                let json_value = if value.is_empty() {
+                                                    serde_json::Value::Null
+                                                } else if let Ok(n) = value.parse::<i64>() {
+                                                    serde_json::Value::Number(n.into())
+                                                } else if let Ok(n) = value.parse::<f64>() {
+                                                    serde_json::json!(n)
+                                                } else if value == "true" {
+                                                    serde_json::Value::Bool(true)
+                                                } else if value == "false" {
+                                                    serde_json::Value::Bool(false)
+                                                } else {
+                                                    serde_json::Value::String(value.to_string())
+                                                };
+                                                obj.insert((*header).to_string(), json_value);
+                                            }
+                                            records.push(serde_json::Value::Object(obj));
+                                        }
+                                        Ok(records)
+                                    } else {
+                                        Err("Unknown file type".to_string())
+                                    };
+
+                                    let mut records = match records_result {
+                                        Ok(r) => r,
+                                        Err(e) => {
+                                            set_import_error.set(Some(e));
+                                            return;
+                                        }
+                                    };
+
+                                    if records.is_empty() {
+                                        set_import_error.set(Some("No records found in file".to_string()));
+                                        return;
+                                    }
+
+                                    // Apply field mapping if any mappings are defined
+                                    if !mapping.is_empty() {
+                                        records = records.into_iter().map(|record| {
+                                            if let Some(obj) = record.as_object() {
+                                                let mut new_obj = serde_json::Map::new();
+                                                for (input_field, value) in obj {
+                                                    // If there's a mapping for this field, use the mapped name
+                                                    if let Some(schema_prop) = mapping.get(input_field) {
+                                                        new_obj.insert(schema_prop.clone(), value.clone());
+                                                    }
+                                                    // If no mapping exists but field name matches a schema property, keep it
+                                                    // (fields without mapping are skipped)
+                                                }
+                                                serde_json::Value::Object(new_obj)
+                                            } else {
+                                                record
+                                            }
+                                        }).collect();
+                                    }
+
+                                    // Add IDs if needed
+                                    if should_generate_ids {
+                                        for record in &mut records {
+                                            if let Some(obj) = record.as_object_mut() {
+                                                if !obj.contains_key(&id_field) || obj.get(&id_field).map(|v| v.is_null()).unwrap_or(true) {
+                                                    // Generate UUID
+                                                    let uuid = js_sys::Math::random().to_string().replace("0.", "")
+                                                        + &js_sys::Math::random().to_string().replace("0.", "");
+                                                    let uuid = format!("{}-{}-{}-{}-{}",
+                                                        &uuid[0..8],
+                                                        &uuid[8..12],
+                                                        &uuid[12..16],
+                                                        &uuid[16..20],
+                                                        &uuid[20..32.min(uuid.len())]
+                                                    );
+                                                    obj.insert(id_field.clone(), serde_json::Value::String(uuid));
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    set_importing.set(true);
+                                    set_import_error.set(None);
+                                    set_import_progress.set((0, records.len()));
+
+                                    wasm_bindgen_futures::spawn_local(async move {
+                                        let mut completed = 0;
+                                        let total = records.len();
+                                        let mut errors = Vec::new();
+
+                                        for record in records {
+                                            let request = CreateRecordRequest {
+                                                schema_name: schema_name.clone(),
+                                                data: record,
+                                                metadata: None,
+                                            };
+
+                                            match api::create_record(&lake_name, &request).await {
+                                                Ok(_) => {
+                                                    completed += 1;
+                                                    set_import_progress.set((completed, total));
+                                                }
+                                                Err(e) => {
+                                                    errors.push(e);
+                                                }
+                                            }
+                                        }
+
+                                        set_importing.set(false);
+
+                                        if errors.is_empty() {
+                                            set_show_import_modal.set(false);
+                                            set_refresh_trigger.update(|n| *n += 1);
+                                        } else {
+                                            set_import_error.set(Some(format!(
+                                                "Imported {}/{} records. Errors:\n{}",
+                                                completed, total, errors.into_iter().take(5).collect::<Vec<_>>().join("\n")
+                                            )));
+                                            set_refresh_trigger.update(|n| *n += 1);
+                                        }
+                                    });
+                                }
+                            >
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                                </svg>
+                                {move || if importing.get() { "Importing..." } else { "Import Records" }}
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </Show>
         </div>
     }

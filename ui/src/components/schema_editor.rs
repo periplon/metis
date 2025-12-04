@@ -106,6 +106,10 @@ pub struct SchemaProperty {
     pub read_only: bool,
     /// Write-only property
     pub write_only: bool,
+    /// Foreign key relationship (x-foreign-key extension)
+    pub foreign_key: Option<ForeignKey>,
+    /// Fake data generation strategy (x-fake-strategy extension)
+    pub fake_strategy: FakeStrategyConfig,
 }
 
 /// Represents additionalProperties which can be boolean or a schema reference
@@ -132,6 +136,319 @@ pub struct TypeVariant {
     pub enum_values: Vec<String>,
     /// Const value for this variant
     pub const_value: String,
+}
+
+/// Relationship type for foreign key references
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum RelationshipType {
+    #[default]
+    ManyToOne,
+    OneToOne,
+    OneToMany,
+    ManyToMany,
+}
+
+impl RelationshipType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RelationshipType::ManyToOne => "many-to-one",
+            RelationshipType::OneToOne => "one-to-one",
+            RelationshipType::OneToMany => "one-to-many",
+            RelationshipType::ManyToMany => "many-to-many",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "one-to-one" => RelationshipType::OneToOne,
+            "one-to-many" => RelationshipType::OneToMany,
+            "many-to-many" => RelationshipType::ManyToMany,
+            _ => RelationshipType::ManyToOne,
+        }
+    }
+}
+
+/// Fake data generation strategy (x-fake-strategy extension)
+/// Maps to the faker field types available in Metis mock strategies
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum FakeStrategy {
+    #[default]
+    None,
+    // Personal data
+    FirstName,
+    LastName,
+    FullName,
+    Username,
+    // Contact data
+    Email,
+    Phone,
+    // Address data
+    StreetAddress,
+    City,
+    State,
+    Country,
+    PostalCode,
+    // Text data
+    Word,
+    Sentence,
+    Paragraph,
+    Lorem,
+    // Numeric data
+    Integer,
+    Float,
+    // Identifiers
+    Uuid,
+    // Special types
+    Pattern,
+    Constant,
+    Enum,
+}
+
+impl FakeStrategy {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            FakeStrategy::None => "",
+            FakeStrategy::FirstName => "first_name",
+            FakeStrategy::LastName => "last_name",
+            FakeStrategy::FullName => "full_name",
+            FakeStrategy::Username => "username",
+            FakeStrategy::Email => "email",
+            FakeStrategy::Phone => "phone",
+            FakeStrategy::StreetAddress => "street_address",
+            FakeStrategy::City => "city",
+            FakeStrategy::State => "state",
+            FakeStrategy::Country => "country",
+            FakeStrategy::PostalCode => "postal_code",
+            FakeStrategy::Word => "word",
+            FakeStrategy::Sentence => "sentence",
+            FakeStrategy::Paragraph => "paragraph",
+            FakeStrategy::Lorem => "lorem",
+            FakeStrategy::Integer => "integer",
+            FakeStrategy::Float => "float",
+            FakeStrategy::Uuid => "uuid",
+            FakeStrategy::Pattern => "pattern",
+            FakeStrategy::Constant => "constant",
+            FakeStrategy::Enum => "enum",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "first_name" => FakeStrategy::FirstName,
+            "last_name" => FakeStrategy::LastName,
+            "full_name" => FakeStrategy::FullName,
+            "username" => FakeStrategy::Username,
+            "email" => FakeStrategy::Email,
+            "phone" => FakeStrategy::Phone,
+            "street_address" => FakeStrategy::StreetAddress,
+            "city" => FakeStrategy::City,
+            "state" => FakeStrategy::State,
+            "country" => FakeStrategy::Country,
+            "postal_code" => FakeStrategy::PostalCode,
+            "word" => FakeStrategy::Word,
+            "sentence" => FakeStrategy::Sentence,
+            "paragraph" => FakeStrategy::Paragraph,
+            "lorem" => FakeStrategy::Lorem,
+            "integer" => FakeStrategy::Integer,
+            "float" => FakeStrategy::Float,
+            "uuid" => FakeStrategy::Uuid,
+            "pattern" => FakeStrategy::Pattern,
+            "constant" => FakeStrategy::Constant,
+            "enum" => FakeStrategy::Enum,
+            _ => FakeStrategy::None,
+        }
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            FakeStrategy::None => "None",
+            FakeStrategy::FirstName => "First Name",
+            FakeStrategy::LastName => "Last Name",
+            FakeStrategy::FullName => "Full Name",
+            FakeStrategy::Username => "Username",
+            FakeStrategy::Email => "Email",
+            FakeStrategy::Phone => "Phone",
+            FakeStrategy::StreetAddress => "Street Address",
+            FakeStrategy::City => "City",
+            FakeStrategy::State => "State",
+            FakeStrategy::Country => "Country",
+            FakeStrategy::PostalCode => "Postal Code",
+            FakeStrategy::Word => "Word",
+            FakeStrategy::Sentence => "Sentence",
+            FakeStrategy::Paragraph => "Paragraph",
+            FakeStrategy::Lorem => "Lorem Ipsum",
+            FakeStrategy::Integer => "Integer",
+            FakeStrategy::Float => "Float",
+            FakeStrategy::Uuid => "UUID",
+            FakeStrategy::Pattern => "Pattern (regex)",
+            FakeStrategy::Constant => "Constant",
+            FakeStrategy::Enum => "Enum (values)",
+        }
+    }
+
+    /// Returns all available strategies for UI dropdown
+    pub fn all_variants() -> &'static [FakeStrategy] {
+        &[
+            FakeStrategy::None,
+            FakeStrategy::FirstName,
+            FakeStrategy::LastName,
+            FakeStrategy::FullName,
+            FakeStrategy::Username,
+            FakeStrategy::Email,
+            FakeStrategy::Phone,
+            FakeStrategy::StreetAddress,
+            FakeStrategy::City,
+            FakeStrategy::State,
+            FakeStrategy::Country,
+            FakeStrategy::PostalCode,
+            FakeStrategy::Word,
+            FakeStrategy::Sentence,
+            FakeStrategy::Paragraph,
+            FakeStrategy::Lorem,
+            FakeStrategy::Integer,
+            FakeStrategy::Float,
+            FakeStrategy::Uuid,
+            FakeStrategy::Pattern,
+            FakeStrategy::Constant,
+            FakeStrategy::Enum,
+        ]
+    }
+
+    /// Returns true if this strategy requires additional configuration
+    pub fn has_config(&self) -> bool {
+        matches!(self, FakeStrategy::Pattern | FakeStrategy::Constant | FakeStrategy::Integer | FakeStrategy::Float | FakeStrategy::Enum)
+    }
+}
+
+/// Extended fake strategy configuration with additional parameters
+/// Supports both simple string form and object form with config
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FakeStrategyConfig {
+    /// The faker strategy type
+    pub strategy: FakeStrategy,
+    /// Regex pattern for pattern-based generation
+    pub pattern: Option<String>,
+    /// Minimum value for numeric types
+    pub min: Option<f64>,
+    /// Maximum value for numeric types
+    pub max: Option<f64>,
+    /// Constant value for constant type
+    pub constant: Option<String>,
+    /// Enum values for enum type
+    pub enum_values: Option<Vec<String>>,
+}
+
+impl FakeStrategyConfig {
+    /// Create a simple config with just a strategy type
+    pub fn simple(strategy: FakeStrategy) -> Self {
+        Self {
+            strategy,
+            pattern: None,
+            min: None,
+            max: None,
+            constant: None,
+            enum_values: None,
+        }
+    }
+
+    /// Check if this config has any extended parameters
+    pub fn has_extended_config(&self) -> bool {
+        self.pattern.is_some() || self.min.is_some() || self.max.is_some() || self.constant.is_some() || self.enum_values.is_some()
+    }
+
+    /// Convert to JSON Value - either string or object form
+    pub fn to_json(&self) -> Option<serde_json::Value> {
+        if self.strategy == FakeStrategy::None {
+            return None;
+        }
+
+        // If we have extended config, use object form
+        if self.has_extended_config() {
+            let mut obj = serde_json::Map::new();
+            obj.insert("type".to_string(), serde_json::json!(self.strategy.as_str()));
+            if let Some(pattern) = &self.pattern {
+                obj.insert("pattern".to_string(), serde_json::json!(pattern));
+            }
+            if let Some(min) = self.min {
+                obj.insert("min".to_string(), serde_json::json!(min));
+            }
+            if let Some(max) = self.max {
+                obj.insert("max".to_string(), serde_json::json!(max));
+            }
+            if let Some(constant) = &self.constant {
+                // Try to parse as JSON value, fall back to string
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(constant) {
+                    obj.insert("constant".to_string(), v);
+                } else {
+                    obj.insert("constant".to_string(), serde_json::json!(constant));
+                }
+            }
+            if let Some(values) = &self.enum_values {
+                obj.insert("values".to_string(), serde_json::json!(values));
+            }
+            Some(serde_json::Value::Object(obj))
+        } else {
+            // Simple string form
+            Some(serde_json::json!(self.strategy.as_str()))
+        }
+    }
+
+    /// Parse from JSON Value - handles both string and object forms
+    pub fn from_json(value: &serde_json::Value) -> Self {
+        match value {
+            // Simple string form: "email"
+            serde_json::Value::String(s) => Self::simple(FakeStrategy::from_str(s)),
+            // Object form: { "type": "pattern", "pattern": "[A-Z]+" }
+            serde_json::Value::Object(obj) => {
+                let strategy = obj.get("type")
+                    .and_then(|v| v.as_str())
+                    .map(FakeStrategy::from_str)
+                    .unwrap_or_default();
+                let pattern = obj.get("pattern")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                let min = obj.get("min")
+                    .and_then(|v| v.as_f64());
+                let max = obj.get("max")
+                    .and_then(|v| v.as_f64());
+                let constant = obj.get("constant")
+                    .map(|v| {
+                        if let serde_json::Value::String(s) = v {
+                            s.clone()
+                        } else {
+                            v.to_string()
+                        }
+                    });
+                let enum_values = obj.get("values")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    });
+                Self {
+                    strategy,
+                    pattern,
+                    min,
+                    max,
+                    constant,
+                    enum_values,
+                }
+            }
+            _ => Self::default(),
+        }
+    }
+}
+
+/// Foreign key reference to another schema/table
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ForeignKey {
+    /// Target table/schema name
+    pub table: String,
+    /// Target column name
+    pub column: String,
+    /// Relationship type
+    pub relationship_type: RelationshipType,
 }
 
 static NEXT_PROP_ID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
@@ -277,6 +594,8 @@ impl SchemaProperty {
             deprecated: false,
             read_only: false,
             write_only: false,
+            foreign_key: None,
+            fake_strategy: FakeStrategyConfig::default(),
         }
     }
 
@@ -399,6 +718,24 @@ impl SchemaProperty {
         }
         if self.write_only {
             prop.insert("writeOnly".to_string(), json!(true));
+        }
+
+        // Foreign key extension (x-foreign-key)
+        if let Some(ref fk) = self.foreign_key {
+            if !fk.table.is_empty() {
+                let mut fk_obj = Map::new();
+                fk_obj.insert("table".to_string(), json!(fk.table));
+                if !fk.column.is_empty() {
+                    fk_obj.insert("column".to_string(), json!(fk.column));
+                }
+                fk_obj.insert("relationshipType".to_string(), json!(fk.relationship_type.as_str()));
+                prop.insert("x-foreign-key".to_string(), Value::Object(fk_obj));
+            }
+        }
+
+        // Fake strategy extension (x-fake-strategy)
+        if let Some(fake_json) = self.fake_strategy.to_json() {
+            prop.insert("x-fake-strategy".to_string(), fake_json);
         }
 
         // allOf (can be combined with type)
@@ -781,6 +1118,37 @@ pub fn schema_to_properties(schema: &Value) -> Vec<SchemaProperty> {
             let read_only = prop.get("readOnly").and_then(|v| v.as_bool()).unwrap_or(false);
             let write_only = prop.get("writeOnly").and_then(|v| v.as_bool()).unwrap_or(false);
 
+            // Parse x-foreign-key extension
+            let foreign_key = if let Some(fk) = prop.get("x-foreign-key") {
+                let table = fk.get("table")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let column = fk.get("column")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let rel_type = fk.get("relationshipType")
+                    .and_then(|r| r.as_str())
+                    .unwrap_or("many-to-one");
+                if !table.is_empty() {
+                    Some(ForeignKey {
+                        table,
+                        column,
+                        relationship_type: RelationshipType::from_str(rel_type),
+                    })
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            // Parse x-fake-strategy extension (supports both string and object form)
+            let fake_strategy = prop.get("x-fake-strategy")
+                .map(FakeStrategyConfig::from_json)
+                .unwrap_or_default();
+
             // Parse additionalProperties
             let additional_properties = if let Some(ap) = prop.get("additionalProperties") {
                 if let Some(b) = ap.as_bool() {
@@ -894,6 +1262,8 @@ pub fn schema_to_properties(schema: &Value) -> Vec<SchemaProperty> {
                 deprecated,
                 read_only,
                 write_only,
+                foreign_key,
+                fake_strategy,
             });
         }
     }
@@ -1708,8 +2078,8 @@ fn RecursivePropertyEditor(
                 </div>
             </Show>
 
-            // Advanced options (collapsible) - shown for string, number, integer, array, object
-            <Show when=move || matches!(prop_type().as_str(), "string" | "number" | "integer" | "array" | "object")>
+            // Advanced options (collapsible) - shown for string, number, integer, array, object, $ref
+            <Show when=move || matches!(prop_type().as_str(), "string" | "number" | "integer" | "array" | "object" | "$ref")>
                 <details class="mt-2">
                     <summary class="text-xs text-gray-500 cursor-pointer hover:text-gray-700 select-none">"▶ Advanced Options"</summary>
                     <div class="mt-2 p-3 bg-gray-50 rounded border border-gray-200 space-y-3">
@@ -2003,7 +2373,8 @@ fn RecursivePropertyEditor(
                             </div>
                         </Show>
 
-                        // Default value (for all types)
+                        // Default value (not shown for $ref types)
+                        <Show when=move || prop_type() != "$ref">
                         <div>
                             <label class="block text-xs text-gray-600 mb-1">"Default Value (JSON)"</label>
                             <input
@@ -2027,6 +2398,7 @@ fn RecursivePropertyEditor(
                                 }
                             />
                         </div>
+                        </Show>
 
                         // Deprecated flag
                         <label class="flex items-center gap-2 text-xs text-gray-600">
@@ -2051,6 +2423,334 @@ fn RecursivePropertyEditor(
                             />
                             "Deprecated"
                         </label>
+
+                        // Fake Strategy section (x-fake-strategy extension) - for any property
+                        <div class="pt-2 border-t border-gray-200 mt-2">
+                            <details class="text-xs">
+                                <summary class="font-medium text-gray-600 cursor-pointer hover:text-gray-800 select-none">
+                                    "🎲 Fake Data Strategy (x-fake-strategy)"
+                                </summary>
+                                <div class="mt-2 p-2 bg-green-50 rounded border border-green-200 space-y-2">
+                                    <div>
+                                        <label class="block text-xs text-gray-600 mb-1">"Faker Strategy"</label>
+                                        <select
+                                            class=format!("w-full px-2 py-1 text-xs border border-gray-300 rounded {}", ring_color)
+                                            prop:value=move || {
+                                                let props = properties.get();
+                                                get_property_at_path(&props, &path_stored.get_value())
+                                                    .map(|p| p.fake_strategy.strategy.as_str().to_string())
+                                                    .unwrap_or_default()
+                                            }
+                                            on:change=move |ev| {
+                                                let target = ev.target().unwrap();
+                                                let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
+                                                let value = select.value();
+                                                let path = path_stored.get_value();
+                                                set_properties.update(move |props| {
+                                                    mutate_property_at_path(props, &path, |p| {
+                                                        let new_strategy = FakeStrategy::from_str(&value);
+                                                        // Preserve existing config if strategy type hasn't changed
+                                                        if p.fake_strategy.strategy != new_strategy {
+                                                            p.fake_strategy.strategy = new_strategy;
+                                                            // Clear config that doesn't apply to new strategy
+                                                            if !p.fake_strategy.strategy.has_config() {
+                                                                p.fake_strategy.pattern = None;
+                                                                p.fake_strategy.min = None;
+                                                                p.fake_strategy.max = None;
+                                                                p.fake_strategy.constant = None;
+                                                                p.fake_strategy.enum_values = None;
+                                                            }
+                                                        }
+                                                    });
+                                                });
+                                            }
+                                        >
+                                            {FakeStrategy::all_variants().iter().map(|strategy| {
+                                                let value = strategy.as_str();
+                                                let label = strategy.display_name();
+                                                view! {
+                                                    <option value=value>{label}</option>
+                                                }
+                                            }).collect_view()}
+                                        </select>
+                                    </div>
+
+                                    // Pattern input - for pattern strategy
+                                    <Show when=move || {
+                                        let props = properties.get();
+                                        get_property_at_path(&props, &path_stored.get_value())
+                                            .map(|p| p.fake_strategy.strategy == FakeStrategy::Pattern)
+                                            .unwrap_or(false)
+                                    }>
+                                        <div>
+                                            <label class="block text-xs text-gray-600 mb-1">"Regex Pattern"</label>
+                                            <input
+                                                type="text"
+                                                class=format!("w-full px-2 py-1 text-xs border border-gray-300 rounded font-mono {}", ring_color)
+                                                placeholder="e.g., [A-Z]{2,5}"
+                                                prop:value=move || {
+                                                    let props = properties.get();
+                                                    get_property_at_path(&props, &path_stored.get_value())
+                                                        .and_then(|p| p.fake_strategy.pattern.clone())
+                                                        .unwrap_or_default()
+                                                }
+                                                on:input=move |ev| {
+                                                    let value = event_target_value(&ev);
+                                                    let path = path_stored.get_value();
+                                                    set_properties.update(move |props| {
+                                                        mutate_property_at_path(props, &path, |p| {
+                                                            p.fake_strategy.pattern = if value.is_empty() { None } else { Some(value) };
+                                                        });
+                                                    });
+                                                }
+                                            />
+                                        </div>
+                                    </Show>
+
+                                    // Min/Max inputs - for integer and float strategies
+                                    <Show when=move || {
+                                        let props = properties.get();
+                                        get_property_at_path(&props, &path_stored.get_value())
+                                            .map(|p| matches!(p.fake_strategy.strategy, FakeStrategy::Integer | FakeStrategy::Float))
+                                            .unwrap_or(false)
+                                    }>
+                                        <div class="grid grid-cols-2 gap-2">
+                                            <div>
+                                                <label class="block text-xs text-gray-600 mb-1">"Min"</label>
+                                                <input
+                                                    type="number"
+                                                    class=format!("w-full px-2 py-1 text-xs border border-gray-300 rounded {}", ring_color)
+                                                    placeholder="Min value"
+                                                    prop:value=move || {
+                                                        let props = properties.get();
+                                                        get_property_at_path(&props, &path_stored.get_value())
+                                                            .and_then(|p| p.fake_strategy.min)
+                                                            .map(|v| v.to_string())
+                                                            .unwrap_or_default()
+                                                    }
+                                                    on:input=move |ev| {
+                                                        let value = event_target_value(&ev);
+                                                        let path = path_stored.get_value();
+                                                        set_properties.update(move |props| {
+                                                            mutate_property_at_path(props, &path, |p| {
+                                                                p.fake_strategy.min = value.parse::<f64>().ok();
+                                                            });
+                                                        });
+                                                    }
+                                                />
+                                            </div>
+                                            <div>
+                                                <label class="block text-xs text-gray-600 mb-1">"Max"</label>
+                                                <input
+                                                    type="number"
+                                                    class=format!("w-full px-2 py-1 text-xs border border-gray-300 rounded {}", ring_color)
+                                                    placeholder="Max value"
+                                                    prop:value=move || {
+                                                        let props = properties.get();
+                                                        get_property_at_path(&props, &path_stored.get_value())
+                                                            .and_then(|p| p.fake_strategy.max)
+                                                            .map(|v| v.to_string())
+                                                            .unwrap_or_default()
+                                                    }
+                                                    on:input=move |ev| {
+                                                        let value = event_target_value(&ev);
+                                                        let path = path_stored.get_value();
+                                                        set_properties.update(move |props| {
+                                                            mutate_property_at_path(props, &path, |p| {
+                                                                p.fake_strategy.max = value.parse::<f64>().ok();
+                                                            });
+                                                        });
+                                                    }
+                                                />
+                                            </div>
+                                        </div>
+                                    </Show>
+
+                                    // Constant input - for constant strategy
+                                    <Show when=move || {
+                                        let props = properties.get();
+                                        get_property_at_path(&props, &path_stored.get_value())
+                                            .map(|p| p.fake_strategy.strategy == FakeStrategy::Constant)
+                                            .unwrap_or(false)
+                                    }>
+                                        <div>
+                                            <label class="block text-xs text-gray-600 mb-1">"Constant Value"</label>
+                                            <input
+                                                type="text"
+                                                class=format!("w-full px-2 py-1 text-xs border border-gray-300 rounded {}", ring_color)
+                                                placeholder="e.g., default_value"
+                                                prop:value=move || {
+                                                    let props = properties.get();
+                                                    get_property_at_path(&props, &path_stored.get_value())
+                                                        .and_then(|p| p.fake_strategy.constant.clone())
+                                                        .unwrap_or_default()
+                                                }
+                                                on:input=move |ev| {
+                                                    let value = event_target_value(&ev);
+                                                    let path = path_stored.get_value();
+                                                    set_properties.update(move |props| {
+                                                        mutate_property_at_path(props, &path, |p| {
+                                                            p.fake_strategy.constant = if value.is_empty() { None } else { Some(value) };
+                                                        });
+                                                    });
+                                                }
+                                            />
+                                        </div>
+                                    </Show>
+
+                                    // Enum values input - for enum strategy
+                                    <Show when=move || {
+                                        let props = properties.get();
+                                        get_property_at_path(&props, &path_stored.get_value())
+                                            .map(|p| p.fake_strategy.strategy == FakeStrategy::Enum)
+                                            .unwrap_or(false)
+                                    }>
+                                        <div>
+                                            <label class="block text-xs text-gray-600 mb-1">"Enum Values (comma-separated)"</label>
+                                            <input
+                                                type="text"
+                                                class=format!("w-full px-2 py-1 text-xs border border-gray-300 rounded {}", ring_color)
+                                                placeholder="e.g., low, medium, high"
+                                                value=move || {
+                                                    let props = properties.get();
+                                                    get_property_at_path(&props, &path_stored.get_value())
+                                                        .and_then(|p| p.fake_strategy.enum_values.clone())
+                                                        .map(|v| v.join(", "))
+                                                        .unwrap_or_default()
+                                                }
+                                                on:change=move |ev| {
+                                                    let target = ev.target().unwrap();
+                                                    let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                                    let value = input.value();
+                                                    let path = path_stored.get_value();
+                                                    set_properties.update(move |props| {
+                                                        mutate_property_at_path(props, &path, |p| {
+                                                            p.fake_strategy.enum_values = if value.is_empty() {
+                                                                None
+                                                            } else {
+                                                                Some(value.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+                                                            };
+                                                        });
+                                                    });
+                                                }
+                                            />
+                                        </div>
+                                    </Show>
+
+                                    <p class="text-xs text-gray-500 mt-1">
+                                        "Specifies which fake data generator to use when mocking this property."
+                                    </p>
+                                </div>
+                            </details>
+                        </div>
+
+                        // Foreign Key section (x-foreign-key extension) - only for $ref types
+                        <Show when=move || prop_type() == "$ref">
+                        <div class="pt-2 border-t border-gray-200 mt-2">
+                            <details class="text-xs">
+                                <summary class="font-medium text-gray-600 cursor-pointer hover:text-gray-800 select-none">
+                                    "🔗 Foreign Key (x-foreign-key)"
+                                </summary>
+                                <div class="mt-2 p-2 bg-purple-50 rounded border border-purple-200 space-y-2">
+                                    <div class="grid grid-cols-2 gap-2">
+                                        <div>
+                                            <label class="block text-xs text-gray-600 mb-1">"Target Table/Schema"</label>
+                                            <input
+                                                type="text"
+                                                class=format!("w-full px-2 py-1 text-xs border border-gray-300 rounded {}", ring_color)
+                                                placeholder="e.g., site, users"
+                                                prop:value=move || {
+                                                    let props = properties.get();
+                                                    get_property_at_path(&props, &path_stored.get_value())
+                                                        .and_then(|p| p.foreign_key.as_ref())
+                                                        .map(|fk| fk.table.clone())
+                                                        .unwrap_or_default()
+                                                }
+                                                on:input=move |ev| {
+                                                    let target = ev.target().unwrap();
+                                                    let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                                    let value = input.value();
+                                                    let path = path_stored.get_value();
+                                                    set_properties.update(move |props| {
+                                                        mutate_property_at_path(props, &path, |p| {
+                                                            if value.is_empty() {
+                                                                p.foreign_key = None;
+                                                            } else {
+                                                                let fk = p.foreign_key.get_or_insert(ForeignKey::default());
+                                                                fk.table = value.clone();
+                                                            }
+                                                        });
+                                                    });
+                                                }
+                                            />
+                                        </div>
+                                        <div>
+                                            <label class="block text-xs text-gray-600 mb-1">"Target Column"</label>
+                                            <input
+                                                type="text"
+                                                class=format!("w-full px-2 py-1 text-xs border border-gray-300 rounded {}", ring_color)
+                                                placeholder="e.g., ORGID, id"
+                                                prop:value=move || {
+                                                    let props = properties.get();
+                                                    get_property_at_path(&props, &path_stored.get_value())
+                                                        .and_then(|p| p.foreign_key.as_ref())
+                                                        .map(|fk| fk.column.clone())
+                                                        .unwrap_or_default()
+                                                }
+                                                on:input=move |ev| {
+                                                    let target = ev.target().unwrap();
+                                                    let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                                    let value = input.value();
+                                                    let path = path_stored.get_value();
+                                                    set_properties.update(move |props| {
+                                                        mutate_property_at_path(props, &path, |p| {
+                                                            if let Some(fk) = p.foreign_key.as_mut() {
+                                                                fk.column = value.clone();
+                                                            }
+                                                        });
+                                                    });
+                                                }
+                                            />
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs text-gray-600 mb-1">"Relationship Type"</label>
+                                        <select
+                                            class=format!("w-full px-2 py-1 text-xs border border-gray-300 rounded {}", ring_color)
+                                            prop:value=move || {
+                                                let props = properties.get();
+                                                get_property_at_path(&props, &path_stored.get_value())
+                                                    .and_then(|p| p.foreign_key.as_ref())
+                                                    .map(|fk| fk.relationship_type.as_str().to_string())
+                                                    .unwrap_or_else(|| "many-to-one".to_string())
+                                            }
+                                            on:change=move |ev| {
+                                                let target = ev.target().unwrap();
+                                                let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
+                                                let value = select.value();
+                                                let path = path_stored.get_value();
+                                                set_properties.update(move |props| {
+                                                    mutate_property_at_path(props, &path, |p| {
+                                                        if let Some(fk) = p.foreign_key.as_mut() {
+                                                            fk.relationship_type = RelationshipType::from_str(&value);
+                                                        }
+                                                    });
+                                                });
+                                            }
+                                        >
+                                            <option value="many-to-one">"Many-to-One"</option>
+                                            <option value="one-to-one">"One-to-One"</option>
+                                            <option value="one-to-many">"One-to-Many"</option>
+                                            <option value="many-to-many">"Many-to-Many"</option>
+                                        </select>
+                                    </div>
+                                    <p class="text-xs text-gray-500 mt-1">
+                                        "Defines a relationship to another schema/table for data modeling."
+                                    </p>
+                                </div>
+                            </details>
+                        </div>
+                        </Show>
                     </div>
                 </details>
             </Show>

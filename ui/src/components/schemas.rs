@@ -40,6 +40,26 @@ pub fn Schemas() -> impl IntoView {
     let (delete_target, set_delete_target) = signal(Option::<String>::None);
     let (deleting, set_deleting) = signal(false);
 
+    // Bulk import state
+    let (show_bulk_import, set_show_bulk_import) = signal(false);
+    let (bulk_json, set_bulk_json) = signal(String::new());
+    let bulk_tags = RwSignal::new(Vec::<String>::new());
+    let (bulk_importing, set_bulk_importing) = signal(false);
+    let (bulk_error, set_bulk_error) = signal(Option::<String>::None);
+    let (bulk_progress, set_bulk_progress) = signal((0usize, 0usize)); // (completed, total)
+
+    // Bulk delete by tags state
+    let (show_bulk_delete, set_show_bulk_delete) = signal(false);
+    let bulk_delete_tags = RwSignal::new(HashSet::<String>::new());
+    let (bulk_deleting, set_bulk_deleting) = signal(false);
+    let (bulk_delete_error, set_bulk_delete_error) = signal(Option::<String>::None);
+    let (bulk_delete_progress, set_bulk_delete_progress) = signal((0usize, 0usize)); // (completed, total)
+    // Store schemas to delete so we can show preview
+    let schemas_to_delete = RwSignal::new(Vec::<String>::new());
+
+    // Copy schema state
+    let (copying, set_copying) = signal(Option::<String>::None); // Holds the name being copied
+
     // Search and filter state
     let search_query = RwSignal::new(String::new());
     let selected_tags = RwSignal::new(HashSet::<String>::new());
@@ -83,6 +103,196 @@ pub fn Schemas() -> impl IntoView {
         }
     };
 
+    // Copy schema handler
+    let on_copy_schema = move |name: String| {
+        set_copying.set(Some(name.clone()));
+        wasm_bindgen_futures::spawn_local(async move {
+            // Get the original schema
+            match api::get_schema(&name).await {
+                Ok(original) => {
+                    // Get all schemas to find unique name
+                    let existing_names: Vec<String> = api::list_schemas().await
+                        .map(|list| list.into_iter().map(|s| s.name).collect())
+                        .unwrap_or_default();
+
+                    // Generate unique copy name
+                    let base_name = format!("{}_copy", name);
+                    let mut copy_name = base_name.clone();
+                    let mut counter = 1;
+                    while existing_names.contains(&copy_name) {
+                        copy_name = format!("{}_{}", base_name, counter);
+                        counter += 1;
+                    }
+
+                    // Create the copy
+                    let copy = Schema {
+                        name: copy_name.clone(),
+                        description: original.description.map(|d| format!("{} (copy)", d)),
+                        tags: original.tags,
+                        schema: original.schema,
+                    };
+
+                    match api::create_schema(&copy).await {
+                        Ok(_) => {
+                            set_refresh_trigger.update(|n| *n += 1);
+                        }
+                        Err(e) => {
+                            web_sys::window()
+                                .and_then(|w| w.alert_with_message(&format!("Failed to copy schema: {}", e)).ok());
+                        }
+                    }
+                }
+                Err(e) => {
+                    web_sys::window()
+                        .and_then(|w| w.alert_with_message(&format!("Failed to fetch schema: {}", e)).ok());
+                }
+            }
+            set_copying.set(None);
+        });
+    };
+
+    // Bulk import handler
+    let on_bulk_import = move |_| {
+        let json_text = bulk_json.get();
+        if json_text.trim().is_empty() {
+            set_bulk_error.set(Some("Please paste JSON schemas to import".to_string()));
+            return;
+        }
+
+        // Parse JSON - support both array of schemas and single schema
+        let schemas_to_import: Vec<serde_json::Value> = match serde_json::from_str(&json_text) {
+            Ok(serde_json::Value::Array(arr)) => arr,
+            Ok(single) => vec![single],
+            Err(e) => {
+                set_bulk_error.set(Some(format!("Invalid JSON: {}", e)));
+                return;
+            }
+        };
+
+        if schemas_to_import.is_empty() {
+            set_bulk_error.set(Some("No schemas found in the JSON".to_string()));
+            return;
+        }
+
+        set_bulk_importing.set(true);
+        set_bulk_error.set(None);
+        set_bulk_progress.set((0, schemas_to_import.len()));
+
+        let tags_to_add = bulk_tags.get();
+
+        wasm_bindgen_futures::spawn_local(async move {
+            let mut completed = 0;
+            let total = schemas_to_import.len();
+            let mut errors = Vec::new();
+
+            for (idx, schema_json) in schemas_to_import.into_iter().enumerate() {
+                // Extract name from the schema (use title, $id, or generate one)
+                let name = schema_json.get("title")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .or_else(|| schema_json.get("$id")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| s.rsplit('/').next())
+                        .map(|s| s.trim_end_matches(".json").to_string()))
+                    .unwrap_or_else(|| format!("imported_schema_{}", idx + 1));
+
+                // Extract description from the schema
+                let description = schema_json.get("description")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+
+                // Create the METIS schema
+                let schema = Schema {
+                    name: name.clone(),
+                    description,
+                    tags: tags_to_add.clone(),
+                    schema: schema_json,
+                };
+
+                match api::create_schema(&schema).await {
+                    Ok(_) => {
+                        completed += 1;
+                        set_bulk_progress.set((completed, total));
+                    }
+                    Err(e) => {
+                        errors.push(format!("{}: {}", name, e));
+                    }
+                }
+            }
+
+            set_bulk_importing.set(false);
+
+            if errors.is_empty() {
+                // Success - close modal and refresh
+                set_show_bulk_import.set(false);
+                set_bulk_json.set(String::new());
+                bulk_tags.set(Vec::new());
+                set_refresh_trigger.update(|n| *n += 1);
+            } else {
+                set_bulk_error.set(Some(format!(
+                    "Imported {}/{} schemas. Errors:\n{}",
+                    completed, total, errors.join("\n")
+                )));
+                // Still refresh to show successfully imported schemas
+                set_refresh_trigger.update(|n| *n += 1);
+            }
+        });
+    };
+
+    // Bulk delete by tags handler
+    let on_bulk_delete = move |_| {
+        let tags_to_match = bulk_delete_tags.get();
+        if tags_to_match.is_empty() {
+            set_bulk_delete_error.set(Some("Please select at least one tag".to_string()));
+            return;
+        }
+
+        let names_to_delete = schemas_to_delete.get();
+        if names_to_delete.is_empty() {
+            set_bulk_delete_error.set(Some("No schemas match the selected tags".to_string()));
+            return;
+        }
+
+        set_bulk_deleting.set(true);
+        set_bulk_delete_error.set(None);
+        set_bulk_delete_progress.set((0, names_to_delete.len()));
+
+        wasm_bindgen_futures::spawn_local(async move {
+            let mut completed = 0;
+            let total = names_to_delete.len();
+            let mut errors = Vec::new();
+
+            for name in names_to_delete {
+                match api::delete_schema(&name).await {
+                    Ok(_) => {
+                        completed += 1;
+                        set_bulk_delete_progress.set((completed, total));
+                    }
+                    Err(e) => {
+                        errors.push(format!("{}: {}", name, e));
+                    }
+                }
+            }
+
+            set_bulk_deleting.set(false);
+
+            if errors.is_empty() {
+                // Success - close modal and refresh
+                set_show_bulk_delete.set(false);
+                bulk_delete_tags.set(HashSet::new());
+                schemas_to_delete.set(Vec::new());
+                set_refresh_trigger.update(|n| *n += 1);
+            } else {
+                set_bulk_delete_error.set(Some(format!(
+                    "Deleted {}/{} schemas. Errors:\n{}",
+                    completed, total, errors.join("\n")
+                )));
+                // Still refresh to show remaining schemas
+                set_refresh_trigger.update(|n| *n += 1);
+            }
+        });
+    };
+
     view! {
         <div class="p-6">
             // Header with title, view toggle, and new button
@@ -120,6 +330,34 @@ pub fn Schemas() -> impl IntoView {
                             </span>
                         </button>
                     </div>
+                    <button
+                        class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 flex items-center gap-2"
+                        on:click=move |_| {
+                            set_bulk_error.set(None);
+                            set_bulk_json.set(String::new());
+                            bulk_tags.set(Vec::new());
+                            set_show_bulk_import.set(true);
+                        }
+                    >
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                        </svg>
+                        "Bulk Import"
+                    </button>
+                    <button
+                        class="px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 flex items-center gap-2"
+                        on:click=move |_| {
+                            set_bulk_delete_error.set(None);
+                            bulk_delete_tags.set(HashSet::new());
+                            schemas_to_delete.set(Vec::new());
+                            set_show_bulk_delete.set(true);
+                        }
+                    >
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                        </svg>
+                        "Delete by Tags"
+                    </button>
                     <A href="/schemas/new" attr:class="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700 flex items-center gap-2">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
@@ -199,11 +437,13 @@ pub fn Schemas() -> impl IntoView {
                                                                 let name = schema.name.clone();
                                                                 let name_for_delete = schema.name.clone();
                                                                 let name_for_edit = schema.name.clone();
+                                                                let name_for_copy = schema.name.clone();
                                                                 let tags = schema.tags.clone();
                                                                 let prop_count = schema.schema.get("properties")
                                                                     .and_then(|p| p.as_object())
                                                                     .map(|o| o.len())
                                                                     .unwrap_or(0);
+                                                                let name_for_copy_check = name_for_copy.clone();
                                                                 view! {
                                                                     <tr class="hover:bg-gray-50">
                                                                         <td class="px-6 py-4 whitespace-nowrap">
@@ -228,7 +468,17 @@ pub fn Schemas() -> impl IntoView {
                                                                             </code>
                                                                         </td>
                                                                         <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                                                            <A href=format!("/schemas/edit/{}", name_for_edit) attr:class="text-teal-600 hover:text-teal-900 mr-4">"Edit"</A>
+                                                                            <A href=format!("/schemas/edit/{}", name_for_edit) attr:class="text-teal-600 hover:text-teal-900 mr-3">"Edit"</A>
+                                                                            <button
+                                                                                class="text-blue-600 hover:text-blue-900 mr-3 disabled:opacity-50"
+                                                                                disabled=move || copying.get().as_ref() == Some(&name_for_copy)
+                                                                                on:click={
+                                                                                    let name = name.clone();
+                                                                                    move |_| on_copy_schema(name.clone())
+                                                                                }
+                                                                            >
+                                                                                {move || if copying.get().as_ref() == Some(&name_for_copy_check) { "Copying..." } else { "Copy" }}
+                                                                            </button>
                                                                             <button
                                                                                 class="text-red-600 hover:text-red-900"
                                                                                 on:click=move |_| set_delete_target.set(Some(name_for_delete.clone()))
@@ -250,6 +500,8 @@ pub fn Schemas() -> impl IntoView {
                                                         let name = schema.name.clone();
                                                         let name_for_delete = schema.name.clone();
                                                         let name_for_edit = schema.name.clone();
+                                                        let name_for_copy = schema.name.clone();
+                                                        let name_for_copy_check = schema.name.clone();
                                                         let tags = schema.tags.clone();
                                                         let prop_count = schema.schema.get("properties")
                                                             .and_then(|p| p.as_object())
@@ -278,6 +530,16 @@ pub fn Schemas() -> impl IntoView {
                                                                 </div>
                                                                 <div class="flex justify-end gap-2 pt-4 border-t border-gray-100">
                                                                     <A href=format!("/schemas/edit/{}", name_for_edit) attr:class="px-3 py-1 text-sm text-teal-600 hover:bg-teal-50 rounded">"Edit"</A>
+                                                                    <button
+                                                                        class="px-3 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded disabled:opacity-50"
+                                                                        disabled=move || copying.get().as_ref() == Some(&name_for_copy)
+                                                                        on:click={
+                                                                            let name = name.clone();
+                                                                            move |_| on_copy_schema(name.clone())
+                                                                        }
+                                                                    >
+                                                                        {move || if copying.get().as_ref() == Some(&name_for_copy_check) { "Copying..." } else { "Copy" }}
+                                                                    </button>
                                                                     <button
                                                                         class="px-3 py-1 text-sm text-red-600 hover:bg-red-50 rounded"
                                                                         on:click=move |_| set_delete_target.set(Some(name_for_delete.clone()))
@@ -350,6 +612,322 @@ pub fn Schemas() -> impl IntoView {
                                 on:click=on_delete_confirm
                             >
                                 {move || if deleting.get() { "Deleting..." } else { "Delete" }}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </Show>
+
+            // Bulk import modal
+            <Show when=move || show_bulk_import.get()>
+                <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div class="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-lg font-semibold">"Bulk Import JSON Schemas"</h3>
+                            <button
+                                class="text-gray-400 hover:text-gray-600"
+                                on:click=move |_| set_show_bulk_import.set(false)
+                            >
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                </svg>
+                            </button>
+                        </div>
+
+                        <p class="text-gray-600 text-sm mb-4">
+                            "Paste a JSON array of schemas or a single JSON schema. Schema names will be extracted from "
+                            <code class="bg-gray-100 px-1 rounded">"title"</code>
+                            " or "
+                            <code class="bg-gray-100 px-1 rounded">"$id"</code>
+                            " fields."
+                        </p>
+
+                        // Error display
+                        <Show when=move || bulk_error.get().is_some()>
+                            <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4 text-sm whitespace-pre-wrap">
+                                {move || bulk_error.get().unwrap_or_default()}
+                            </div>
+                        </Show>
+
+                        // Progress display
+                        <Show when=move || bulk_importing.get()>
+                            <div class="bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded mb-4">
+                                <div class="flex items-center gap-2">
+                                    <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                                    <span>
+                                        "Importing schema "
+                                        {move || bulk_progress.get().0 + 1}
+                                        " of "
+                                        {move || bulk_progress.get().1}
+                                        "..."
+                                    </span>
+                                </div>
+                            </div>
+                        </Show>
+
+                        // JSON textarea
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                "JSON Schemas"
+                            </label>
+                            <textarea
+                                class="w-full h-64 px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm focus:ring-teal-500 focus:border-teal-500"
+                                placeholder=r#"[
+  {
+    "title": "UserSchema",
+    "type": "object",
+    "properties": {
+      "name": { "type": "string" },
+      "email": { "type": "string", "format": "email" }
+    }
+  },
+  {
+    "title": "AddressSchema",
+    "type": "object",
+    "properties": {
+      "street": { "type": "string" },
+      "city": { "type": "string" }
+    }
+  }
+]"#
+                                prop:value=move || bulk_json.get()
+                                on:input=move |ev| set_bulk_json.set(event_target_value(&ev))
+                                disabled=move || bulk_importing.get()
+                            />
+                        </div>
+
+                        // Tags input
+                        <div class="mb-6">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">
+                                "Tags for all imported schemas"
+                            </label>
+                            <p class="text-xs text-gray-500 mb-2">
+                                "These tags will be applied to all schemas imported in this batch."
+                            </p>
+                            <TagInput tags=bulk_tags />
+                        </div>
+
+                        // Preview count
+                        <div class="mb-4">
+                            {move || {
+                                let json_text = bulk_json.get();
+                                if json_text.trim().is_empty() {
+                                    view! { <span class="text-gray-500 text-sm">"Paste JSON schemas above"</span> }.into_any()
+                                } else {
+                                    match serde_json::from_str::<serde_json::Value>(&json_text) {
+                                        Ok(serde_json::Value::Array(arr)) => {
+                                            view! {
+                                                <span class="text-teal-600 text-sm font-medium">
+                                                    {arr.len()} " schema(s) detected"
+                                                </span>
+                                            }.into_any()
+                                        }
+                                        Ok(_) => {
+                                            view! {
+                                                <span class="text-teal-600 text-sm font-medium">
+                                                    "1 schema detected"
+                                                </span>
+                                            }.into_any()
+                                        }
+                                        Err(e) => {
+                                            view! {
+                                                <span class="text-red-500 text-sm">
+                                                    "Invalid JSON: " {e.to_string()}
+                                                </span>
+                                            }.into_any()
+                                        }
+                                    }
+                                }
+                            }}
+                        </div>
+
+                        // Actions
+                        <div class="flex justify-end gap-3">
+                            <button
+                                class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded"
+                                on:click=move |_| set_show_bulk_import.set(false)
+                                disabled=move || bulk_importing.get()
+                            >
+                                "Cancel"
+                            </button>
+                            <button
+                                class="px-4 py-2 bg-teal-600 text-white rounded hover:bg-teal-700 disabled:opacity-50 flex items-center gap-2"
+                                disabled=move || bulk_importing.get() || bulk_json.get().trim().is_empty()
+                                on:click=on_bulk_import
+                            >
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                                </svg>
+                                {move || if bulk_importing.get() { "Importing..." } else { "Import Schemas" }}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </Show>
+
+            // Bulk delete by tags modal
+            <Show when=move || show_bulk_delete.get()>
+                <div class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div class="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-lg font-semibold text-red-600">"Delete Schemas by Tags"</h3>
+                            <button
+                                class="text-gray-400 hover:text-gray-600"
+                                on:click=move |_| set_show_bulk_delete.set(false)
+                            >
+                                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                                </svg>
+                            </button>
+                        </div>
+
+                        <p class="text-gray-600 text-sm mb-4">
+                            "Select one or more tags to delete all schemas that have "
+                            <strong>"any"</strong>
+                            " of the selected tags."
+                        </p>
+
+                        // Error display
+                        <Show when=move || bulk_delete_error.get().is_some()>
+                            <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4 text-sm whitespace-pre-wrap">
+                                {move || bulk_delete_error.get().unwrap_or_default()}
+                            </div>
+                        </Show>
+
+                        // Progress display
+                        <Show when=move || bulk_deleting.get()>
+                            <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4">
+                                <div class="flex items-center gap-2">
+                                    <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-red-600"></div>
+                                    <span>
+                                        "Deleting schema "
+                                        {move || bulk_delete_progress.get().0 + 1}
+                                        " of "
+                                        {move || bulk_delete_progress.get().1}
+                                        "..."
+                                    </span>
+                                </div>
+                            </div>
+                        </Show>
+
+                        // Tag selection
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">
+                                "Select Tags"
+                            </label>
+                            <div class="flex flex-wrap gap-2 p-3 bg-gray-50 rounded-lg border border-gray-200 min-h-[60px]">
+                                {move || {
+                                    let tags = available_tags.get();
+                                    if tags.is_empty() {
+                                        view! {
+                                            <span class="text-gray-400 text-sm italic">"No tags available"</span>
+                                        }.into_any()
+                                    } else {
+                                        tags.into_iter().map(|tag| {
+                                            let tag_clone = tag.clone();
+                                            let tag_for_click = tag.clone();
+                                            let is_selected = move || bulk_delete_tags.get().contains(&tag_clone);
+                                            view! {
+                                                <button
+                                                    type="button"
+                                                    class=move || format!(
+                                                        "px-3 py-1 rounded-full text-sm font-medium transition-colors {}",
+                                                        if is_selected() {
+                                                            "bg-red-500 text-white"
+                                                        } else {
+                                                            "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                                                        }
+                                                    )
+                                                    on:click=move |_| {
+                                                        let tag = tag_for_click.clone();
+                                                        bulk_delete_tags.update(|tags| {
+                                                            if tags.contains(&tag) {
+                                                                tags.remove(&tag);
+                                                            } else {
+                                                                tags.insert(tag);
+                                                            }
+                                                        });
+                                                        // Update schemas to delete preview
+                                                        if let Some(Some(list)) = schemas.get().as_ref() {
+                                                            let selected = bulk_delete_tags.get();
+                                                            let matching: Vec<String> = list.iter()
+                                                                .filter(|s| s.tags.iter().any(|t| selected.contains(t)))
+                                                                .map(|s| s.name.clone())
+                                                                .collect();
+                                                            schemas_to_delete.set(matching);
+                                                        }
+                                                    }
+                                                >
+                                                    {tag}
+                                                </button>
+                                            }
+                                        }).collect_view().into_any()
+                                    }
+                                }}
+                            </div>
+                        </div>
+
+                        // Preview of schemas to be deleted
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium text-gray-700 mb-2">
+                                "Schemas to be deleted"
+                            </label>
+                            <div class="bg-red-50 border border-red-200 rounded-lg p-3 max-h-48 overflow-y-auto">
+                                {move || {
+                                    let names = schemas_to_delete.get();
+                                    if names.is_empty() {
+                                        view! {
+                                            <span class="text-gray-500 text-sm italic">"Select tags above to see matching schemas"</span>
+                                        }.into_any()
+                                    } else {
+                                        view! {
+                                            <div class="space-y-1">
+                                                <p class="text-red-700 font-medium text-sm mb-2">
+                                                    {names.len()} " schema(s) will be deleted:"
+                                                </p>
+                                                <ul class="text-sm text-red-600 list-disc list-inside">
+                                                    {names.into_iter().map(|name| view! {
+                                                        <li>{name}</li>
+                                                    }).collect_view()}
+                                                </ul>
+                                            </div>
+                                        }.into_any()
+                                    }
+                                }}
+                            </div>
+                        </div>
+
+                        // Warning
+                        <div class="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded mb-4 text-sm">
+                            <div class="flex items-start gap-2">
+                                <svg class="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                                </svg>
+                                <span>
+                                    <strong>"Warning:"</strong>
+                                    " This action cannot be undone. Any tools, agents, or workflows referencing these schemas will fail."
+                                </span>
+                            </div>
+                        </div>
+
+                        // Actions
+                        <div class="flex justify-end gap-3">
+                            <button
+                                class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded"
+                                on:click=move |_| set_show_bulk_delete.set(false)
+                                disabled=move || bulk_deleting.get()
+                            >
+                                "Cancel"
+                            </button>
+                            <button
+                                class="px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50 flex items-center gap-2"
+                                disabled=move || bulk_deleting.get() || schemas_to_delete.get().is_empty()
+                                on:click=on_bulk_delete
+                            >
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                                </svg>
+                                {move || if bulk_deleting.get() { "Deleting..." } else { "Delete Schemas" }}
                             </button>
                         </div>
                     </div>

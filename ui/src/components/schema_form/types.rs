@@ -273,6 +273,33 @@ impl FakerType {
         .to_string()
     }
 
+    /// Parse from x-fake-strategy string value
+    pub fn from_strategy_string(s: &str) -> Option<Self> {
+        match s {
+            "first_name" => Some(FakerType::FirstName),
+            "last_name" => Some(FakerType::LastName),
+            "full_name" => Some(FakerType::FullName),
+            "username" => Some(FakerType::Username),
+            "email" => Some(FakerType::Email),
+            "phone" => Some(FakerType::Phone),
+            "street_address" => Some(FakerType::StreetAddress),
+            "city" => Some(FakerType::City),
+            "state" => Some(FakerType::State),
+            "country" => Some(FakerType::Country),
+            "postal_code" => Some(FakerType::PostalCode),
+            "word" => Some(FakerType::Word),
+            "sentence" => Some(FakerType::Sentence),
+            "paragraph" => Some(FakerType::Paragraph),
+            "lorem" => Some(FakerType::Lorem),
+            "integer" => Some(FakerType::Integer),
+            "float" => Some(FakerType::Float),
+            "uuid" => Some(FakerType::Uuid),
+            "pattern" => Some(FakerType::Pattern),
+            "constant" => Some(FakerType::Constant),
+            _ => None,
+        }
+    }
+
     /// Get faker types appropriate for a JSON Schema type
     pub fn for_schema_type(schema_type: &str, format: Option<&str>) -> Vec<FakerType> {
         // Check format first
@@ -421,6 +448,23 @@ pub struct ResolvedSchemaNode {
     pub default: Option<Value>,
     /// Example values
     pub examples: Vec<Value>,
+    /// Fake data strategy from x-fake-strategy extension
+    pub fake_strategy: Option<FakerType>,
+    /// Extended fake strategy config (pattern, min, max, constant) from x-fake-strategy
+    pub fake_strategy_config: Option<FakeStrategyExtendedConfig>,
+}
+
+/// Extended configuration for x-fake-strategy when using object form
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FakeStrategyExtendedConfig {
+    /// Regex pattern for pattern-based generation
+    pub pattern: Option<String>,
+    /// Minimum value for numeric types
+    pub min: Option<f64>,
+    /// Maximum value for numeric types
+    pub max: Option<f64>,
+    /// Constant value for constant type
+    pub constant: Option<Value>,
 }
 
 impl Default for ResolvedSchemaNode {
@@ -439,6 +483,8 @@ impl Default for ResolvedSchemaNode {
             enum_values: Vec::new(),
             default: None,
             examples: Vec::new(),
+            fake_strategy: None,
+            fake_strategy_config: None,
         }
     }
 }
@@ -535,6 +581,31 @@ impl ResolvedSchemaNode {
     /// Infer the best faker config for this schema node
     pub fn infer_faker_config(&self) -> FakerFieldConfig {
         let mut config = FakerFieldConfig::default();
+
+        // If x-fake-strategy is specified, use it directly (takes precedence)
+        if let Some(fake_strategy) = &self.fake_strategy {
+            config.faker_type = fake_strategy.clone();
+
+            // Use extended config from x-fake-strategy if available, otherwise fall back to schema constraints
+            if let Some(ext_config) = &self.fake_strategy_config {
+                // Extended config takes precedence for these fields
+                config.pattern = ext_config.pattern.clone().or_else(|| self.pattern.clone());
+                config.min = ext_config.min.or(self.minimum);
+                config.max = ext_config.max.or(self.maximum);
+                config.constant = ext_config.constant.clone();
+            } else {
+                // No extended config, use schema constraints
+                config.min = self.minimum;
+                config.max = self.maximum;
+                config.pattern = self.pattern.clone();
+            }
+
+            // If enum values exist, include them
+            if !self.enum_values.is_empty() {
+                config.enum_values = Some(self.enum_values.clone());
+            }
+            return config;
+        }
 
         // Set faker type based on schema type and format
         let faker_types = FakerType::for_schema_type(self.type_name(), self.format.as_deref());

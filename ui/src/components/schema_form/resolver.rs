@@ -6,7 +6,7 @@
 use serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
 
-use super::types::{ResolvedSchemaNode, SchemaNodeType};
+use super::types::{FakerType, FakeStrategyExtendedConfig, ResolvedSchemaNode, SchemaNodeType};
 
 // ============================================================================
 // Resolution Context
@@ -256,6 +256,35 @@ fn resolve_object_type(schema: &Value, ctx: &mut SchemaResolutionContext, depth:
 
 /// Extract common properties from a schema
 fn extract_common_props(schema: &Value) -> ResolvedSchemaNode {
+    // Parse x-fake-strategy extension attribute (supports both string and object form)
+    let (fake_strategy, fake_strategy_config) = if let Some(strategy_val) = schema.get("x-fake-strategy") {
+        match strategy_val {
+            // Simple string form: "email"
+            Value::String(s) => (FakerType::from_strategy_string(s), None),
+            // Object form: { "type": "pattern", "pattern": "[A-Z]+" }
+            Value::Object(obj) => {
+                let strategy = obj.get("type")
+                    .and_then(|v| v.as_str())
+                    .and_then(FakerType::from_strategy_string);
+                let ext_config = FakeStrategyExtendedConfig {
+                    pattern: obj.get("pattern").and_then(|v| v.as_str()).map(String::from),
+                    min: obj.get("min").and_then(|v| v.as_f64()),
+                    max: obj.get("max").and_then(|v| v.as_f64()),
+                    constant: obj.get("constant").cloned(),
+                };
+                // Only include extended config if at least one field is set
+                let has_config = ext_config.pattern.is_some()
+                    || ext_config.min.is_some()
+                    || ext_config.max.is_some()
+                    || ext_config.constant.is_some();
+                (strategy, if has_config { Some(ext_config) } else { None })
+            }
+            _ => (None, None),
+        }
+    } else {
+        (None, None)
+    };
+
     ResolvedSchemaNode {
         node_type: SchemaNodeType::String, // Will be overwritten
         name: None,
@@ -285,6 +314,8 @@ fn extract_common_props(schema: &Value) -> ResolvedSchemaNode {
             .and_then(|v| v.as_array())
             .map(|arr| arr.clone())
             .unwrap_or_default(),
+        fake_strategy,
+        fake_strategy_config,
     }
 }
 

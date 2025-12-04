@@ -1,0 +1,39 @@
+{
+  "faker_strategies": {
+    "personal": [
+      {"type": "first_name", "description": "Random first name"},
+      {"type": "last_name", "description": "Random last name"},
+      {"type": "full_name", "description": "Random full name"},
+      {"type": "username", "description": "Random username"}
+    ],
+    "contact": [
+      {"type": "email", "description": "Safe email address"},
+      {"type": "phone", "description": "Phone number"}
+    ],
+    "address": [
+      {"type": "street_address", "description": "Street name"},
+      {"type": "city", "description": "City name"},
+      {"type": "state", "description": "State abbreviation"},
+      {"type": "country", "description": "Country name"},
+      {"type": "postal_code", "description": "Postal/ZIP code"}
+    ],
+    "text": [
+      {"type": "word", "description": "Single word"},
+      {"type": "sentence", "description": "Random sentence (1-10 words)"},
+      {"type": "paragraph", "description": "Random paragraph (1-3 sentences)"},
+      {"type": "lorem", "description": "Lorem ipsum text (1-5 sentences)"}
+    ],
+    "numbers": [
+      {"type": "integer", "description": "Random integer", "options": ["min", "max"]},
+      {"type": "float", "description": "Random float", "options": ["min", "max"]}
+    ],
+    "identifiers": [
+      {"type": "uuid", "description": "UUID v4 string"}
+    ],
+    "special": [
+      {"type": "pattern", "description": "Regex-based pattern", "options": ["pattern"]},
+      {"type": "enum", "description": "Random value from list", "options": ["values"]},
+      {"type": "constant", "description": "Fixed value", "options": ["value"]}
+    ]
+  }
+}
