@@ -790,9 +790,13 @@ pub fn ToolForm() -> impl IntoView {
     let (mock_file_selection, set_mock_file_selection) = signal("random".to_string());
     let (mock_pattern, set_mock_pattern) = signal(String::new());
     let (mock_llm_provider, set_mock_llm_provider) = signal("openai".to_string());
-    let (mock_llm_model, set_mock_llm_model) = signal(String::new());
-    let (mock_llm_api_key_env, set_mock_llm_api_key_env) = signal(String::new());
+    let (mock_llm_model, set_mock_llm_model) = signal("gpt-4o".to_string());
+    let (mock_llm_api_key_env, set_mock_llm_api_key_env) = signal("OPENAI_API_KEY".to_string());
     let (mock_llm_system_prompt, set_mock_llm_system_prompt) = signal(String::new());
+    let (mock_llm_base_url, set_mock_llm_base_url) = signal(String::new());
+    let (mock_llm_available_models, set_mock_llm_available_models) = signal::<Vec<api::LlmModelInfo>>(vec![]);
+    let (mock_llm_models_loading, set_mock_llm_models_loading) = signal(false);
+    let (mock_llm_models_error, set_mock_llm_models_error) = signal::<Option<String>>(None);
     // Database strategy signals (RwSignals for DatabaseStrategyEditor)
     let mock_db_url = RwSignal::new(String::new());
     let mock_db_query = RwSignal::new(String::new());
@@ -800,6 +804,49 @@ pub fn ToolForm() -> impl IntoView {
     let mock_datafusion_config = RwSignal::new(DataFusionConfig::default());
     // DataLakeCrud strategy signal
     let mock_data_lake_crud_config = RwSignal::new(DataLakeCrudConfig::default());
+
+    // Helper functions for LLM mock strategy
+    let get_default_llm_model = |provider: &str| -> &'static str {
+        match provider {
+            "anthropic" => "claude-sonnet-4-20250514",
+            "gemini" => "gemini-2.0-flash",
+            "ollama" => "llama3.2:3b",
+            "azureopenai" => "gpt-4o",
+            _ => "gpt-4o",
+        }
+    };
+    let get_default_api_key_env = |provider: &str| -> &'static str {
+        match provider {
+            "anthropic" => "ANTHROPIC_API_KEY",
+            "gemini" => "GEMINI_API_KEY",
+            "ollama" => "",
+            "azureopenai" => "AZURE_OPENAI_API_KEY",
+            _ => "OPENAI_API_KEY",
+        }
+    };
+    let get_default_base_url = |provider: &str| -> &'static str {
+        match provider {
+            "ollama" => "http://localhost:11434",
+            _ => "",
+        }
+    };
+
+    // Model fetching function for LLM mock strategy
+    let fetch_llm_models = move |provider: String, base_url: Option<String>, api_key_env: Option<String>| {
+        set_mock_llm_models_loading.set(true);
+        set_mock_llm_models_error.set(None);
+        wasm_bindgen_futures::spawn_local(async move {
+            match api::fetch_llm_models(&provider, base_url.as_deref(), api_key_env.as_deref()).await {
+                Ok(models) => {
+                    set_mock_llm_available_models.set(models);
+                }
+                Err(e) => {
+                    set_mock_llm_models_error.set(Some(e));
+                }
+            }
+            set_mock_llm_models_loading.set(false);
+        });
+    };
 
     // Load data lakes for DataFusion selection
     let data_lakes = LocalResource::new(move || {
@@ -878,6 +925,9 @@ pub fn ToolForm() -> impl IntoView {
                 config.llm = Some(LLMConfig {
                     provider: match mock_llm_provider.get().as_str() {
                         "anthropic" => LLMProvider::Anthropic,
+                        "gemini" => LLMProvider::Gemini,
+                        "ollama" => LLMProvider::Ollama,
+                        "azureopenai" => LLMProvider::AzureOpenAI,
                         _ => LLMProvider::OpenAI,
                     },
                     api_key_env: if mock_llm_api_key_env.get().is_empty() { None } else { Some(mock_llm_api_key_env.get()) },
@@ -886,6 +936,7 @@ pub fn ToolForm() -> impl IntoView {
                     temperature: None,
                     max_tokens: None,
                     stream: false,
+                    base_url: if mock_llm_base_url.get().is_empty() { None } else { Some(mock_llm_base_url.get()) },
                 });
             }
             "database" => {
@@ -1416,41 +1467,115 @@ pub fn ToolForm() -> impl IntoView {
                                                     on:change=move |ev| {
                                                         let target = ev.target().unwrap();
                                                         let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
-                                                        set_mock_llm_provider.set(select.value());
+                                                        let new_provider = select.value();
+                                                        set_mock_llm_provider.set(new_provider.clone());
+                                                        // Update defaults
+                                                        set_mock_llm_model.set(get_default_llm_model(&new_provider).to_string());
+                                                        let new_api_key_env = get_default_api_key_env(&new_provider).to_string();
+                                                        set_mock_llm_api_key_env.set(new_api_key_env.clone());
+                                                        let new_base_url = get_default_base_url(&new_provider).to_string();
+                                                        set_mock_llm_base_url.set(new_base_url.clone());
+                                                        // Fetch models
+                                                        let base = if new_base_url.is_empty() { None } else { Some(new_base_url) };
+                                                        let api_env = if new_api_key_env.is_empty() { None } else { Some(new_api_key_env) };
+                                                        fetch_llm_models(new_provider, base, api_env);
                                                     }
                                                 >
-                                                    <option value="openai">"OpenAI"</option>
-                                                    <option value="anthropic">"Anthropic"</option>
+                                                    <option value="openai" selected=move || mock_llm_provider.get() == "openai">"OpenAI"</option>
+                                                    <option value="anthropic" selected=move || mock_llm_provider.get() == "anthropic">"Anthropic"</option>
+                                                    <option value="gemini" selected=move || mock_llm_provider.get() == "gemini">"Google Gemini"</option>
+                                                    <option value="ollama" selected=move || mock_llm_provider.get() == "ollama">"Ollama (Local)"</option>
+                                                    <option value="azureopenai" selected=move || mock_llm_provider.get() == "azureopenai">"Azure OpenAI"</option>
                                                 </select>
                                             </div>
                                             <div>
-                                                <label class="block text-sm font-medium text-gray-700 mb-1">"Model *"</label>
+                                                <label class="block text-sm font-medium text-gray-700 mb-1">
+                                                    "Model *"
+                                                    {move || if mock_llm_models_loading.get() {
+                                                        view! { <span class="text-blue-500 text-xs ml-2">"Loading..."</span> }.into_any()
+                                                    } else {
+                                                        view! { <span></span> }.into_any()
+                                                    }}
+                                                </label>
+                                                <select
+                                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                                                    on:change=move |ev| {
+                                                        let target = ev.target().unwrap();
+                                                        let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
+                                                        set_mock_llm_model.set(select.value());
+                                                    }
+                                                    disabled=mock_llm_models_loading
+                                                >
+                                                    {move || {
+                                                        let current_model = mock_llm_model.get();
+                                                        let models = mock_llm_available_models.get();
+                                                        if models.is_empty() {
+                                                            vec![view! {
+                                                                <option value=current_model.clone() selected=true>{current_model.clone()}</option>
+                                                            }]
+                                                        } else {
+                                                            models.into_iter().map(|m| {
+                                                                let is_selected = current_model == m.id;
+                                                                let label = if let Some(desc) = m.description {
+                                                                    format!("{} - {}", m.name, desc)
+                                                                } else {
+                                                                    m.name.clone()
+                                                                };
+                                                                view! {
+                                                                    <option value=m.id selected=is_selected>{label}</option>
+                                                                }
+                                                            }).collect::<Vec<_>>()
+                                                        }
+                                                    }}
+                                                </select>
+                                                {move || mock_llm_models_error.get().map(|e| view! {
+                                                    <p class="text-red-500 text-xs mt-1">{e}</p>
+                                                })}
+                                            </div>
+                                        </div>
+                                        <div class="grid grid-cols-2 gap-4">
+                                            <div>
+                                                <label class="block text-sm font-medium text-gray-700 mb-1">
+                                                    "API Key Environment Variable"
+                                                    {move || if mock_llm_provider.get() == "ollama" {
+                                                        view! { <span class="text-gray-400 text-xs ml-1">"(optional)"</span> }.into_any()
+                                                    } else {
+                                                        view! { <span class="text-amber-600 text-xs ml-1">"(required)"</span> }.into_any()
+                                                    }}
+                                                </label>
                                                 <input
                                                     type="text"
                                                     class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
-                                                    placeholder="gpt-4"
-                                                    prop:value=move || mock_llm_model.get()
+                                                    placeholder=move || get_default_api_key_env(&mock_llm_provider.get())
+                                                    prop:value=move || mock_llm_api_key_env.get()
                                                     on:input=move |ev| {
                                                         let target = ev.target().unwrap();
                                                         let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
-                                                        set_mock_llm_model.set(input.value());
+                                                        set_mock_llm_api_key_env.set(input.value());
                                                     }
                                                 />
                                             </div>
-                                        </div>
-                                        <div>
-                                            <label class="block text-sm font-medium text-gray-700 mb-1">"API Key Environment Variable"</label>
-                                            <input
-                                                type="text"
-                                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
-                                                placeholder="OPENAI_API_KEY"
-                                                prop:value=move || mock_llm_api_key_env.get()
-                                                on:input=move |ev| {
-                                                    let target = ev.target().unwrap();
-                                                    let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
-                                                    set_mock_llm_api_key_env.set(input.value());
-                                                }
-                                            />
+                                            <div>
+                                                <label class="block text-sm font-medium text-gray-700 mb-1">
+                                                    "Base URL"
+                                                    {move || if mock_llm_provider.get() == "ollama" || mock_llm_provider.get() == "azureopenai" {
+                                                        view! { <span class="text-gray-400 text-xs ml-1">"(required)"</span> }.into_any()
+                                                    } else {
+                                                        view! { <span class="text-gray-400 text-xs ml-1">"(optional)"</span> }.into_any()
+                                                    }}
+                                                </label>
+                                                <input
+                                                    type="text"
+                                                    class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                                                    placeholder=move || get_default_base_url(&mock_llm_provider.get())
+                                                    prop:value=move || mock_llm_base_url.get()
+                                                    on:input=move |ev| {
+                                                        let target = ev.target().unwrap();
+                                                        let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                                        set_mock_llm_base_url.set(input.value());
+                                                    }
+                                                />
+                                            </div>
                                         </div>
                                         <div>
                                             <label class="block text-sm font-medium text-gray-700 mb-1">"System Prompt"</label>
@@ -1548,9 +1673,13 @@ pub fn ToolEditForm() -> impl IntoView {
     let (mock_file_selection, set_mock_file_selection) = signal("random".to_string());
     let (mock_pattern, set_mock_pattern) = signal(String::new());
     let (mock_llm_provider, set_mock_llm_provider) = signal("openai".to_string());
-    let (mock_llm_model, set_mock_llm_model) = signal(String::new());
-    let (mock_llm_api_key_env, set_mock_llm_api_key_env) = signal(String::new());
+    let (mock_llm_model, set_mock_llm_model) = signal("gpt-4o".to_string());
+    let (mock_llm_api_key_env, set_mock_llm_api_key_env) = signal("OPENAI_API_KEY".to_string());
     let (mock_llm_system_prompt, set_mock_llm_system_prompt) = signal(String::new());
+    let (mock_llm_base_url, set_mock_llm_base_url) = signal(String::new());
+    let (mock_llm_available_models, set_mock_llm_available_models) = signal::<Vec<api::LlmModelInfo>>(vec![]);
+    let (mock_llm_models_loading, set_mock_llm_models_loading) = signal(false);
+    let (mock_llm_models_error, set_mock_llm_models_error) = signal::<Option<String>>(None);
     // Database strategy signals (RwSignals for DatabaseStrategyEditor)
     let mock_db_url = RwSignal::new(String::new());
     let mock_db_query = RwSignal::new(String::new());
@@ -1558,6 +1687,49 @@ pub fn ToolEditForm() -> impl IntoView {
     let mock_datafusion_config = RwSignal::new(DataFusionConfig::default());
     // DataLakeCrud strategy signal
     let mock_data_lake_crud_config = RwSignal::new(DataLakeCrudConfig::default());
+
+    // Helper functions for LLM mock strategy
+    let get_default_llm_model = |provider: &str| -> &'static str {
+        match provider {
+            "anthropic" => "claude-sonnet-4-20250514",
+            "gemini" => "gemini-2.0-flash",
+            "ollama" => "llama3.2:3b",
+            "azureopenai" => "gpt-4o",
+            _ => "gpt-4o",
+        }
+    };
+    let get_default_api_key_env = |provider: &str| -> &'static str {
+        match provider {
+            "anthropic" => "ANTHROPIC_API_KEY",
+            "gemini" => "GEMINI_API_KEY",
+            "ollama" => "",
+            "azureopenai" => "AZURE_OPENAI_API_KEY",
+            _ => "OPENAI_API_KEY",
+        }
+    };
+    let get_default_base_url = |provider: &str| -> &'static str {
+        match provider {
+            "ollama" => "http://localhost:11434",
+            _ => "",
+        }
+    };
+
+    // Model fetching function for LLM mock strategy
+    let fetch_llm_models = move |provider: String, base_url: Option<String>, api_key_env: Option<String>| {
+        set_mock_llm_models_loading.set(true);
+        set_mock_llm_models_error.set(None);
+        wasm_bindgen_futures::spawn_local(async move {
+            match api::fetch_llm_models(&provider, base_url.as_deref(), api_key_env.as_deref()).await {
+                Ok(models) => {
+                    set_mock_llm_available_models.set(models);
+                }
+                Err(e) => {
+                    set_mock_llm_models_error.set(Some(e));
+                }
+            }
+            set_mock_llm_models_loading.set(false);
+        });
+    };
 
     // Load data lakes for DataFusion selection
     let data_lakes = LocalResource::new(move || {
@@ -1653,6 +1825,9 @@ pub fn ToolEditForm() -> impl IntoView {
                             let provider = match llm.provider {
                                 LLMProvider::OpenAI => "openai",
                                 LLMProvider::Anthropic => "anthropic",
+                                LLMProvider::Gemini => "gemini",
+                                LLMProvider::Ollama => "ollama",
+                                LLMProvider::AzureOpenAI => "azureopenai",
                             };
                             set_mock_llm_provider.set(provider.to_string());
                             set_mock_llm_model.set(llm.model.clone());
@@ -1661,6 +1836,9 @@ pub fn ToolEditForm() -> impl IntoView {
                             }
                             if let Some(prompt) = &llm.system_prompt {
                                 set_mock_llm_system_prompt.set(prompt.clone());
+                            }
+                            if let Some(url) = &llm.base_url {
+                                set_mock_llm_base_url.set(url.clone());
                             }
                         }
                         if let Some(db) = &mock.database {
@@ -1752,6 +1930,9 @@ pub fn ToolEditForm() -> impl IntoView {
                 config.llm = Some(LLMConfig {
                     provider: match mock_llm_provider.get().as_str() {
                         "anthropic" => LLMProvider::Anthropic,
+                        "gemini" => LLMProvider::Gemini,
+                        "ollama" => LLMProvider::Ollama,
+                        "azureopenai" => LLMProvider::AzureOpenAI,
                         _ => LLMProvider::OpenAI,
                     },
                     api_key_env: if mock_llm_api_key_env.get().is_empty() { None } else { Some(mock_llm_api_key_env.get()) },
@@ -1760,6 +1941,7 @@ pub fn ToolEditForm() -> impl IntoView {
                     temperature: None,
                     max_tokens: None,
                     stream: false,
+                    base_url: if mock_llm_base_url.get().is_empty() { None } else { Some(mock_llm_base_url.get()) },
                 });
             }
             "database" => {
@@ -2304,41 +2486,115 @@ pub fn ToolEditForm() -> impl IntoView {
                                                             on:change=move |ev| {
                                                                 let target = ev.target().unwrap();
                                                                 let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
-                                                                set_mock_llm_provider.set(select.value());
+                                                                let new_provider = select.value();
+                                                                set_mock_llm_provider.set(new_provider.clone());
+                                                                // Update defaults
+                                                                set_mock_llm_model.set(get_default_llm_model(&new_provider).to_string());
+                                                                let new_api_key_env = get_default_api_key_env(&new_provider).to_string();
+                                                                set_mock_llm_api_key_env.set(new_api_key_env.clone());
+                                                                let new_base_url = get_default_base_url(&new_provider).to_string();
+                                                                set_mock_llm_base_url.set(new_base_url.clone());
+                                                                // Fetch models
+                                                                let base = if new_base_url.is_empty() { None } else { Some(new_base_url) };
+                                                                let api_env = if new_api_key_env.is_empty() { None } else { Some(new_api_key_env) };
+                                                                fetch_llm_models(new_provider, base, api_env);
                                                             }
                                                         >
-                                                            <option value="openai">"OpenAI"</option>
-                                                            <option value="anthropic">"Anthropic"</option>
+                                                            <option value="openai" selected=move || mock_llm_provider.get() == "openai">"OpenAI"</option>
+                                                            <option value="anthropic" selected=move || mock_llm_provider.get() == "anthropic">"Anthropic"</option>
+                                                            <option value="gemini" selected=move || mock_llm_provider.get() == "gemini">"Google Gemini"</option>
+                                                            <option value="ollama" selected=move || mock_llm_provider.get() == "ollama">"Ollama (Local)"</option>
+                                                            <option value="azureopenai" selected=move || mock_llm_provider.get() == "azureopenai">"Azure OpenAI"</option>
                                                         </select>
                                                     </div>
                                                     <div>
-                                                        <label class="block text-sm font-medium text-gray-700 mb-1">"Model *"</label>
+                                                        <label class="block text-sm font-medium text-gray-700 mb-1">
+                                                            "Model *"
+                                                            {move || if mock_llm_models_loading.get() {
+                                                                view! { <span class="text-blue-500 text-xs ml-2">"Loading..."</span> }.into_any()
+                                                            } else {
+                                                                view! { <span></span> }.into_any()
+                                                            }}
+                                                        </label>
+                                                        <select
+                                                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                                                            on:change=move |ev| {
+                                                                let target = ev.target().unwrap();
+                                                                let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
+                                                                set_mock_llm_model.set(select.value());
+                                                            }
+                                                            disabled=mock_llm_models_loading
+                                                        >
+                                                            {move || {
+                                                                let current_model = mock_llm_model.get();
+                                                                let models = mock_llm_available_models.get();
+                                                                if models.is_empty() {
+                                                                    vec![view! {
+                                                                        <option value=current_model.clone() selected=true>{current_model.clone()}</option>
+                                                                    }]
+                                                                } else {
+                                                                    models.into_iter().map(|m| {
+                                                                        let is_selected = current_model == m.id;
+                                                                        let label = if let Some(desc) = m.description {
+                                                                            format!("{} - {}", m.name, desc)
+                                                                        } else {
+                                                                            m.name.clone()
+                                                                        };
+                                                                        view! {
+                                                                            <option value=m.id selected=is_selected>{label}</option>
+                                                                        }
+                                                                    }).collect::<Vec<_>>()
+                                                                }
+                                                            }}
+                                                        </select>
+                                                        {move || mock_llm_models_error.get().map(|e| view! {
+                                                            <p class="text-red-500 text-xs mt-1">{e}</p>
+                                                        })}
+                                                    </div>
+                                                </div>
+                                                <div class="grid grid-cols-2 gap-4">
+                                                    <div>
+                                                        <label class="block text-sm font-medium text-gray-700 mb-1">
+                                                            "API Key Environment Variable"
+                                                            {move || if mock_llm_provider.get() == "ollama" {
+                                                                view! { <span class="text-gray-400 text-xs ml-1">"(optional)"</span> }.into_any()
+                                                            } else {
+                                                                view! { <span class="text-amber-600 text-xs ml-1">"(required)"</span> }.into_any()
+                                                            }}
+                                                        </label>
                                                         <input
                                                             type="text"
                                                             class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
-                                                            placeholder="gpt-4"
-                                                            prop:value=move || mock_llm_model.get()
+                                                            placeholder=move || get_default_api_key_env(&mock_llm_provider.get())
+                                                            prop:value=move || mock_llm_api_key_env.get()
                                                             on:input=move |ev| {
                                                                 let target = ev.target().unwrap();
                                                                 let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
-                                                                set_mock_llm_model.set(input.value());
+                                                                set_mock_llm_api_key_env.set(input.value());
                                                             }
                                                         />
                                                     </div>
-                                                </div>
-                                                <div>
-                                                    <label class="block text-sm font-medium text-gray-700 mb-1">"API Key Environment Variable"</label>
-                                                    <input
-                                                        type="text"
-                                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
-                                                        placeholder="OPENAI_API_KEY"
-                                                        prop:value=move || mock_llm_api_key_env.get()
-                                                        on:input=move |ev| {
-                                                            let target = ev.target().unwrap();
-                                                            let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
-                                                            set_mock_llm_api_key_env.set(input.value());
-                                                        }
-                                                    />
+                                                    <div>
+                                                        <label class="block text-sm font-medium text-gray-700 mb-1">
+                                                            "Base URL"
+                                                            {move || if mock_llm_provider.get() == "ollama" || mock_llm_provider.get() == "azureopenai" {
+                                                                view! { <span class="text-gray-400 text-xs ml-1">"(required)"</span> }.into_any()
+                                                            } else {
+                                                                view! { <span class="text-gray-400 text-xs ml-1">"(optional)"</span> }.into_any()
+                                                            }}
+                                                        </label>
+                                                        <input
+                                                            type="text"
+                                                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                                                            placeholder=move || get_default_base_url(&mock_llm_provider.get())
+                                                            prop:value=move || mock_llm_base_url.get()
+                                                            on:input=move |ev| {
+                                                                let target = ev.target().unwrap();
+                                                                let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
+                                                                set_mock_llm_base_url.set(input.value());
+                                                            }
+                                                        />
+                                                    </div>
                                                 </div>
                                                 <div>
                                                     <label class="block text-sm font-medium text-gray-700 mb-1">"System Prompt"</label>

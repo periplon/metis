@@ -710,6 +710,9 @@ pub fn ResourceForm() -> impl IntoView {
                 config.llm = Some(LLMConfig {
                     provider: match mock_llm_provider.get().as_str() {
                         "anthropic" => LLMProvider::Anthropic,
+                        "gemini" => LLMProvider::Gemini,
+                        "ollama" => LLMProvider::Ollama,
+                        "azureopenai" => LLMProvider::AzureOpenAI,
                         _ => LLMProvider::OpenAI,
                     },
                     api_key_env: if mock_llm_api_key_env.get().is_empty() { None } else { Some(mock_llm_api_key_env.get()) },
@@ -718,6 +721,7 @@ pub fn ResourceForm() -> impl IntoView {
                     temperature: None,
                     max_tokens: None,
                     stream: false,
+                    base_url: None,
                 });
             }
             "database" => {
@@ -1638,6 +1642,9 @@ pub fn ResourceEditForm() -> impl IntoView {
                             let provider = match llm.provider {
                                 LLMProvider::OpenAI => "openai",
                                 LLMProvider::Anthropic => "anthropic",
+                                LLMProvider::Gemini => "gemini",
+                                LLMProvider::Ollama => "ollama",
+                                LLMProvider::AzureOpenAI => "azureopenai",
                             };
                             set_mock_llm_provider.set(provider.to_string());
                             set_mock_llm_model.set(llm.model.clone());
@@ -1733,6 +1740,9 @@ pub fn ResourceEditForm() -> impl IntoView {
                 config.llm = Some(LLMConfig {
                     provider: match mock_llm_provider.get().as_str() {
                         "anthropic" => LLMProvider::Anthropic,
+                        "gemini" => LLMProvider::Gemini,
+                        "ollama" => LLMProvider::Ollama,
+                        "azureopenai" => LLMProvider::AzureOpenAI,
                         _ => LLMProvider::OpenAI,
                     },
                     api_key_env: if mock_llm_api_key_env.get().is_empty() { None } else { Some(mock_llm_api_key_env.get()) },
@@ -1741,6 +1751,7 @@ pub fn ResourceEditForm() -> impl IntoView {
                     temperature: None,
                     max_tokens: None,
                     stream: false,
+                    base_url: None,
                 });
             }
             "database" => {

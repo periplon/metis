@@ -448,13 +448,24 @@ pub struct LLMConfig {
     pub max_tokens: Option<u32>,
     #[serde(default)]
     pub stream: bool,
+    /// Base URL for API endpoint (required for Ollama and AzureOpenAI)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum LLMProvider {
+    #[default]
     OpenAI,
     Anthropic,
+    /// Google Gemini
+    Gemini,
+    /// Ollama (local models)
+    Ollama,
+    /// Azure OpenAI
+    #[serde(rename = "azureopenai")]
+    AzureOpenAI,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

@@ -502,20 +502,24 @@ impl MockStrategyHandler {
         config: &MockConfig,
         args: Option<&serde_json::Value>,
     ) -> Result<Value> {
-        let llm_config = config.llm.as_ref() 
+        let llm_config = config.llm.as_ref()
             .ok_or_else(|| anyhow::anyhow!("LLM config not provided"))?;
 
-        // Get API key from environment variable
+        // Get API key from environment variable (optional for Ollama)
         let api_key = if let Some(env_var) = &llm_config.api_key_env {
-            std::env::var(env_var) 
-                .map_err(|_| anyhow::anyhow!("API key environment variable {} not set", env_var))? 
+            std::env::var(env_var).ok()
         } else {
-            return Err(anyhow::anyhow!("No API key configuration provided"));
+            None
         };
+
+        // API key is required for non-Ollama providers
+        if llm_config.provider != crate::config::LLMProvider::Ollama && api_key.is_none() {
+            return Err(anyhow::anyhow!("API key environment variable not set for {:?}", llm_config.provider));
+        }
 
         // Extract prompt from args
         let prompt = if let Some(args) = args {
-            args.get("prompt") 
+            args.get("prompt")
                 .and_then(|v| v.as_str())
                 .unwrap_or("Hello")
                 .to_string()
@@ -525,11 +529,25 @@ impl MockStrategyHandler {
 
         match llm_config.provider {
             crate::config::LLMProvider::OpenAI => {
-                let result = self.generate_openai(llm_config, &api_key, &prompt).await?;
+                let result = self.generate_openai(llm_config, api_key.as_deref().unwrap_or(""), &prompt, None).await?;
                 Ok(json!(result))
             }
             crate::config::LLMProvider::Anthropic => {
-                let result = self.generate_anthropic(llm_config, &api_key, &prompt).await?;
+                let result = self.generate_anthropic(llm_config, api_key.as_deref().unwrap_or(""), &prompt).await?;
+                Ok(json!(result))
+            }
+            crate::config::LLMProvider::Gemini => {
+                let result = self.generate_gemini(llm_config, api_key.as_deref().unwrap_or(""), &prompt).await?;
+                Ok(json!(result))
+            }
+            crate::config::LLMProvider::Ollama => {
+                let result = self.generate_ollama(llm_config, &prompt).await?;
+                Ok(json!(result))
+            }
+            crate::config::LLMProvider::AzureOpenAI => {
+                let base_url = llm_config.base_url.as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("Azure OpenAI requires base_url to be set"))?;
+                let result = self.generate_openai(llm_config, api_key.as_deref().unwrap_or(""), &prompt, Some(base_url)).await?;
                 Ok(json!(result))
             }
         }
@@ -540,10 +558,14 @@ impl MockStrategyHandler {
         config: &crate::config::LLMConfig,
         api_key: &str,
         prompt: &str,
+        base_url: Option<&String>,
     ) -> Result<String> {
         use async_openai::{Client, config::OpenAIConfig, types::*};
 
-        let openai_config = OpenAIConfig::new().with_api_key(api_key);
+        let mut openai_config = OpenAIConfig::new().with_api_key(api_key);
+        if let Some(url) = base_url {
+            openai_config = openai_config.with_api_base(url);
+        }
         let client = Client::with_config(openai_config);
 
         let mut messages = vec![];
@@ -648,6 +670,141 @@ impl MockStrategyHandler {
             .and_then(|item| item.get("text"))
             .and_then(|text| text.as_str())
             .ok_or_else(|| anyhow::anyhow!("No response from Anthropic"))?;
+
+        Ok(content.to_string())
+    }
+
+    async fn generate_gemini(
+        &self,
+        config: &crate::config::LLMConfig,
+        api_key: &str,
+        prompt: &str,
+    ) -> Result<String> {
+        let client = reqwest::Client::new();
+
+        let contents = vec![json!({
+            "role": "user",
+            "parts": [{"text": prompt}]
+        })];
+
+        // Prepend system instruction if provided
+        let mut request_body = json!({
+            "contents": contents,
+            "generationConfig": {}
+        });
+
+        if let Some(system_prompt) = &config.system_prompt {
+            request_body["systemInstruction"] = json!({
+                "parts": [{"text": system_prompt}]
+            });
+        }
+
+        if let Some(temp) = config.temperature {
+            request_body["generationConfig"]["temperature"] = json!(temp);
+        }
+
+        if let Some(max_tokens) = config.max_tokens {
+            request_body["generationConfig"]["maxOutputTokens"] = json!(max_tokens);
+        }
+
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+            config.model, api_key
+        );
+
+        let response = client
+            .post(&url)
+            .header("content-type", "application/json")
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("Gemini API error: {}", e))?;
+
+        if !response.status().is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Gemini API error: {}", error_text));
+        }
+
+        let response_json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to parse Gemini response: {}", e))?;
+
+        let content = response_json
+            .get("candidates")
+            .and_then(|c| c.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|cand| cand.get("content"))
+            .and_then(|content| content.get("parts"))
+            .and_then(|parts| parts.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|part| part.get("text"))
+            .and_then(|text| text.as_str())
+            .ok_or_else(|| anyhow::anyhow!("No response from Gemini"))?;
+
+        Ok(content.to_string())
+    }
+
+    async fn generate_ollama(
+        &self,
+        config: &crate::config::LLMConfig,
+        prompt: &str,
+    ) -> Result<String> {
+        let client = reqwest::Client::new();
+
+        let base_url = config.base_url.as_deref().unwrap_or("http://localhost:11434");
+
+        let mut messages = vec![];
+
+        // Add system message if provided
+        if let Some(system_prompt) = &config.system_prompt {
+            messages.push(json!({
+                "role": "system",
+                "content": system_prompt
+            }));
+        }
+
+        // Add user message
+        messages.push(json!({
+            "role": "user",
+            "content": prompt
+        }));
+
+        let mut request_body = json!({
+            "model": config.model,
+            "messages": messages,
+            "stream": false
+        });
+
+        if let Some(temp) = config.temperature {
+            request_body["options"] = json!({"temperature": temp});
+        }
+
+        let url = format!("{}/api/chat", base_url);
+
+        let response = client
+            .post(&url)
+            .header("content-type", "application/json")
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|e| anyhow::anyhow!("Ollama API error: {}", e))?;
+
+        if !response.status().is_success() {
+            let error_text = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Ollama API error: {}", error_text));
+        }
+
+        let response_json: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to parse Ollama response: {}", e))?;
+
+        let content = response_json
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(|text| text.as_str())
+            .ok_or_else(|| anyhow::anyhow!("No response from Ollama"))?;
 
         Ok(content.to_string())
     }
