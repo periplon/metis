@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.42.0 - 2025-12-05
+#### Features
+- add DataLakeCrud mock strategy for CRUD operations on data lakes - (de158c8) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.41.1 - 2025-12-04
 #### Bug Fixes
 - **(ui)** fix pagination next button rendering in RSX - (0b4c1fe) - Joan Marc Carbo Arnau
