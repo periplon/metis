@@ -1815,3 +1815,108 @@ pub async fn sync_to_files(
         })),
     )
 }
+
+// ============================================================================
+// Schema Info Endpoint (for DataLakeCrud UI)
+// ============================================================================
+
+/// Response for schema info endpoint
+#[derive(Debug, Clone, Serialize)]
+pub struct SchemaInfoResponse {
+    pub data_lake: String,
+    pub schema_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema_definition: Option<Value>,
+    pub record_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sample_record: Option<DataRecordDto>,
+}
+
+/// GET /api/data-lakes/:name/schema-info/:schema_name - Get schema information for DataLakeCrud UI
+pub async fn get_schema_info(
+    State(state): State<ApiState>,
+    Path((name, schema_name)): Path<(String, String)>,
+) -> impl IntoResponse {
+    // Get data lake config
+    let data_lake_config: Option<DataLakeConfig> = if let Some(store) = &state.data_store {
+        match store.archetypes().get(ArchetypeType::DataLake.as_str(), &name).await {
+            Ok(Some(v)) => serde_json::from_value(v).ok(),
+            _ => None,
+        }
+    } else {
+        let settings = state.settings.read().await;
+        settings.data_lakes.iter().find(|d| d.name == name).cloned()
+    };
+
+    let data_lake_config = match data_lake_config {
+        Some(config) => config,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ApiResponse::<SchemaInfoResponse>::error("Data lake not found")),
+            );
+        }
+    };
+
+    // Verify schema exists in data lake
+    let schema_ref = data_lake_config.schemas.iter().find(|s|
+        s.schema_name == schema_name ||
+        s.alias.as_ref() == Some(&schema_name)
+    );
+
+    if schema_ref.is_none() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(ApiResponse::<SchemaInfoResponse>::error("Schema not found in data lake")),
+        );
+    }
+
+    // Get actual schema name (handle alias)
+    let actual_schema = schema_ref
+        .map(|s| s.schema_name.clone())
+        .unwrap_or(schema_name.clone());
+
+    // Try to fetch schema definition from schemas API
+    let schema_definition: Option<Value> = if let Some(store) = &state.data_store {
+        match store.archetypes().get(ArchetypeType::Schema.as_str(), &actual_schema).await {
+            Ok(Some(schema_value)) => {
+                // The schema document has a "schema" field containing the JSON Schema
+                schema_value.get("schema").cloned()
+            }
+            _ => None
+        }
+    } else {
+        // Fallback to in-memory settings
+        let settings = state.settings.read().await;
+        settings.schemas.iter()
+            .find(|s| s.name == actual_schema)
+            .map(|s| s.schema.clone())
+    };
+
+    // Get record count and sample
+    let (record_count, sample_record) = if let Some(file_storage) = &state.file_storage {
+        let records = file_storage.read_active_records(&name, &actual_schema).await.unwrap_or_default();
+        let count = records.len();
+        let sample = records.into_iter().next().map(DataRecordDto::from);
+        (count, sample)
+    } else if let Some(store) = &state.data_store {
+        let count = store.records().count(&name, Some(&actual_schema)).await.unwrap_or(0);
+        let sample = store.records().list(&name, Some(&actual_schema), 1, 0).await
+            .ok()
+            .and_then(|records| records.into_iter().next())
+            .map(DataRecordDto::from);
+        (count, sample)
+    } else {
+        (0, None)
+    };
+
+    let response = SchemaInfoResponse {
+        data_lake: name,
+        schema_name: actual_schema,
+        schema_definition,
+        record_count,
+        sample_record,
+    };
+
+    (StatusCode::OK, Json(ApiResponse::success(response)))
+}

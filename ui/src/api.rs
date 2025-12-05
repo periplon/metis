@@ -582,6 +582,22 @@ pub async fn sync_to_files(data_lake: &str, request: &crate::types::SyncRequest)
     post_json::<crate::types::SyncRequest, crate::types::SyncResponse>(&url, request).await
 }
 
+/// Schema info response for DataLakeCrud UI
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct SchemaInfoResponse {
+    pub data_lake: String,
+    pub schema_name: String,
+    pub schema_definition: Option<serde_json::Value>,
+    pub record_count: usize,
+    pub sample_record: Option<crate::types::DataRecord>,
+}
+
+/// Get schema information for a data lake schema (for DataLakeCrud UI)
+pub async fn get_schema_info(data_lake: &str, schema_name: &str) -> Result<SchemaInfoResponse, String> {
+    let url = format!("{}/data-lakes/{}/schema-info/{}", API_BASE, urlencoding_encode(data_lake), urlencoding_encode(schema_name));
+    fetch_json::<SchemaInfoResponse>(&url).await
+}
+
 // ============================================================================
 // State Management
 // ============================================================================

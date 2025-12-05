@@ -243,6 +243,8 @@ pub enum MockStrategyType {
     LLM,
     #[serde(rename = "database")]
     Database,
+    #[serde(rename = "data_lake_crud")]
+    DataLakeCrud,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -260,6 +262,9 @@ pub struct MockConfig {
     pub pattern: Option<String>,
     pub llm: Option<LLMConfig>,
     pub database: Option<DatabaseConfig>,
+    /// Data Lake CRUD configuration
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_lake_crud: Option<DataLakeCrudConfig>,
 }
 
 /// Schema-driven faker configuration for generating structured fake data
@@ -343,11 +348,93 @@ pub enum ScriptLang {
     Python,
 }
 
+/// Database type for mock strategy
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum DatabaseType {
+    #[default]
+    Sqlite,
+    Postgres,
+    Mysql,
+    DataFusion,
+}
+
+/// DataFusion-specific configuration for querying datalakes
+/// Storage settings are inherited from the data lake configuration
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct DataFusionConfig {
+    /// Data lake name to query (storage settings are inherited from data lake)
+    pub data_lake: String,
+    /// Schema name within the data lake
+    pub schema_name: String,
+}
+
+/// CRUD operation type for DataLakeCrud mock strategy
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum DataLakeCrudOperation {
+    /// Create a new record - input: schema fields, output: created record
+    #[default]
+    Create,
+    /// Read a single record by ID - input: {id: string}, output: record or null
+    ReadById,
+    /// List all records - input: optional {limit, offset}, output: array of records
+    ReadAll,
+    /// Filter records - input: filter fields from template, output: array of records
+    ReadFilter,
+    /// Update an existing record - input: {id: string, ...fields}, output: updated record
+    Update,
+    /// Delete a record - input: {id: string}, output: {success: bool}
+    Delete,
+}
+
+fn default_id_field() -> String {
+    "id".to_string()
+}
+
+fn default_read_limit() -> usize {
+    100
+}
+
+/// Configuration for DataLakeCrud mock strategy
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct DataLakeCrudConfig {
+    /// Name of the data lake to operate on (required)
+    pub data_lake: String,
+    /// Schema name within the data lake (required)
+    pub schema_name: String,
+    /// CRUD operation to perform (required)
+    pub operation: DataLakeCrudOperation,
+    /// For ReadFilter: Tera template to build filter conditions from input
+    /// Available variables: all input schema fields
+    /// Output should be a JSON object with field conditions: {"field": "value", ...}
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filter_template: Option<String>,
+    /// For ReadById/Update/Delete: which input field contains the record ID
+    /// Default: "id"
+    #[serde(default = "default_id_field")]
+    pub id_field: String,
+    /// For ReadAll/ReadFilter: maximum number of records to return
+    /// Default: 100
+    #[serde(default = "default_read_limit")]
+    pub read_limit: usize,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DatabaseConfig {
+    /// Database URL (for sqlite, postgres, mysql) or empty for datafusion
     pub url: String,
+    /// SQL query to execute
     pub query: String,
+    /// Parameter names to bind from input arguments
+    #[serde(default)]
     pub params: Vec<String>,
+    /// Database type (determines how to connect)
+    #[serde(default)]
+    pub db_type: DatabaseType,
+    /// DataFusion-specific configuration (when db_type is DataFusion)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub datafusion: Option<DataFusionConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

@@ -3,6 +3,8 @@ pub mod artifact_selector;
 pub mod dashboard;
 pub mod config;
 pub mod data_lakes;
+pub mod data_lake_crud_editor;
+pub mod database_editor;
 pub mod json_editor;
 pub mod list_filter;
 pub mod sql_editor;

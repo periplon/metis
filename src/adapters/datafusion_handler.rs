@@ -168,15 +168,7 @@ impl DataFusionHandler {
             ));
         }
 
-        // Check if table is already registered - return early if so
         let table_key = format!("{}/{}", data_lake.name, schema_name);
-        {
-            let tables = self.registered_tables.read().await;
-            if let Some(existing_table_name) = tables.get(&table_key) {
-                tracing::debug!("Table {} already registered as {}", table_key, existing_table_name);
-                return Ok(existing_table_name.clone());
-            }
-        }
 
         let file_storage = self.file_storage.as_ref().ok_or_else(|| {
             DataFusionHandlerError::InvalidQuery("File storage not configured".into())
@@ -190,6 +182,18 @@ impl DataFusionHandler {
 
         // Full qualified name: datalake.table
         let full_table_name = format!("{}.{}", catalog_schema, sanitized_table);
+
+        // Deregister existing table if present (to refresh with latest data)
+        {
+            let tables = self.registered_tables.read().await;
+            if tables.contains_key(&table_key) {
+                drop(tables);
+                // Ignore errors if table doesn't exist in context
+                let _ = self.ctx.deregister_table(&full_table_name);
+                let mut tables_write = self.registered_tables.write().await;
+                tables_write.remove(&table_key);
+            }
+        }
 
         // Read active records (filters out soft-deleted records via tombstones)
         let records = file_storage

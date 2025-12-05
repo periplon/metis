@@ -6,11 +6,14 @@ use std::collections::{HashMap, HashSet};
 use crate::api;
 use crate::types::{
     Tool, MockConfig, MockStrategyType, StatefulConfig, StateOperation,
-    FileConfig, ScriptLang, LLMConfig, LLMProvider, MockDatabaseConfig,
+    FileConfig, ScriptLang, LLMConfig, LLMProvider, MockDatabaseConfig, DatabaseType,
+    DataFusionConfig, DataLakeCrudConfig,
 };
 use crate::components::json_editor::JsonEditor;
 use crate::components::schema_editor::FullSchemaEditor;
 use crate::components::schema_form::{SchemaFormGenerator, SchemaFormMode};
+use crate::components::database_editor::DatabaseStrategyEditor;
+use crate::components::data_lake_crud_editor::DataLakeCrudEditor;
 use crate::components::list_filter::{
     ListFilterBar, Pagination, TagBadges, TagInput,
     extract_tags, filter_items, paginate_items, total_pages,
@@ -790,8 +793,23 @@ pub fn ToolForm() -> impl IntoView {
     let (mock_llm_model, set_mock_llm_model) = signal(String::new());
     let (mock_llm_api_key_env, set_mock_llm_api_key_env) = signal(String::new());
     let (mock_llm_system_prompt, set_mock_llm_system_prompt) = signal(String::new());
-    let (mock_db_url, set_mock_db_url) = signal(String::new());
-    let (mock_db_query, set_mock_db_query) = signal(String::new());
+    // Database strategy signals (RwSignals for DatabaseStrategyEditor)
+    let mock_db_url = RwSignal::new(String::new());
+    let mock_db_query = RwSignal::new(String::new());
+    let mock_db_type = RwSignal::new(DatabaseType::default());
+    let mock_datafusion_config = RwSignal::new(DataFusionConfig::default());
+    // DataLakeCrud strategy signal
+    let mock_data_lake_crud_config = RwSignal::new(DataLakeCrudConfig::default());
+
+    // Load data lakes for DataFusion selection
+    let data_lakes = LocalResource::new(move || {
+        async move {
+            api::list_data_lakes().await.unwrap_or_default()
+        }
+    });
+    let data_lakes_signal = Signal::derive(move || {
+        data_lakes.get().unwrap_or_default()
+    });
 
     let build_mock_config = move || -> Option<MockConfig> {
         let strategy = mock_strategy.get();
@@ -809,6 +827,7 @@ pub fn ToolForm() -> impl IntoView {
             "pattern" => MockStrategyType::Pattern,
             "llm" => MockStrategyType::LLM,
             "database" => MockStrategyType::Database,
+            "data_lake_crud" => MockStrategyType::DataLakeCrud,
             _ => return None,
         };
 
@@ -870,11 +889,22 @@ pub fn ToolForm() -> impl IntoView {
                 });
             }
             "database" => {
+                let db_type_val = mock_db_type.get();
+                let datafusion_cfg = if db_type_val == DatabaseType::DataFusion {
+                    Some(mock_datafusion_config.get())
+                } else {
+                    None
+                };
                 config.database = Some(MockDatabaseConfig {
                     url: mock_db_url.get(),
                     query: mock_db_query.get(),
                     params: vec![],
+                    db_type: db_type_val,
+                    datafusion: datafusion_cfg,
                 });
+            }
+            "data_lake_crud" => {
+                config.data_lake_crud = Some(mock_data_lake_crud_config.get());
             }
             _ => {}
         }
@@ -1132,6 +1162,7 @@ pub fn ToolForm() -> impl IntoView {
                             <option value="pattern">"Pattern (Regex)"</option>
                             <option value="llm">"LLM (AI Generated)"</option>
                             <option value="database">"Database Query"</option>
+                            <option value="data_lake_crud">"Data Lake CRUD"</option>
                         </select>
                         <p class="mt-1 text-xs text-gray-500">"Choose how the tool response should be generated"</p>
                     </div>
@@ -1438,37 +1469,24 @@ pub fn ToolForm() -> impl IntoView {
                                     </div>
                                 }.into_any(),
                                 "database" => view! {
-                                    <div class="space-y-4">
-                                        <div>
-                                            <label class="block text-sm font-medium text-gray-700 mb-1">"Database URL *"</label>
-                                            <input
-                                                type="text"
-                                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 font-mono"
-                                                placeholder="postgres://user:pass@host/db"
-                                                prop:value=move || mock_db_url.get()
-                                                on:input=move |ev| {
-                                                    let target = ev.target().unwrap();
-                                                    let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
-                                                    set_mock_db_url.set(input.value());
-                                                }
-                                            />
-                                        </div>
-                                        <div>
-                                            <label class="block text-sm font-medium text-gray-700 mb-1">"SQL Query *"</label>
-                                            <textarea
-                                                rows=4
-                                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 font-mono text-sm"
-                                                placeholder="SELECT * FROM results WHERE query = $1"
-                                                prop:value=move || mock_db_query.get()
-                                                on:input=move |ev| {
-                                                    let target = ev.target().unwrap();
-                                                    let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
-                                                    set_mock_db_query.set(textarea.value());
-                                                }
-                                            />
-                                            <p class="mt-1 text-xs text-gray-500">"Use $1, $2, etc. for parameters from tool input"</p>
-                                        </div>
-                                    </div>
+                                    <DatabaseStrategyEditor
+                                        db_type=mock_db_type
+                                        db_url=mock_db_url
+                                        db_query=mock_db_query
+                                        datafusion_config=mock_datafusion_config
+                                        data_lakes=data_lakes_signal
+                                    />
+                                }.into_any(),
+                                "data_lake_crud" => view! {
+                                    <DataLakeCrudEditor
+                                        config=mock_data_lake_crud_config
+                                        on_populate_input_schema=Callback::new(move |schema| {
+                                            set_input_schema.set(schema);
+                                        })
+                                        on_populate_output_schema=Callback::new(move |schema| {
+                                            set_output_schema.set(schema);
+                                        })
+                                    />
                                 }.into_any(),
                                 _ => view! { <div></div> }.into_any(),
                             }
@@ -1533,8 +1551,23 @@ pub fn ToolEditForm() -> impl IntoView {
     let (mock_llm_model, set_mock_llm_model) = signal(String::new());
     let (mock_llm_api_key_env, set_mock_llm_api_key_env) = signal(String::new());
     let (mock_llm_system_prompt, set_mock_llm_system_prompt) = signal(String::new());
-    let (mock_db_url, set_mock_db_url) = signal(String::new());
-    let (mock_db_query, set_mock_db_query) = signal(String::new());
+    // Database strategy signals (RwSignals for DatabaseStrategyEditor)
+    let mock_db_url = RwSignal::new(String::new());
+    let mock_db_query = RwSignal::new(String::new());
+    let mock_db_type = RwSignal::new(DatabaseType::default());
+    let mock_datafusion_config = RwSignal::new(DataFusionConfig::default());
+    // DataLakeCrud strategy signal
+    let mock_data_lake_crud_config = RwSignal::new(DataLakeCrudConfig::default());
+
+    // Load data lakes for DataFusion selection
+    let data_lakes = LocalResource::new(move || {
+        async move {
+            api::list_data_lakes().await.unwrap_or_default()
+        }
+    });
+    let data_lakes_signal = Signal::derive(move || {
+        data_lakes.get().unwrap_or_default()
+    });
 
     // Load existing tool (only once)
     Effect::new(move |_| {
@@ -1575,6 +1608,7 @@ pub fn ToolEditForm() -> impl IntoView {
                             MockStrategyType::Pattern => "pattern",
                             MockStrategyType::LLM => "llm",
                             MockStrategyType::Database => "database",
+                            MockStrategyType::DataLakeCrud => "data_lake_crud",
                         };
                         set_mock_strategy.set(strategy.to_string());
 
@@ -1630,8 +1664,15 @@ pub fn ToolEditForm() -> impl IntoView {
                             }
                         }
                         if let Some(db) = &mock.database {
-                            set_mock_db_url.set(db.url.clone());
-                            set_mock_db_query.set(db.query.clone());
+                            mock_db_url.set(db.url.clone());
+                            mock_db_query.set(db.query.clone());
+                            mock_db_type.set(db.db_type.clone());
+                            if let Some(df) = &db.datafusion {
+                                mock_datafusion_config.set(df.clone());
+                            }
+                        }
+                        if let Some(data_lake_crud) = &mock.data_lake_crud {
+                            mock_data_lake_crud_config.set(data_lake_crud.clone());
                         }
                     }
                     set_has_loaded.set(true);
@@ -1660,6 +1701,7 @@ pub fn ToolEditForm() -> impl IntoView {
             "pattern" => MockStrategyType::Pattern,
             "llm" => MockStrategyType::LLM,
             "database" => MockStrategyType::Database,
+            "data_lake_crud" => MockStrategyType::DataLakeCrud,
             _ => return None,
         };
 
@@ -1721,11 +1763,22 @@ pub fn ToolEditForm() -> impl IntoView {
                 });
             }
             "database" => {
+                let db_type_val = mock_db_type.get();
+                let datafusion_cfg = if db_type_val == DatabaseType::DataFusion {
+                    Some(mock_datafusion_config.get())
+                } else {
+                    None
+                };
                 config.database = Some(MockDatabaseConfig {
                     url: mock_db_url.get(),
                     query: mock_db_query.get(),
                     params: vec![],
+                    db_type: db_type_val,
+                    datafusion: datafusion_cfg,
                 });
+            }
+            "data_lake_crud" => {
+                config.data_lake_crud = Some(mock_data_lake_crud_config.get());
             }
             _ => {}
         }
@@ -1997,6 +2050,7 @@ pub fn ToolEditForm() -> impl IntoView {
                             <option value="pattern">"Pattern (Regex)"</option>
                             <option value="llm">"LLM (AI Generated)"</option>
                             <option value="database">"Database Query"</option>
+                            <option value="data_lake_crud">"Data Lake CRUD"</option>
                         </select>
                         <p class="mt-1 text-xs text-gray-500">"Choose how the tool response should be generated"</p>
                     </div>
@@ -2303,37 +2357,24 @@ pub fn ToolEditForm() -> impl IntoView {
                                             </div>
                                         }.into_any(),
                                         "database" => view! {
-                                            <div class="space-y-4">
-                                                <div>
-                                                    <label class="block text-sm font-medium text-gray-700 mb-1">"Database URL *"</label>
-                                                    <input
-                                                        type="text"
-                                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 font-mono"
-                                                        placeholder="postgres://user:pass@host/db"
-                                                        prop:value=move || mock_db_url.get()
-                                                        on:input=move |ev| {
-                                                            let target = ev.target().unwrap();
-                                                            let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
-                                                            set_mock_db_url.set(input.value());
-                                                        }
-                                                    />
-                                                </div>
-                                                <div>
-                                                    <label class="block text-sm font-medium text-gray-700 mb-1">"SQL Query *"</label>
-                                                    <textarea
-                                                        rows=4
-                                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 font-mono text-sm"
-                                                        placeholder="SELECT * FROM results WHERE query = $1"
-                                                        prop:value=move || mock_db_query.get()
-                                                        on:input=move |ev| {
-                                                            let target = ev.target().unwrap();
-                                                            let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
-                                                            set_mock_db_query.set(textarea.value());
-                                                        }
-                                                    />
-                                                    <p class="mt-1 text-xs text-gray-500">"Use $1, $2, etc. for parameters from tool input"</p>
-                                                </div>
-                                            </div>
+                                            <DatabaseStrategyEditor
+                                                db_type=mock_db_type
+                                                db_url=mock_db_url
+                                                db_query=mock_db_query
+                                                datafusion_config=mock_datafusion_config
+                                                data_lakes=data_lakes_signal
+                                            />
+                                        }.into_any(),
+                                        "data_lake_crud" => view! {
+                                            <DataLakeCrudEditor
+                                                config=mock_data_lake_crud_config
+                                                on_populate_input_schema=Callback::new(move |schema| {
+                                                    set_input_schema.set(schema);
+                                                })
+                                                on_populate_output_schema=Callback::new(move |schema| {
+                                                    set_output_schema.set(schema);
+                                                })
+                                            />
                                         }.into_any(),
                                         _ => view! { <div></div> }.into_any(),
                                     }

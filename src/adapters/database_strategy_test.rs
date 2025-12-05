@@ -73,10 +73,13 @@ async fn test_generate_database_sqlite() {
             url: db_url.clone(),
             query: "SELECT name FROM users WHERE id = ?".to_string(),
             params: vec!["user_id".to_string()],
+            db_type: crate::config::DatabaseType::Sqlite,
+            datafusion: None,
         }),
         faker_schema: None,
+        data_lake_crud: None,
     };
-    
+
     let args = json!({ "user_id": 1 });
 
     let result = handler.generate(&config, Some(&args)).await;

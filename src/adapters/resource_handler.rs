@@ -71,6 +71,103 @@ impl InMemoryResourceHandler {
         resolved
     }
 
+    /// Try to match a resolved URI against resource templates and extract arguments
+    /// Returns the matched template config and extracted arguments as JSON
+    async fn match_uri_to_template(&self, uri: &str) -> Option<(ResourceTemplateConfig, Value)> {
+        let settings = self.settings.read().await;
+
+        for template in &settings.resource_templates {
+            if let Some(args) = Self::extract_template_args(&template.uri_template, uri) {
+                return Some((template.clone(), args));
+            }
+        }
+
+        None
+    }
+
+    /// Extract arguments from a URI by matching against a template pattern
+    /// Template: "file://countries/{country_code}/info"
+    /// URI: "file://countries/us/info"
+    /// Returns: {"country_code": "us"}
+    pub(crate) fn extract_template_args(template: &str, uri: &str) -> Option<Value> {
+        // Parse template into segments (literal parts and placeholders)
+        let mut template_parts: Vec<TemplatePart> = Vec::new();
+        let mut current_pos = 0;
+
+        while current_pos < template.len() {
+            if let Some(start) = template[current_pos..].find('{') {
+                let abs_start = current_pos + start;
+                // Add literal part before placeholder
+                if abs_start > current_pos {
+                    template_parts.push(TemplatePart::Literal(
+                        template[current_pos..abs_start].to_string(),
+                    ));
+                }
+                // Find end of placeholder
+                if let Some(end) = template[abs_start..].find('}') {
+                    let abs_end = abs_start + end;
+                    let placeholder_name = &template[abs_start + 1..abs_end];
+                    template_parts.push(TemplatePart::Placeholder(placeholder_name.to_string()));
+                    current_pos = abs_end + 1;
+                } else {
+                    // Malformed template - unclosed brace
+                    return None;
+                }
+            } else {
+                // Rest is literal
+                template_parts.push(TemplatePart::Literal(template[current_pos..].to_string()));
+                break;
+            }
+        }
+
+        // Now try to match URI against template parts
+        let mut uri_pos = 0;
+        let mut args = serde_json::Map::new();
+
+        for (i, part) in template_parts.iter().enumerate() {
+            match part {
+                TemplatePart::Literal(lit) => {
+                    // URI must have this literal at current position
+                    if !uri[uri_pos..].starts_with(lit) {
+                        return None;
+                    }
+                    uri_pos += lit.len();
+                }
+                TemplatePart::Placeholder(name) => {
+                    // Find next literal to know where placeholder value ends
+                    let end_pos = if i + 1 < template_parts.len() {
+                        if let TemplatePart::Literal(next_lit) = &template_parts[i + 1] {
+                            // Find next literal in URI
+                            uri[uri_pos..].find(next_lit.as_str()).map(|p| uri_pos + p)
+                        } else {
+                            // Next is another placeholder - match until /
+                            uri[uri_pos..].find('/').map(|p| uri_pos + p)
+                        }
+                    } else {
+                        // Last part - take rest of URI
+                        Some(uri.len())
+                    };
+
+                    let end = end_pos?;
+                    if end <= uri_pos {
+                        return None; // Empty placeholder value
+                    }
+
+                    let value = &uri[uri_pos..end];
+                    args.insert(name.clone(), Value::String(value.to_string()));
+                    uri_pos = end;
+                }
+            }
+        }
+
+        // URI must be fully consumed
+        if uri_pos != uri.len() {
+            return None;
+        }
+
+        Some(Value::Object(args))
+    }
+
     /// Handle data lake resource URIs (datalake://{lake}/{schema})
     async fn get_data_lake_resource(&self, uri: &str) -> Result<crate::domain::ResourceReadResult> {
         let file_storage = self.file_storage.as_ref()
@@ -100,6 +197,12 @@ impl InMemoryResourceHandler {
             content,
         })
     }
+}
+
+/// Helper enum for template parsing
+enum TemplatePart {
+    Literal(String),
+    Placeholder(String),
 }
 
 #[async_trait]
@@ -219,6 +322,8 @@ impl ResourcePort for InMemoryResourceHandler {
     }
 
     async fn get_resource(&self, uri: &str) -> Result<crate::domain::ResourceReadResult> {
+        tracing::debug!("get_resource called with uri: {}", uri);
+
         // Handle datalake:// URIs
         if uri.starts_with("datalake://") {
             return self.get_data_lake_resource(uri).await;
@@ -227,20 +332,98 @@ impl ResourcePort for InMemoryResourceHandler {
         if let Some(config) = self.find_resource_config(uri).await {
             let content = if let Some(mock_config) = &config.mock {
                 let result = self.mock_strategy.generate(mock_config, None).await?;
-                if let Some(s) = result.as_str() {
-                    s.to_string()
+
+                // Log result type and size for debugging
+                let (content_str, array_len) = if let Some(arr) = result.as_array() {
+                    let s = result.to_string();
+                    tracing::debug!(
+                        "Resource {} mock result: JSON array with {} elements, {} bytes",
+                        uri,
+                        arr.len(),
+                        s.len()
+                    );
+                    (s, Some(arr.len()))
+                } else if let Some(s) = result.as_str() {
+                    tracing::debug!(
+                        "Resource {} mock result: string, {} bytes",
+                        uri,
+                        s.len()
+                    );
+                    (s.to_string(), None)
                 } else {
-                    result.to_string()
+                    let s = result.to_string();
+                    let type_str = match &result {
+                        serde_json::Value::Null => "null",
+                        serde_json::Value::Bool(_) => "boolean",
+                        serde_json::Value::Number(_) => "number",
+                        serde_json::Value::Object(_) => "object",
+                        _ => "other",
+                    };
+                    tracing::debug!(
+                        "Resource {} mock result: {}, {} bytes",
+                        uri,
+                        type_str,
+                        s.len()
+                    );
+                    (s, None)
+                };
+
+                // Verify array wasn't truncated during serialization
+                if let Some(len) = array_len {
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content_str) {
+                        if let Some(parsed_arr) = parsed.as_array() {
+                            if parsed_arr.len() != len {
+                                tracing::warn!(
+                                    "Resource {} array length mismatch: original {} vs serialized {}",
+                                    uri, len, parsed_arr.len()
+                                );
+                            }
+                        }
+                    }
                 }
+
+                content_str
             } else if let Some(c) = &config.content {
                 c.clone()
             } else {
                 "".to_string()
             };
 
+            tracing::debug!("Resource {} returning {} bytes of content", uri, content.len());
+
             Ok(crate::domain::ResourceReadResult {
                 uri: config.uri.clone(),
                 mime_type: config.mime_type.clone(),
+                content,
+            })
+        } else if let Some((template_config, args)) = self.match_uri_to_template(uri).await {
+            // URI matches a resource template - execute it with extracted arguments
+            tracing::debug!(
+                "URI {} matched template {}, args: {}",
+                uri,
+                template_config.uri_template,
+                args
+            );
+
+            let content = if let Some(mock_config) = &template_config.mock {
+                let result = self.mock_strategy.generate(mock_config, Some(&args)).await?;
+                if let Some(s) = result.as_str() {
+                    s.to_string()
+                } else {
+                    result.to_string()
+                }
+            } else if let Some(c) = &template_config.content {
+                // Also resolve template variables in static content
+                Self::resolve_uri_template(c, Some(&args))
+            } else {
+                "".to_string()
+            };
+
+            tracing::debug!("Resource template {} returning {} bytes of content", uri, content.len());
+
+            Ok(crate::domain::ResourceReadResult {
+                uri: uri.to_string(),
+                mime_type: template_config.mime_type.clone(),
                 content,
             })
         } else {

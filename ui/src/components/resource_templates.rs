@@ -12,11 +12,13 @@ use std::collections::HashSet;
 use crate::api;
 use crate::types::{
     ResourceTemplate, MockConfig, MockStrategyType, StatefulConfig, StateOperation,
-    FileConfig, ScriptLang, LLMConfig, LLMProvider, MockDatabaseConfig,
+    FileConfig, ScriptLang, LLMConfig, LLMProvider, MockDatabaseConfig, DatabaseType,
+    DataFusionConfig, DataLake,
 };
 use crate::components::json_editor::JsonEditor;
 use crate::components::schema_editor::FullSchemaEditor;
 use crate::components::schema_form::{SchemaFormGenerator, SchemaFormMode};
+use crate::components::database_editor::DatabaseStrategyEditor;
 use crate::components::list_filter::{
     ListFilterBar, Pagination, TagBadges, TagInput,
     extract_tags, filter_items, paginate_items, total_pages,
@@ -654,8 +656,21 @@ pub fn ResourceTemplateForm() -> impl IntoView {
     let (mock_llm_model, set_mock_llm_model) = signal(String::new());
     let (mock_llm_api_key_env, set_mock_llm_api_key_env) = signal(String::new());
     let (mock_llm_system_prompt, set_mock_llm_system_prompt) = signal(String::new());
-    let (mock_db_url, set_mock_db_url) = signal(String::new());
-    let (mock_db_query, set_mock_db_query) = signal(String::new());
+    // Database strategy signals (RwSignals for DatabaseStrategyEditor)
+    let mock_db_url = RwSignal::new(String::new());
+    let mock_db_query = RwSignal::new(String::new());
+    let mock_db_type = RwSignal::new(DatabaseType::default());
+    let mock_datafusion_config = RwSignal::new(DataFusionConfig::default());
+
+    // Load data lakes for DataFusion selection
+    let data_lakes = LocalResource::new(move || {
+        async move {
+            api::list_data_lakes().await.unwrap_or_default()
+        }
+    });
+    let data_lakes_signal = Signal::derive(move || {
+        data_lakes.get().unwrap_or_default()
+    });
 
     let build_mock_config = move || -> Option<MockConfig> {
         let strategy = mock_strategy.get();
@@ -734,10 +749,18 @@ pub fn ResourceTemplateForm() -> impl IntoView {
                 });
             }
             "database" => {
+                let db_type_val = mock_db_type.get();
+                let datafusion_cfg = if db_type_val == DatabaseType::DataFusion {
+                    Some(mock_datafusion_config.get())
+                } else {
+                    None
+                };
                 config.database = Some(MockDatabaseConfig {
                     url: mock_db_url.get(),
                     query: mock_db_query.get(),
                     params: vec![],
+                    db_type: db_type_val,
+                    datafusion: datafusion_cfg,
                 });
             }
             _ => {}
@@ -844,8 +867,11 @@ pub fn ResourceTemplateForm() -> impl IntoView {
                     mock_llm_model=mock_llm_model set_mock_llm_model=set_mock_llm_model
                     mock_llm_api_key_env=mock_llm_api_key_env set_mock_llm_api_key_env=set_mock_llm_api_key_env
                     mock_llm_system_prompt=mock_llm_system_prompt set_mock_llm_system_prompt=set_mock_llm_system_prompt
-                    mock_db_url=mock_db_url set_mock_db_url=set_mock_db_url
-                    mock_db_query=mock_db_query set_mock_db_query=set_mock_db_query
+                    db_url=mock_db_url
+                    db_query=mock_db_query
+                    db_type=mock_db_type
+                    datafusion_config=mock_datafusion_config
+                    data_lakes=data_lakes_signal
                 />
 
                 <div class="mt-6 flex gap-3">
@@ -920,10 +946,17 @@ fn ResourceTemplateFormFields(
     set_mock_llm_api_key_env: WriteSignal<String>,
     mock_llm_system_prompt: ReadSignal<String>,
     set_mock_llm_system_prompt: WriteSignal<String>,
-    mock_db_url: ReadSignal<String>,
-    set_mock_db_url: WriteSignal<String>,
-    mock_db_query: ReadSignal<String>,
-    set_mock_db_query: WriteSignal<String>,
+    /// Database URL (RwSignal for DatabaseStrategyEditor)
+    db_url: RwSignal<String>,
+    /// Database query (RwSignal for DatabaseStrategyEditor)
+    db_query: RwSignal<String>,
+    /// Database type (SQLite, PostgreSQL, MySQL, DataFusion)
+    db_type: RwSignal<DatabaseType>,
+    /// DataFusion configuration
+    datafusion_config: RwSignal<DataFusionConfig>,
+    /// Available data lakes for DataFusion selection
+    #[prop(into)]
+    data_lakes: Signal<Vec<DataLake>>,
 ) -> impl IntoView {
     let (active_tab, set_active_tab) = signal(ResourceTemplateFormTab::Basic);
 
@@ -1134,8 +1167,11 @@ fn ResourceTemplateFormFields(
                     llm_model=mock_llm_model set_llm_model=set_mock_llm_model
                     llm_api_key_env=mock_llm_api_key_env set_llm_api_key_env=set_mock_llm_api_key_env
                     llm_system_prompt=mock_llm_system_prompt set_llm_system_prompt=set_mock_llm_system_prompt
-                    db_url=mock_db_url set_db_url=set_mock_db_url
-                    db_query=mock_db_query set_db_query=set_mock_db_query
+                    db_url=db_url
+                    db_query=db_query
+                    db_type=db_type
+                    datafusion_config=datafusion_config
+                    data_lakes=data_lakes
                     output_schema=output_schema
                 />
             </div>
@@ -1176,10 +1212,17 @@ fn MockStrategyFields(
     set_llm_api_key_env: WriteSignal<String>,
     llm_system_prompt: ReadSignal<String>,
     set_llm_system_prompt: WriteSignal<String>,
-    db_url: ReadSignal<String>,
-    set_db_url: WriteSignal<String>,
-    db_query: ReadSignal<String>,
-    set_db_query: WriteSignal<String>,
+    /// Database URL (RwSignal for DatabaseStrategyEditor)
+    db_url: RwSignal<String>,
+    /// Database query (RwSignal for DatabaseStrategyEditor)
+    db_query: RwSignal<String>,
+    /// Database type
+    db_type: RwSignal<DatabaseType>,
+    /// DataFusion configuration
+    datafusion_config: RwSignal<DataFusionConfig>,
+    /// Available data lakes
+    #[prop(into)]
+    data_lakes: Signal<Vec<DataLake>>,
     #[prop(optional)]
     output_schema: Option<ReadSignal<serde_json::Value>>,
 ) -> impl IntoView {
@@ -1492,36 +1535,13 @@ fn MockStrategyFields(
                     </div>
                 }.into_any(),
                 "database" => view! {
-                    <div class="space-y-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">"Database URL *"</label>
-                            <input
-                                type="text"
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono"
-                                placeholder="postgres://user:pass@host/db"
-                                prop:value=move || db_url.get()
-                                on:input=move |ev| {
-                                    let target = ev.target().unwrap();
-                                    let input: web_sys::HtmlInputElement = target.dyn_into().unwrap();
-                                    set_db_url.set(input.value());
-                                }
-                            />
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">"SQL Query *"</label>
-                            <textarea
-                                rows=4
-                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 font-mono text-sm"
-                                placeholder="SELECT * FROM users WHERE id = $1"
-                                prop:value=move || db_query.get()
-                                on:input=move |ev| {
-                                    let target = ev.target().unwrap();
-                                    let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
-                                    set_db_query.set(textarea.value());
-                                }
-                            />
-                        </div>
-                    </div>
+                    <DatabaseStrategyEditor
+                        db_type=db_type
+                        db_url=db_url
+                        db_query=db_query
+                        datafusion_config=datafusion_config
+                        data_lakes=data_lakes
+                    />
                 }.into_any(),
                 _ => view! { <div></div> }.into_any(),
             }
@@ -1571,8 +1591,21 @@ pub fn ResourceTemplateEditForm() -> impl IntoView {
     let (mock_llm_model, set_mock_llm_model) = signal(String::new());
     let (mock_llm_api_key_env, set_mock_llm_api_key_env) = signal(String::new());
     let (mock_llm_system_prompt, set_mock_llm_system_prompt) = signal(String::new());
-    let (mock_db_url, set_mock_db_url) = signal(String::new());
-    let (mock_db_query, set_mock_db_query) = signal(String::new());
+    // Database strategy signals (RwSignals for DatabaseStrategyEditor)
+    let mock_db_url = RwSignal::new(String::new());
+    let mock_db_query = RwSignal::new(String::new());
+    let mock_db_type = RwSignal::new(DatabaseType::default());
+    let mock_datafusion_config = RwSignal::new(DataFusionConfig::default());
+
+    // Load data lakes for DataFusion selection
+    let data_lakes = LocalResource::new(move || {
+        async move {
+            api::list_data_lakes().await.unwrap_or_default()
+        }
+    });
+    let data_lakes_signal = Signal::derive(move || {
+        data_lakes.get().unwrap_or_default()
+    });
 
     // Load existing template (only once)
     Effect::new(move |_| {
@@ -1617,6 +1650,7 @@ pub fn ResourceTemplateEditForm() -> impl IntoView {
                             MockStrategyType::Pattern => "pattern",
                             MockStrategyType::LLM => "llm",
                             MockStrategyType::Database => "database",
+                            MockStrategyType::DataLakeCrud => "data_lake_crud",
                         };
                         set_mock_strategy.set(strategy.to_string());
 
@@ -1672,8 +1706,12 @@ pub fn ResourceTemplateEditForm() -> impl IntoView {
                             }
                         }
                         if let Some(db) = &mock.database {
-                            set_mock_db_url.set(db.url.clone());
-                            set_mock_db_query.set(db.query.clone());
+                            mock_db_url.set(db.url.clone());
+                            mock_db_query.set(db.query.clone());
+                            mock_db_type.set(db.db_type.clone());
+                            if let Some(df) = &db.datafusion {
+                                mock_datafusion_config.set(df.clone());
+                            }
                         }
                     }
                     set_has_loaded.set(true);
@@ -1763,10 +1801,18 @@ pub fn ResourceTemplateEditForm() -> impl IntoView {
                 });
             }
             "database" => {
+                let db_type_val = mock_db_type.get();
+                let datafusion_cfg = if db_type_val == DatabaseType::DataFusion {
+                    Some(mock_datafusion_config.get())
+                } else {
+                    None
+                };
                 config.database = Some(MockDatabaseConfig {
                     url: mock_db_url.get(),
                     query: mock_db_query.get(),
                     params: vec![],
+                    db_type: db_type_val,
+                    datafusion: datafusion_cfg,
                 });
             }
             _ => {}
@@ -1889,8 +1935,11 @@ pub fn ResourceTemplateEditForm() -> impl IntoView {
                     mock_llm_model=mock_llm_model set_mock_llm_model=set_mock_llm_model
                     mock_llm_api_key_env=mock_llm_api_key_env set_mock_llm_api_key_env=set_mock_llm_api_key_env
                     mock_llm_system_prompt=mock_llm_system_prompt set_mock_llm_system_prompt=set_mock_llm_system_prompt
-                    mock_db_url=mock_db_url set_mock_db_url=set_mock_db_url
-                    mock_db_query=mock_db_query set_mock_db_query=set_mock_db_query
+                    db_url=mock_db_url
+                    db_query=mock_db_query
+                    db_type=mock_db_type
+                    datafusion_config=mock_datafusion_config
+                    data_lakes=data_lakes_signal
                 />
 
                 <div class="mt-6 flex gap-3">

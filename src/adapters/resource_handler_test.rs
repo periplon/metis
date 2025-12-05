@@ -69,6 +69,7 @@ use tokio::sync::RwLock;
             llm: None,
             database: None,
             faker_schema: None,
+            data_lake_crud: None,
         }),
         tags: vec![],
     }];
@@ -183,4 +184,44 @@ use tokio::sync::RwLock;
     assert!(result.is_ok());
     let list = result.unwrap();
     assert_eq!(list.len(), 2);
+}
+
+#[test]
+fn test_extract_template_args_simple() {
+    let template = "file://countries/{country_code}/info";
+    let uri = "file://countries/us/info";
+    let result = InMemoryResourceHandler::extract_template_args(template, uri);
+    assert!(result.is_some());
+    let args = result.unwrap();
+    assert_eq!(args.get("country_code").and_then(|v| v.as_str()), Some("us"));
+}
+
+#[test]
+fn test_extract_template_args_multiple() {
+    let template = "db://tables/{schema}/{table}/row/{id}";
+    let uri = "db://tables/public/users/row/123";
+    let result = InMemoryResourceHandler::extract_template_args(template, uri);
+    assert!(result.is_some());
+    let args = result.unwrap();
+    assert_eq!(args.get("schema").and_then(|v| v.as_str()), Some("public"));
+    assert_eq!(args.get("table").and_then(|v| v.as_str()), Some("users"));
+    assert_eq!(args.get("id").and_then(|v| v.as_str()), Some("123"));
+}
+
+#[test]
+fn test_extract_template_args_no_match() {
+    let template = "file://countries/{country_code}/info";
+    let uri = "file://cities/ny/info";
+    let result = InMemoryResourceHandler::extract_template_args(template, uri);
+    assert!(result.is_none());
+}
+
+#[test]
+fn test_extract_template_args_no_placeholders() {
+    let template = "file://static/resource";
+    let uri = "file://static/resource";
+    let result = InMemoryResourceHandler::extract_template_args(template, uri);
+    assert!(result.is_some());
+    let args = result.unwrap();
+    assert!(args.as_object().unwrap().is_empty());
 }

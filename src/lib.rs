@@ -149,8 +149,13 @@ pub async fn create_app(
         // MCP protocol endpoint using rmcp streamable HTTP transport
         .nest_service("/mcp", mcp_service);
 
-    // Create mock strategy handler for test endpoints
-    let mock_strategy = Arc::new(MockStrategyHandler::new(state_manager.clone()));
+    // Create mock strategy handler for test endpoints (with DataFusion support for scripts)
+    let mock_strategy = Arc::new(MockStrategyHandler::new_with_datafusion(
+        state_manager.clone(),
+        datafusion.clone(),
+        Some(settings.clone()),
+        file_storage.clone(),
+    ));
 
     // Try to create agent handler if agents are configured
     let agent_handler: Option<Arc<dyn AgentPort>> = {
@@ -255,6 +260,7 @@ pub async fn create_app(
         .route("/data-lakes/:name/query", post(data_lake_handler::execute_query))
         .route("/data-lakes/:name/files", get(data_lake_handler::list_files))
         .route("/data-lakes/:name/sync", post(data_lake_handler::sync_to_files))
+        .route("/data-lakes/:name/schema-info/:schema_name", get(data_lake_handler::get_schema_info))
         // LLM models discovery
         .route("/llm/models/:provider", get(api_handler::fetch_llm_models))
         // Database & Version History

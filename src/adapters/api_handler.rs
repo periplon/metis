@@ -1081,6 +1081,20 @@ pub async fn create_resource(
         // Use URI as the name for resources
         match store.archetypes().create(ArchetypeType::Resource.as_str(), &dto.uri, &definition).await {
             Ok(()) => {
+                // CRITICAL: Also add to in-memory settings so MCP handlers see the new resource
+                {
+                    let mut settings = state.settings.write().await;
+                    settings.resources.push(crate::config::ResourceConfig {
+                        uri: dto.uri.clone(),
+                        name: dto.name.clone(),
+                        description: dto.description.clone(),
+                        mime_type: dto.mime_type.clone(),
+                        tags: dto.tags.clone(),
+                        output_schema: dto.output_schema.clone(),
+                        content: dto.content.clone(),
+                        mock: dto.mock.clone(),
+                    });
+                }
                 // Auto-sync to S3 if configured
                 let safe_name = sanitize_uri_for_s3(&dto.uri);
                 if let Err(e) = sync_item_to_s3_if_active(&state, "resources", &safe_name, &dto).await {
@@ -1160,6 +1174,19 @@ pub async fn update_resource(
 
         match store.archetypes().update(ArchetypeType::Resource.as_str(), &decoded_uri, &definition, None).await {
             Ok(_) => {
+                // CRITICAL: Also update in-memory settings so MCP handlers see the change
+                {
+                    let mut settings = state.settings.write().await;
+                    if let Some(resource) = settings.resources.iter_mut().find(|r| r.uri == decoded_uri) {
+                        resource.name = dto.name.clone();
+                        resource.description = dto.description.clone();
+                        resource.mime_type = dto.mime_type.clone();
+                        resource.tags = dto.tags.clone();
+                        resource.output_schema = dto.output_schema.clone();
+                        resource.content = dto.content.clone();
+                        resource.mock = dto.mock.clone();
+                    }
+                }
                 // Auto-sync to S3 if configured
                 let safe_name = sanitize_uri_for_s3(&dto.uri);
                 if let Err(e) = sync_item_to_s3_if_active(&state, "resources", &safe_name, &dto).await {
@@ -1226,6 +1253,11 @@ pub async fn delete_resource(
     if let Some(store) = &state.data_store {
         match store.archetypes().delete(ArchetypeType::Resource.as_str(), &decoded_uri).await {
             Ok(true) => {
+                // CRITICAL: Also remove from in-memory settings so MCP handlers don't see deleted resource
+                {
+                    let mut settings = state.settings.write().await;
+                    settings.resources.retain(|r| r.uri != decoded_uri);
+                }
                 // Auto-delete from S3 if configured
                 let safe_name = sanitize_uri_for_s3(&decoded_uri);
                 if let Err(e) = delete_item_from_s3_if_active(&state, "resources", &safe_name).await {
@@ -1373,6 +1405,11 @@ pub async fn create_tool(
 
         match store.archetypes().create(ArchetypeType::Tool.as_str(), &dto.name, &definition).await {
             Ok(()) => {
+                // CRITICAL: Also add to in-memory settings so MCP handlers see the new tool
+                {
+                    let mut settings = state.settings.write().await;
+                    settings.tools.push(ToolConfig::from(dto.clone()));
+                }
                 // Auto-sync to S3 if configured
                 if let Err(e) = sync_item_to_s3_if_active(&state, "tools", &dto.name, &dto).await {
                     tracing::warn!("Failed to sync tool to S3: {}", e);
@@ -1447,6 +1484,14 @@ pub async fn update_tool(
 
         match store.archetypes().update(ArchetypeType::Tool.as_str(), &name, &definition, None).await {
             Ok(_) => {
+                // CRITICAL: Also update in-memory settings so MCP handlers see the change
+                {
+                    let mut settings = state.settings.write().await;
+                    // Replace the tool config entirely with the new one
+                    if let Some(idx) = settings.tools.iter().position(|t| t.name == name) {
+                        settings.tools[idx] = ToolConfig::from(dto.clone());
+                    }
+                }
                 // Auto-sync to S3 if configured
                 if let Err(e) = sync_item_to_s3_if_active(&state, "tools", &dto.name, &dto).await {
                     tracing::warn!("Failed to sync tool to S3: {}", e);
@@ -1506,6 +1551,11 @@ pub async fn delete_tool(
     if let Some(store) = &state.data_store {
         match store.archetypes().delete(ArchetypeType::Tool.as_str(), &name).await {
             Ok(true) => {
+                // CRITICAL: Also remove from in-memory settings so MCP handlers don't see deleted tool
+                {
+                    let mut settings = state.settings.write().await;
+                    settings.tools.retain(|t| t.name != name);
+                }
                 // Auto-delete from S3 if configured
                 if let Err(e) = delete_item_from_s3_if_active(&state, "tools", &name).await {
                     tracing::warn!("Failed to delete tool from S3: {}", e);
@@ -1645,6 +1695,11 @@ pub async fn create_prompt(
 
         match store.archetypes().create(ArchetypeType::Prompt.as_str(), &dto.name, &definition).await {
             Ok(()) => {
+                // CRITICAL: Also add to in-memory settings so MCP handlers see the new prompt
+                {
+                    let mut settings = state.settings.write().await;
+                    settings.prompts.push(PromptConfig::from(dto.clone()));
+                }
                 // Auto-sync to S3 if configured
                 if let Err(e) = sync_item_to_s3_if_active(&state, "prompts", &dto.name, &dto).await {
                     tracing::warn!("Failed to sync prompt to S3: {}", e);
@@ -1717,6 +1772,14 @@ pub async fn update_prompt(
 
         match store.archetypes().update(ArchetypeType::Prompt.as_str(), &name, &definition, None).await {
             Ok(_) => {
+                // CRITICAL: Also update in-memory settings so MCP handlers see the change
+                {
+                    let mut settings = state.settings.write().await;
+                    // Replace the prompt config entirely with the new one
+                    if let Some(idx) = settings.prompts.iter().position(|p| p.name == name) {
+                        settings.prompts[idx] = PromptConfig::from(dto.clone());
+                    }
+                }
                 // Auto-sync to S3 if configured
                 if let Err(e) = sync_item_to_s3_if_active(&state, "prompts", &dto.name, &dto).await {
                     tracing::warn!("Failed to sync prompt to S3: {}", e);
@@ -1788,6 +1851,11 @@ pub async fn delete_prompt(
     if let Some(store) = &state.data_store {
         match store.archetypes().delete(ArchetypeType::Prompt.as_str(), &name).await {
             Ok(true) => {
+                // CRITICAL: Also remove from in-memory settings so MCP handlers don't see deleted prompt
+                {
+                    let mut settings = state.settings.write().await;
+                    settings.prompts.retain(|p| p.name != name);
+                }
                 // Auto-delete from S3 if configured
                 if let Err(e) = delete_item_from_s3_if_active(&state, "prompts", &name).await {
                     tracing::warn!("Failed to delete prompt from S3: {}", e);
@@ -2213,6 +2281,11 @@ pub async fn create_resource_template(
         // Use uri_template as the name
         match store.archetypes().create(ArchetypeType::ResourceTemplate.as_str(), &dto.uri_template, &definition).await {
             Ok(()) => {
+                // CRITICAL: Also add to in-memory settings so MCP handlers see the new template
+                {
+                    let mut settings = state.settings.write().await;
+                    settings.resource_templates.push(ResourceTemplateConfig::from(dto.clone()));
+                }
                 // Auto-sync to S3 if configured
                 let safe_name = sanitize_uri_template_for_s3(&dto.uri_template);
                 if let Err(e) = sync_item_to_s3_if_active(&state, "resource_templates", &safe_name, &dto).await {
@@ -2299,6 +2372,20 @@ pub async fn update_resource_template(
 
         match store.archetypes().update(ArchetypeType::ResourceTemplate.as_str(), &decoded_uri, &definition, None).await {
             Ok(_) => {
+                // CRITICAL: Also update in-memory settings so MCP handlers see the change
+                {
+                    let mut settings = state.settings.write().await;
+                    if let Some(template) = settings.resource_templates.iter_mut().find(|r| r.uri_template == decoded_uri) {
+                        template.name = dto.name.clone();
+                        template.description = dto.description.clone();
+                        template.mime_type = dto.mime_type.clone();
+                        template.tags = dto.tags.clone();
+                        template.input_schema = dto.input_schema.clone();
+                        template.output_schema = dto.output_schema.clone();
+                        template.content = dto.content.clone();
+                        template.mock = dto.mock.clone();
+                    }
+                }
                 // Auto-sync to S3 if configured
                 let safe_name = sanitize_uri_template_for_s3(&dto.uri_template);
                 if let Err(e) = sync_item_to_s3_if_active(&state, "resource_templates", &safe_name, &dto).await {
@@ -2374,6 +2461,11 @@ pub async fn delete_resource_template(
     if let Some(store) = &state.data_store {
         match store.archetypes().delete(ArchetypeType::ResourceTemplate.as_str(), &decoded_uri).await {
             Ok(true) => {
+                // CRITICAL: Also remove from in-memory settings so MCP handlers don't see deleted template
+                {
+                    let mut settings = state.settings.write().await;
+                    settings.resource_templates.retain(|r| r.uri_template != decoded_uri);
+                }
                 // Auto-delete from S3 if configured
                 let safe_name = sanitize_uri_template_for_s3(&decoded_uri);
                 if let Err(e) = delete_item_from_s3_if_active(&state, "resource_templates", &safe_name).await {

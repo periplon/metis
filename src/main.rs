@@ -171,18 +171,7 @@ async fn main() -> anyhow::Result<()> {
     // Initialize state manager
     let state_manager = Arc::new(StateManager::new());
 
-    // Initialize mock strategy handler
-    let mock_strategy = Arc::new(MockStrategyHandler::new(state_manager.clone()));
-
-    // Initialize handlers (file_storage will be added later after secrets are loaded)
-    let resource_handler = Arc::new(InMemoryResourceHandler::new(
-        settings.clone(),
-        mock_strategy.clone(),
-    ));
-    let tool_handler = Arc::new(BasicToolHandler::new(
-        settings.clone(),
-        mock_strategy.clone(),
-    ));
+    // Initialize handlers that don't depend on mock_strategy yet
     let prompt_handler = Arc::new(InMemoryPromptHandler::new(settings.clone()));
     let health_handler = Arc::new(metis::adapters::health_handler::HealthHandler::new(
         settings.clone(),
@@ -246,6 +235,32 @@ async fn main() -> anyhow::Result<()> {
         } else {
             None
         };
+
+    // Initialize mock strategy handler (after DataFusion so scripts can query data lakes)
+    let mock_strategy = Arc::new(MockStrategyHandler::new_with_datafusion(
+        state_manager.clone(),
+        datafusion.clone(),
+        Some(settings.clone()),
+        file_storage.clone(),
+    ));
+
+    // Initialize handlers that depend on mock_strategy
+    let resource_handler: Arc<InMemoryResourceHandler> = if let Some(fs) = &file_storage {
+        Arc::new(InMemoryResourceHandler::with_file_storage(
+            settings.clone(),
+            mock_strategy.clone(),
+            Arc::clone(fs),
+        ))
+    } else {
+        Arc::new(InMemoryResourceHandler::new(
+            settings.clone(),
+            mock_strategy.clone(),
+        ))
+    };
+    let tool_handler = Arc::new(BasicToolHandler::new(
+        settings.clone(),
+        mock_strategy.clone(),
+    ));
 
     // Create agent handler with secrets support
     let agent_handler = metis::agents::handler::AgentHandler::new_with_secrets(
