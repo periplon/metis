@@ -23,6 +23,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tera::{Context, Tera};
 use tokio::sync::RwLock;
+use crate::adapters::secrets::SharedSecretsStore;
 
 pub struct MockStrategyHandler {
     _tera: Tera,
@@ -31,11 +32,12 @@ pub struct MockStrategyHandler {
     datafusion_handler: Option<Arc<DataFusionHandler>>,
     settings: Option<Arc<RwLock<Settings>>>,
     file_storage: Option<Arc<FileStorageHandler>>,
+    secrets: Option<SharedSecretsStore>,
 }
 
 impl MockStrategyHandler {
     pub fn new(state_manager: Arc<StateManager>) -> Self {
-        Self::new_with_datafusion(state_manager, None, None, None)
+        Self::new_with_datafusion(state_manager, None, None, None, None)
     }
 
     pub fn new_with_datafusion(
@@ -43,6 +45,7 @@ impl MockStrategyHandler {
         datafusion_handler: Option<Arc<DataFusionHandler>>,
         settings: Option<Arc<RwLock<Settings>>>,
         file_storage: Option<Arc<FileStorageHandler>>,
+        secrets: Option<SharedSecretsStore>,
     ) -> Self {
         Self {
             _tera: Tera::default(),
@@ -51,6 +54,7 @@ impl MockStrategyHandler {
             datafusion_handler,
             settings,
             file_storage,
+            secrets,
         }
     }
 
@@ -505,16 +509,26 @@ impl MockStrategyHandler {
         let llm_config = config.llm.as_ref()
             .ok_or_else(|| anyhow::anyhow!("LLM config not provided"))?;
 
-        // Get API key from environment variable (optional for Ollama)
+        // Get API key from secrets store or environment variable (optional for Ollama)
         let api_key = if let Some(env_var) = &llm_config.api_key_env {
-            std::env::var(env_var).ok()
+            // First try secrets store, then fall back to environment variable
+            if let Some(secrets) = &self.secrets {
+                secrets.get_or_env(env_var).await
+            } else {
+                std::env::var(env_var).ok()
+            }
         } else {
             None
         };
 
         // API key is required for non-Ollama providers
         if llm_config.provider != crate::config::LLMProvider::Ollama && api_key.is_none() {
-            return Err(anyhow::anyhow!("API key environment variable not set for {:?}", llm_config.provider));
+            let env_var = llm_config.api_key_env.as_deref().unwrap_or("(not configured)");
+            return Err(anyhow::anyhow!(
+                "API key not found for {:?}. Set '{}' via UI Secrets or environment variable.",
+                llm_config.provider,
+                env_var
+            ));
         }
 
         // Extract prompt from args

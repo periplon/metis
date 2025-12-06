@@ -155,6 +155,7 @@ pub async fn create_app(
         datafusion.clone(),
         Some(settings.clone()),
         file_storage.clone(),
+        Some(secrets_store.clone()),
     ));
 
     // Try to create agent handler if agents are configured

@@ -242,6 +242,7 @@ async fn main() -> anyhow::Result<()> {
         datafusion.clone(),
         Some(settings.clone()),
         file_storage.clone(),
+        Some(secrets_store.clone()),
     ));
 
     // Initialize handlers that depend on mock_strategy
