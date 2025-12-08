@@ -2,6 +2,14 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.43.1 - 2025-12-08
+#### Bug Fixes
+- use secrets store for LLM mock strategy API keys - (200ff13) - Joan Marc Carbo Arnau
+#### Miscellaneous Chores
+- **(ui)** rebuild dist artifacts - (b19aed1) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.43.0 - 2025-12-05
 #### Features
 - **(ui)** enhance LLM mock strategy with all providers and dynamic model selection - (1c7f7fe) - Joan Marc Carbo Arnau
