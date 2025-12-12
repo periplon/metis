@@ -62,6 +62,9 @@ pub struct AgentConfig {
     /// Max tokens override (if not set, uses LLM config default)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
+    /// Output format: "full" (default) includes metadata, "raw" returns only output JSON
+    #[serde(default)]
+    pub output_format: OutputFormat,
 }
 
 fn default_input_schema() -> Value {
@@ -191,6 +194,17 @@ pub enum MemoryBackend {
     File,
     /// Store in database
     Database,
+}
+
+/// Output format for agent responses
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputFormat {
+    /// Full response with metadata (execution_time_ms, iterations, etc.)
+    #[default]
+    Full,
+    /// Raw JSON output only (just the output field value)
+    Raw,
 }
 
 /// Memory management strategies

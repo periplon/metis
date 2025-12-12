@@ -616,6 +616,20 @@ pub struct Agent {
     pub temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
+    /// Output format: "full" (default) includes metadata, "raw" returns only output JSON
+    #[serde(default)]
+    pub output_format: OutputFormat,
+}
+
+/// Output format for agent responses
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputFormat {
+    /// Full response with metadata (execution_time_ms, iterations, etc.)
+    #[default]
+    Full,
+    /// Raw JSON output only (just the output field value)
+    Raw,
 }
 
 fn default_max_iterations() -> u32 {

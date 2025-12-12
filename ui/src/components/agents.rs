@@ -9,7 +9,7 @@ use leptos_router::hooks::use_params_map;
 use std::collections::HashSet;
 use crate::api;
 use crate::api::LlmModelInfo;
-use crate::types::{Agent, AgentType, AgentLlmConfig, AgentLlmProvider, MemoryConfig, MemoryBackend, MemoryStrategy};
+use crate::types::{Agent, AgentType, AgentLlmConfig, AgentLlmProvider, MemoryConfig, MemoryBackend, MemoryStrategy, OutputFormat};
 use crate::components::schema_editor::FullSchemaEditor;
 use crate::components::artifact_selector::{
     ArtifactSelector, ArtifactItem, SelectionMode,
@@ -1678,6 +1678,7 @@ pub fn AgentForm() -> impl IntoView {
     let (description, set_description) = signal(String::new());
     let tags = RwSignal::new(Vec::<String>::new());
     let (agent_type, set_agent_type) = signal(AgentType::SingleTurn);
+    let (output_format, set_output_format) = signal(OutputFormat::Full);
     let (provider, set_provider) = signal(AgentLlmProvider::OpenAI);
     let (model, set_model) = signal(get_default_model(&AgentLlmProvider::OpenAI).to_string());
     let (api_key_env, set_api_key_env) = signal(get_default_api_key_env(&AgentLlmProvider::OpenAI).to_string());
@@ -1877,6 +1878,7 @@ pub fn AgentForm() -> impl IntoView {
             timeout_seconds: 300,
             temperature: None,
             max_tokens: None,
+            output_format: output_format.get(),
             input_schema: input_schema_val,
             output_schema: output_schema_opt,
         };
@@ -2076,6 +2078,27 @@ pub fn AgentForm() -> impl IntoView {
                                 <option value="react" selected=move || agent_type.get() == AgentType::ReAct>"ReAct"</option>
                             </select>
                         </div>
+                    </div>
+
+                    // Output Format selector
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">"Output Format"</label>
+                            <select
+                                class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                on:change=move |ev| {
+                                    set_output_format.set(match event_target_value(&ev).as_str() {
+                                        "raw" => OutputFormat::Raw,
+                                        _ => OutputFormat::Full,
+                                    });
+                                }
+                            >
+                                <option value="full" selected=move || output_format.get() == OutputFormat::Full>"Full (with metadata)"</option>
+                                <option value="raw" selected=move || output_format.get() == OutputFormat::Raw>"Raw (JSON output only)"</option>
+                            </select>
+                            <p class="mt-1 text-xs text-gray-500">"Raw returns only the output JSON, Full includes execution metadata"</p>
+                        </div>
+                        <div></div>
                     </div>
 
                     <div>
@@ -2566,6 +2589,7 @@ pub fn AgentEditForm() -> impl IntoView {
     let (description, set_description) = signal(String::new());
     let tags = RwSignal::new(Vec::<String>::new());
     let (agent_type, set_agent_type) = signal(AgentType::SingleTurn);
+    let (output_format, set_output_format) = signal(OutputFormat::Full);
     let (provider, set_provider) = signal(AgentLlmProvider::OpenAI);
     let (model, set_model) = signal(String::new());
     let (api_key_env, set_api_key_env) = signal(String::new());
@@ -2666,6 +2690,7 @@ pub fn AgentEditForm() -> impl IntoView {
                     set_description.set(agent.description.clone());
                     tags.set(agent.tags.clone());
                     set_agent_type.set(agent.agent_type.clone());
+                    set_output_format.set(agent.output_format.clone());
                     let loaded_provider = agent.llm.provider.clone();
                     set_provider.set(loaded_provider.clone());
                     set_model.set(agent.llm.model.clone());
@@ -2803,6 +2828,7 @@ pub fn AgentEditForm() -> impl IntoView {
             timeout_seconds: 300,
             temperature: None,
             max_tokens: None,
+            output_format: output_format.get(),
             input_schema: input_schema_val,
             output_schema: output_schema_opt,
         };
@@ -3016,6 +3042,27 @@ pub fn AgentEditForm() -> impl IntoView {
                                     <option value="react" selected=move || agent_type.get() == AgentType::ReAct>"ReAct"</option>
                                 </select>
                             </div>
+                        </div>
+
+                        // Output Format selector
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">"Output Format"</label>
+                                <select
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                    on:change=move |ev| {
+                                        set_output_format.set(match event_target_value(&ev).as_str() {
+                                            "raw" => OutputFormat::Raw,
+                                            _ => OutputFormat::Full,
+                                        });
+                                    }
+                                >
+                                    <option value="full" selected=move || output_format.get() == OutputFormat::Full>"Full (with metadata)"</option>
+                                    <option value="raw" selected=move || output_format.get() == OutputFormat::Raw>"Raw (JSON output only)"</option>
+                                </select>
+                                <p class="mt-1 text-xs text-gray-500">"Raw returns only the output JSON, Full includes execution metadata"</p>
+                            </div>
+                            <div></div>
                         </div>
 
                         <div>

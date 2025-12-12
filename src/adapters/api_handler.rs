@@ -21,7 +21,7 @@ use crate::adapters::tool_handler::AGENT_TOOL_PREFIX;
 use crate::adapters::workflow_engine::WorkflowEngine;
 use crate::agents::config::{
     AgentConfig, AgentReference, LlmProviderConfig, LlmProviderType, MemoryConfig,
-    MergeStrategy, OrchestrationConfig, OrchestrationPattern,
+    MergeStrategy, OrchestrationConfig, OrchestrationPattern, OutputFormat,
 };
 use crate::agents::domain::{AgentPort, AgentType};
 use crate::adapters::encryption;
@@ -3752,6 +3752,9 @@ pub struct AgentDto {
     pub temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<u32>,
+    /// Output format: "full" (default) includes metadata, "raw" returns only output JSON
+    #[serde(default)]
+    pub output_format: OutputFormat,
 }
 
 fn default_max_iterations() -> u32 {
@@ -3836,6 +3839,7 @@ impl From<&AgentConfig> for AgentDto {
             timeout_seconds: a.timeout_seconds,
             temperature: a.temperature,
             max_tokens: a.max_tokens,
+            output_format: a.output_format,
         }
     }
 }
@@ -3876,6 +3880,7 @@ impl From<AgentDto> for AgentConfig {
             timeout_seconds: dto.timeout_seconds,
             temperature: dto.temperature,
             max_tokens: dto.max_tokens,
+            output_format: dto.output_format,
         }
     }
 }
@@ -4284,14 +4289,16 @@ pub async fn test_agent(
 
     let start = std::time::Instant::now();
 
-    // Verify agent exists in config
+    // Verify agent exists in config and get output format
     let settings = state.settings.read().await;
-    if !settings.agents.iter().any(|a| a.name == name) {
+    let agent_config = settings.agents.iter().find(|a| a.name == name);
+    if agent_config.is_none() {
         return (
             StatusCode::NOT_FOUND,
             Json(ApiResponse::<TestResult>::error("Agent not found")),
         );
     }
+    let output_format = agent_config.unwrap().output_format;
     drop(settings);
 
     // Initialize agent handler only if not already present (preserves memory store for multi-turn)
@@ -4338,13 +4345,19 @@ pub async fn test_agent(
     match agent_handler.execute(&name, req.args.clone(), req.session_id.clone()).await {
         Ok(response) => {
             let elapsed = start.elapsed().as_millis() as u64;
-            let output = json!({
-                "output": response.output,
-                "session_id": response.session_id,
-                "iterations": response.iterations,
-                "tool_calls": response.tool_calls.len(),
-                "reasoning_steps": response.reasoning_steps.len(),
-            });
+
+            // Use raw output format if configured, otherwise include full metadata
+            let output = match output_format {
+                crate::agents::config::OutputFormat::Raw => response.output,
+                crate::agents::config::OutputFormat::Full => json!({
+                    "output": response.output,
+                    "session_id": response.session_id,
+                    "iterations": response.iterations,
+                    "tool_calls": response.tool_calls.len(),
+                    "reasoning_steps": response.reasoning_steps.len(),
+                    "execution_time_ms": elapsed,
+                }),
+            };
 
             (
                 StatusCode::OK,
