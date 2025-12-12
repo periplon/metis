@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.44.0 - 2025-12-12
+#### Features
+- **(agent)** add output_format option for raw JSON responses - (307ef65) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.43.1 - 2025-12-08
 #### Bug Fixes
 - use secrets store for LLM mock strategy API keys - (200ff13) - Joan Marc Carbo Arnau
