@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.44.1 - 2025-12-12
+#### Bug Fixes
+- **(deps)** update wasm-bindgen to 0.2.106 - (d1372ae) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.44.0 - 2025-12-12
 #### Features
 - **(agent)** add output_format option for raw JSON responses - (307ef65) - Joan Marc Carbo Arnau
