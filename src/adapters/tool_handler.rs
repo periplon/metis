@@ -438,8 +438,19 @@ impl ToolPort for BasicToolHandler {
                 // Return agent response based on output_format setting
                 return match agent_info.output_format {
                     OutputFormat::Raw => {
-                        // Raw format: return just the output content directly
-                        Ok(output)
+                        // Raw format: extract and return just the output content
+                        // Try to extract JSON from markdown code blocks if present
+                        if let Some(content_str) = output.as_str() {
+                            let json_str = extract_json_from_text(content_str);
+                            if let Ok(parsed) = serde_json::from_str::<Value>(&json_str) {
+                                return Ok(parsed);
+                            }
+                            // Not valid JSON, return as string
+                            Ok(Value::String(content_str.to_string()))
+                        } else {
+                            // Already a structured value
+                            Ok(output)
+                        }
                     }
                     OutputFormat::Full => {
                         // Full format: return with metadata
