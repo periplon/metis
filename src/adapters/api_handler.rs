@@ -4058,6 +4058,12 @@ pub async fn create_agent(
 
         match store.archetypes().create(ArchetypeType::Agent.as_str(), &dto.name, &definition).await {
             Ok(()) => {
+                // Also update in-memory settings to keep them in sync
+                {
+                    let mut settings = state.settings.write().await;
+                    let agent_config: crate::agents::config::AgentConfig = dto.clone().into();
+                    settings.agents.push(agent_config);
+                }
                 // Auto-sync to S3 if configured
                 if let Err(e) = sync_item_to_s3_if_active(&state, "agents", &dto.name, &dto).await {
                     tracing::warn!("Failed to sync agent to S3: {}", e);
@@ -4146,6 +4152,21 @@ pub async fn update_agent(
 
         match store.archetypes().update(ArchetypeType::Agent.as_str(), &name, &definition, None).await {
             Ok(_) => {
+                // Also update in-memory settings to keep them in sync
+                // This prevents stale data when "Save to S3" is triggered
+                {
+                    let mut settings = state.settings.write().await;
+                    let agent_config: crate::agents::config::AgentConfig = dto.clone().into();
+                    if let Some(existing) = settings.agents.iter_mut().find(|a| a.name == name) {
+                        *existing = agent_config;
+                    } else if name != dto.name {
+                        // Name was changed - remove old, add new
+                        settings.agents.retain(|a| a.name != name);
+                        settings.agents.push(agent_config);
+                    } else {
+                        settings.agents.push(agent_config);
+                    }
+                }
                 // Auto-sync to S3 if configured
                 if let Err(e) = sync_item_to_s3_if_active(&state, "agents", &dto.name, &dto).await {
                     tracing::warn!("Failed to sync agent to S3: {}", e);
@@ -4216,6 +4237,11 @@ pub async fn delete_agent(
     if let Some(store) = &state.data_store {
         match store.archetypes().delete(ArchetypeType::Agent.as_str(), &name).await {
             Ok(true) => {
+                // Also update in-memory settings to keep them in sync
+                {
+                    let mut settings = state.settings.write().await;
+                    settings.agents.retain(|a| a.name != name);
+                }
                 // Auto-delete from S3 if configured
                 if let Err(e) = delete_item_from_s3_if_active(&state, "agents", &name).await {
                     tracing::warn!("Failed to delete agent from S3: {}", e);

@@ -826,14 +826,26 @@ impl Settings {
     /// Handles two patterns:
     /// 1. Full Settings files (e.g., `metis.toml`, `config.yaml`)
     /// 2. Individual item files in subdirectories (e.g., `config/schemas/my_schema.yaml`)
+    ///
+    /// IMPORTANT: Full config files are processed FIRST, then individual files.
+    /// This ensures individual files take precedence over full configs, so that
+    /// saving an individual agent/tool/etc. won't be overwritten by stale data
+    /// in a full config file.
     pub fn merge_s3_configs(&mut self, configs: Vec<(String, String)>) {
-        for (key, content) in configs {
-            // Check if this is an individual config file in a known subdirectory
-            if self.try_merge_individual_s3_config(&key, &content) {
-                continue;
-            }
+        // Separate full config files from individual item files
+        let mut full_configs = Vec::new();
+        let mut individual_configs = Vec::new();
 
-            // Try to parse as a full Settings file
+        for (key, content) in configs {
+            if Self::is_individual_config_path(&key) {
+                individual_configs.push((key, content));
+            } else {
+                full_configs.push((key, content));
+            }
+        }
+
+        // Process full config files FIRST
+        for (key, content) in full_configs {
             let settings_result: Result<Settings, String> = if key.ends_with(".toml") {
                 toml::from_str(&content).map_err(|e| format!("TOML parse error in {}: {}", key, e))
             } else if key.ends_with(".yaml") || key.ends_with(".yml") {
@@ -847,7 +859,7 @@ impl Settings {
 
             match settings_result {
                 Ok(s3_settings) => {
-                    tracing::info!("Merging S3 config from: {}", key);
+                    tracing::info!("Merging S3 full config from: {}", key);
                     self.merge(s3_settings);
                 }
                 Err(e) => {
@@ -855,6 +867,25 @@ impl Settings {
                 }
             }
         }
+
+        // Process individual files LAST so they take precedence
+        for (key, content) in individual_configs {
+            if !self.try_merge_individual_s3_config(&key, &content) {
+                tracing::warn!("Failed to parse individual S3 config: {}", key);
+            }
+        }
+    }
+
+    /// Check if a path is an individual config file (in a known subdirectory)
+    fn is_individual_config_path(key: &str) -> bool {
+        key.contains("/schemas/")
+            || key.contains("/tools/")
+            || (key.contains("/resources/") && !key.contains("/resource_templates/"))
+            || key.contains("/resource_templates/")
+            || key.contains("/prompts/")
+            || key.contains("/agents/")
+            || key.contains("/workflows/")
+            || key.contains("/data_lakes/")
     }
 
     /// Try to merge an individual config file from a known S3 subdirectory.

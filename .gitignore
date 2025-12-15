@@ -1,3 +1,4 @@
+.envrc
 # Rust
 /target/
 **/*.rs.bk

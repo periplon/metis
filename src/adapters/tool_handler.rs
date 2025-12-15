@@ -1,6 +1,7 @@
 use crate::adapters::mcp_client::McpClientManager;
 use crate::adapters::mock_strategy::MockStrategyHandler;
 use crate::adapters::workflow_engine::WorkflowEngine;
+use crate::agents::config::OutputFormat;
 use crate::agents::domain::AgentPort;
 use crate::config::{Settings, ToolConfig, WorkflowConfig};
 use crate::config::schema::{resolve_schema_refs, SchemaConfig};
@@ -434,15 +435,24 @@ impl ToolPort for BasicToolHandler {
                 // Transform output: if output_schema defined, try to match output to schema
                 let output = transform_agent_output(&response.output, &agent_info.output_schema);
 
-                // Return agent response as tool result
-                return Ok(json!({
-                    "output": output,
-                    "session_id": response.session_id,
-                    "iterations": response.iterations,
-                    "tool_calls": response.tool_calls.len(),
-                    "reasoning_steps": response.reasoning_steps.len(),
-                    "execution_time_ms": response.execution_time_ms
-                }));
+                // Return agent response based on output_format setting
+                return match agent_info.output_format {
+                    OutputFormat::Raw => {
+                        // Raw format: return just the output content directly
+                        Ok(output)
+                    }
+                    OutputFormat::Full => {
+                        // Full format: return with metadata
+                        Ok(json!({
+                            "output": output,
+                            "session_id": response.session_id,
+                            "iterations": response.iterations,
+                            "tool_calls": response.tool_calls.len(),
+                            "reasoning_steps": response.reasoning_steps.len(),
+                            "execution_time_ms": response.execution_time_ms
+                        }))
+                    }
+                };
             } else {
                 return Err(anyhow::anyhow!("Agent handler not available for agent: {}", agent_name));
             }

@@ -41,6 +41,8 @@ pub struct AgentInfo {
     /// Optional JSON Schema defining output structure
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_schema: Option<Value>,
+    /// Output format (Full with metadata, or Raw output only)
+    pub output_format: crate::agents::config::OutputFormat,
     /// Available tools (for ReAct agents)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub available_tools: Vec<String>,

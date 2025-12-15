@@ -2625,6 +2625,15 @@ pub fn AgentEditForm() -> impl IntoView {
     // Prompt template for custom input schemas
     let (prompt_template, set_prompt_template) = signal(String::new());
 
+    // Memory configuration signals
+    let (memory_backend, set_memory_backend) = signal(MemoryBackend::InMemory);
+    let (memory_strategy, set_memory_strategy) = signal("full".to_string());
+    let (memory_max_messages, set_memory_max_messages) = signal(100u32);
+    let (memory_window_size, set_memory_window_size) = signal(20usize);
+
+    // Iterations
+    let (max_iterations, set_max_iterations) = signal(10u32);
+
     // Help popup for agent type
     let (show_type_help, set_show_type_help) = signal(false);
 
@@ -2713,6 +2722,25 @@ pub fn AgentEditForm() -> impl IntoView {
                     if let Some(out_schema) = &agent.output_schema {
                         set_output_schema.set(out_schema.clone());
                     }
+                    // Load memory configuration
+                    set_memory_backend.set(agent.memory.backend.clone());
+                    set_memory_max_messages.set(agent.memory.max_messages);
+                    match &agent.memory.strategy {
+                        MemoryStrategy::Full => {
+                            set_memory_strategy.set("full".to_string());
+                        }
+                        MemoryStrategy::SlidingWindow { size } => {
+                            set_memory_strategy.set("sliding_window".to_string());
+                            set_memory_window_size.set(*size);
+                        }
+                        MemoryStrategy::FirstLast { first, last: _ } => {
+                            // FirstLast approximated as sliding_window for UI
+                            set_memory_strategy.set("sliding_window".to_string());
+                            set_memory_window_size.set(*first);
+                        }
+                    }
+                    // Load max iterations
+                    set_max_iterations.set(agent.max_iterations);
                     set_loading.set(false);
 
                     // Fetch models for the loaded provider
@@ -2818,13 +2846,16 @@ pub fn AgentEditForm() -> impl IntoView {
             available_resources,
             available_resource_templates,
             memory: MemoryConfig {
-                backend: MemoryBackend::InMemory,
-                strategy: MemoryStrategy::Full,
-                max_messages: 100,
+                backend: memory_backend.get(),
+                strategy: match memory_strategy.get().as_str() {
+                    "sliding_window" => MemoryStrategy::SlidingWindow { size: memory_window_size.get() },
+                    _ => MemoryStrategy::Full,
+                },
+                max_messages: memory_max_messages.get(),
                 file_path: None,
                 database_url: None,
             },
-            max_iterations: 10,
+            max_iterations: max_iterations.get(),
             timeout_seconds: 300,
             temperature: None,
             max_tokens: None,
@@ -3167,6 +3198,113 @@ pub fn AgentEditForm() -> impl IntoView {
                                                 />
                                             }.into_any()
                                         }}
+                                    </div>
+                                }.into_any()
+                            } else {
+                                view! { <span></span> }.into_any()
+                            }
+                        }}
+
+                        // Memory & Iteration Configuration (for MultiTurn and ReAct)
+                        {move || {
+                            let at = agent_type.get();
+                            if at == AgentType::MultiTurn || at == AgentType::ReAct {
+                                view! {
+                                    <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
+                                        <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">
+                                            {if at == AgentType::ReAct { "Memory & ReAct Configuration" } else { "Memory Configuration" }}
+                                        </h3>
+                                        <div class="grid grid-cols-2 gap-4">
+                                            <div>
+                                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">"Memory Backend"</label>
+                                                <select
+                                                    class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                                    on:change=move |ev| {
+                                                        set_memory_backend.set(match event_target_value(&ev).as_str() {
+                                                            "file" => MemoryBackend::File,
+                                                            "database" => MemoryBackend::Database,
+                                                            _ => MemoryBackend::InMemory,
+                                                        });
+                                                    }
+                                                >
+                                                    <option value="in_memory" selected=move || memory_backend.get() == MemoryBackend::InMemory>"In Memory"</option>
+                                                    <option value="file" selected=move || memory_backend.get() == MemoryBackend::File>"File"</option>
+                                                    <option value="database" selected=move || memory_backend.get() == MemoryBackend::Database>"Database"</option>
+                                                </select>
+                                                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">"Where to store conversation history"</p>
+                                            </div>
+                                            <div>
+                                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">"Memory Strategy"</label>
+                                                <select
+                                                    class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                                    on:change=move |ev| set_memory_strategy.set(event_target_value(&ev))
+                                                >
+                                                    <option value="full" selected=move || memory_strategy.get() == "full">"Full History"</option>
+                                                    <option value="sliding_window" selected=move || memory_strategy.get() == "sliding_window">"Sliding Window"</option>
+                                                </select>
+                                                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">"How to manage message history"</p>
+                                            </div>
+                                            <div>
+                                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">"Max Messages"</label>
+                                                <input
+                                                    type="number"
+                                                    min="10"
+                                                    max="1000"
+                                                    class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                                    prop:value=move || memory_max_messages.get()
+                                                    on:input=move |ev| {
+                                                        if let Ok(v) = event_target_value(&ev).parse::<u32>() {
+                                                            set_memory_max_messages.set(v);
+                                                        }
+                                                    }
+                                                />
+                                                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">"Maximum messages to store"</p>
+                                            </div>
+                                            {move || if memory_strategy.get() == "sliding_window" {
+                                                view! {
+                                                    <div>
+                                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">"Window Size"</label>
+                                                        <input
+                                                            type="number"
+                                                            min="5"
+                                                            max="100"
+                                                            class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                                            prop:value=move || memory_window_size.get()
+                                                            on:input=move |ev| {
+                                                                if let Ok(v) = event_target_value(&ev).parse::<usize>() {
+                                                                    set_memory_window_size.set(v);
+                                                                }
+                                                            }
+                                                        />
+                                                        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">"Recent messages to include"</p>
+                                                    </div>
+                                                }.into_any()
+                                            } else {
+                                                view! { <div></div> }.into_any()
+                                            }}
+                                            {move || if at == AgentType::ReAct {
+                                                view! {
+                                                    <div>
+                                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">"Max Iterations"</label>
+                                                        <input
+                                                            type="number"
+                                                            min="1"
+                                                            max="100"
+                                                            class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                                            prop:value=move || max_iterations.get()
+                                                            on:input=move |ev| {
+                                                                if let Ok(v) = event_target_value(&ev).parse::<u32>() {
+                                                                    set_max_iterations.set(v);
+                                                                }
+                                                            }
+                                                        />
+                                                        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">"Maximum reasoning iterations"</p>
+                                                    </div>
+                                                }.into_any()
+                                            } else {
+                                                view! { <div></div> }.into_any()
+                                            }}
+                                        </div>
                                     </div>
                                 }.into_any()
                             } else {
