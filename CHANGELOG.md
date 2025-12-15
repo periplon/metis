@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.44.3 - 2025-12-15
+#### Bug Fixes
+- **(agent)** extract JSON from markdown code blocks in raw output mode - (1bd0c80) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.44.2 - 2025-12-15
 #### Bug Fixes
 - **(agent)** resolve agent save and S3 sync issues - (4671059) - Joan Marc Carbo Arnau
