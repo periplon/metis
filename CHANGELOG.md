@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.44.2 - 2025-12-15
+#### Bug Fixes
+- **(agent)** resolve agent save and S3 sync issues - (4671059) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.44.1 - 2025-12-12
 #### Bug Fixes
 - **(deps)** update wasm-bindgen to 0.2.106 - (d1372ae) - Joan Marc Carbo Arnau
