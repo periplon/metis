@@ -637,7 +637,7 @@ fn transform_agent_output(output: &Value, output_schema: &Option<Value>) -> Valu
 }
 
 /// Extract JSON from text that might contain markdown code blocks
-fn extract_json_from_text(text: &str) -> String {
+pub fn extract_json_from_text(text: &str) -> String {
     let text = text.trim();
 
     // Try to find JSON in code blocks

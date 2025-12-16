@@ -229,9 +229,10 @@ pub struct ToolConfig {
     pub mock: Option<MockConfig>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum MockStrategyType {
+    #[default]
     Static,
     Template,
     Random,
@@ -247,8 +248,9 @@ pub enum MockStrategyType {
     DataLakeCrud,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct MockConfig {
+    #[serde(default)]
     pub strategy: MockStrategyType,
     pub template: Option<String>,
     pub faker_type: Option<String>,
@@ -258,6 +260,15 @@ pub struct MockConfig {
     pub script: Option<String>,
     #[serde(default)]
     pub script_lang: Option<ScriptLang>,
+    /// Access control for script cross-invocations (tools, agents, resources, workflows)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script_access: Option<ScriptAccessConfig>,
+    /// Maximum call depth for recursive tool invocations from scripts (default: 10)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script_max_depth: Option<u32>,
+    /// Timeout in milliseconds for script execution (default: 30000)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script_timeout_ms: Option<u64>,
     pub file: Option<FileConfig>,
     pub pattern: Option<String>,
     pub llm: Option<LLMConfig>,
@@ -346,6 +357,102 @@ pub enum ScriptLang {
     Lua,
     Js,
     Python,
+}
+
+/// Access control configuration for script cross-invocations.
+///
+/// Defines which tools, agents, resources, and workflows a script
+/// is allowed to call. Each category uses an `AccessLevel` to specify
+/// permissions.
+///
+/// # Example (TOML)
+///
+/// ```toml
+/// [tools.mock.script_access]
+/// agents = { allow_list = ["analyzer", "summarizer"] }
+/// tools = { allow_list = ["transformer", "validator"] }
+/// resources = "all"
+/// workflows = "none"
+/// ```
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct ScriptAccessConfig {
+    /// Access level for tools (default: all)
+    #[serde(default)]
+    pub tools: ScriptAccessLevel,
+    /// Access level for agents (default: all)
+    #[serde(default)]
+    pub agents: ScriptAccessLevel,
+    /// Access level for resources (default: all)
+    #[serde(default)]
+    pub resources: ScriptAccessLevel,
+    /// Access level for workflows (default: all)
+    #[serde(default)]
+    pub workflows: ScriptAccessLevel,
+}
+
+/// Access level for a category of resources in script configuration.
+///
+/// Supports four modes:
+/// - `"all"`: Allow access to all items (default)
+/// - `"none"`: Deny access to all items
+/// - `{ allow_list = ["item1", "item2"] }`: Only allow listed items
+/// - `{ deny_list = ["item1", "item2"] }`: Allow all except listed items
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ScriptAccessLevel {
+    /// Allow access to all items in this category
+    All,
+    /// Deny access to all items in this category
+    None,
+    /// Only allow items explicitly listed
+    #[serde(rename = "allow_list")]
+    AllowList(Vec<String>),
+    /// Allow all items except those listed
+    #[serde(rename = "deny_list")]
+    DenyList(Vec<String>),
+}
+
+impl Default for ScriptAccessLevel {
+    fn default() -> Self {
+        Self::All
+    }
+}
+
+impl ScriptAccessLevel {
+    /// Check if a given name is allowed by this access level.
+    ///
+    /// Note: Comparisons are case-sensitive.
+    pub fn allows(&self, name: &str) -> bool {
+        match self {
+            Self::All => true,
+            Self::None => false,
+            Self::AllowList(list) => list.iter().any(|item| item == name),
+            Self::DenyList(list) => !list.iter().any(|item| item == name),
+        }
+    }
+
+    /// Convert to execution context AccessLevel.
+    pub fn to_access_level(&self) -> crate::adapters::execution_context::AccessLevel {
+        use crate::adapters::execution_context::AccessLevel;
+        match self {
+            Self::All => AccessLevel::All,
+            Self::None => AccessLevel::None,
+            Self::AllowList(list) => AccessLevel::AllowList(list.clone()),
+            Self::DenyList(list) => AccessLevel::DenyList(list.clone()),
+        }
+    }
+}
+
+impl ScriptAccessConfig {
+    /// Convert to execution context AccessPolicy.
+    pub fn to_access_policy(&self) -> crate::adapters::execution_context::AccessPolicy {
+        crate::adapters::execution_context::AccessPolicy {
+            tools: self.tools.to_access_level(),
+            agents: self.agents.to_access_level(),
+            resources: self.resources.to_access_level(),
+            workflows: self.workflows.to_access_level(),
+        }
+    }
 }
 
 /// Database type for mock strategy

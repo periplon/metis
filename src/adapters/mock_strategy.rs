@@ -1,11 +1,14 @@
 use crate::adapters::datafusion_handler::DataFusionHandler;
+use crate::adapters::execution_context::{ExecutionContext, DEFAULT_MAX_CALL_DEPTH, DEFAULT_TIMEOUT_MS};
 use crate::adapters::file_storage::FileStorageHandler;
 use crate::adapters::state_manager::StateManager;
+use crate::agents::domain::AgentPort;
 use crate::config::{
     DataFusionConfig, DataLakeCrudConfig, DataLakeCrudOperation, MockConfig, MockStrategyType,
     StateOperation, ScriptLang, Settings, FakerSchemaConfig, FakerFieldConfig, FakerFieldType,
     FakerArrayConfig, DataLakeFileFormat, DataRecord,
 };
+use crate::domain::ToolPort;
 use anyhow::Result;
 use fake::faker::address::en::{CityName, CountryName, PostCode, StateAbbr, StreetName};
 use fake::faker::internet::en::{SafeEmail, Username};
@@ -21,6 +24,7 @@ use rustpython_vm::AsObject;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use tera::{Context, Tera};
 use tokio::sync::RwLock;
 use crate::adapters::secrets::SharedSecretsStore;
@@ -33,6 +37,10 @@ pub struct MockStrategyHandler {
     settings: Option<Arc<RwLock<Settings>>>,
     file_storage: Option<Arc<FileStorageHandler>>,
     secrets: Option<SharedSecretsStore>,
+    /// Tool handler for cross-tool invocations from scripts
+    tool_handler: Arc<RwLock<Option<Arc<dyn ToolPort>>>>,
+    /// Agent handler for agent invocations from scripts
+    agent_handler: Arc<RwLock<Option<Arc<dyn AgentPort>>>>,
 }
 
 impl MockStrategyHandler {
@@ -55,7 +63,23 @@ impl MockStrategyHandler {
             settings,
             file_storage,
             secrets,
+            tool_handler: Arc::new(RwLock::new(None)),
+            agent_handler: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Set the tool handler for cross-tool invocations from scripts.
+    /// This must be called after construction to enable Python scripts
+    /// to call other tools via `call_tool()`.
+    pub async fn set_tool_handler(&self, handler: Arc<dyn ToolPort>) {
+        *self.tool_handler.write().await = Some(handler);
+    }
+
+    /// Set the agent handler for agent invocations from scripts.
+    /// This must be called after construction to enable Python scripts
+    /// to call agents via `call_agent()`.
+    pub async fn set_agent_handler(&self, handler: Arc<dyn AgentPort>) {
+        *self.agent_handler.write().await = Some(handler);
     }
 
     pub async fn generate(
@@ -1187,7 +1211,7 @@ impl MockStrategyHandler {
                 ScriptLang::Rhai => self.generate_script_rhai(script, args, df_config.as_ref()),
                 ScriptLang::Lua => self.generate_script_lua(script, args, df_config.as_ref()),
                 ScriptLang::Js => self.generate_script_js(script, args, df_config.as_ref()),
-                ScriptLang::Python => self.generate_script_python(script, args, df_config.as_ref()),
+                ScriptLang::Python => self.generate_script_python_with_crosscall(script, args, config),
             }
         } else {
             Ok(Value::Null)
@@ -1410,62 +1434,374 @@ impl MockStrategyHandler {
         Ok(json_val)
     }
 
-    fn generate_script_python(
+    /// Execute a Python script with cross-invocation support.
+    ///
+    /// This method enables Python scripts to call:
+    /// - `call_tool(name, args, timeout_ms=None)` - Invoke another tool
+    /// - `call_agent(name, input, session_id=None, timeout_ms=None)` - Invoke an agent
+    /// - `get_resource(uri)` - Get a resource by URI
+    /// - `call_workflow(name, input, timeout_ms=None)` - Invoke a workflow
+    /// - `datafusion_query(sql)` - Execute SQL query (existing)
+    ///
+    /// Access control and recursion limits are enforced via ExecutionContext.
+    fn generate_script_python_with_crosscall(
         &self,
         script: &str,
         args: Option<&Value>,
-        df_config: Option<&DataFusionConfig>,
+        config: &MockConfig,
     ) -> Result<Value> {
         use rustpython_vm::Interpreter;
         use rustpython_vm::compiler::Mode;
         use rustpython_vm::PyObjectRef;
 
-        // Clone what we need for the closure
+        // Build ExecutionContext from config
+        let max_depth = config.script_max_depth.unwrap_or(DEFAULT_MAX_CALL_DEPTH as u32);
+        let timeout = config.script_timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS);
+        let access_policy = config.script_access.as_ref()
+            .map(|a| a.to_access_policy())
+            .unwrap_or_default();
+
+        let ctx = ExecutionContext {
+            call_depth: 0,
+            max_call_depth: max_depth,
+            timeout_ms: timeout,
+            calling_tool: None, // Set by caller if needed
+            access_policy,
+            session_id: None,
+        };
+
+        // Clone handlers for the closure
         let df_handler = self.datafusion_handler.clone();
         let settings = self.settings.clone();
-        let config_clone = df_config.cloned();
+        let df_config = config.database.as_ref().and_then(|db| db.datafusion.clone());
+        let tool_handler = self.tool_handler.clone();
+        let agent_handler = self.agent_handler.clone();
 
         let interpreter = Interpreter::without_stdlib(Default::default());
 
         interpreter.enter(|vm| {
             let scope = vm.new_scope_with_builtins();
 
+            // Set input variable
             if let Some(args_val) = args {
                 let py_val = self.json_to_python(vm, args_val);
                 scope.globals.set_item("input", py_val, vm).map_err(|e| self.map_py_err(vm, e))?;
             }
 
-            // Register datafusion_query if configured
-            if let Some(config) = config_clone {
-                if df_handler.is_some() && settings.is_some() {
-                    let df_handler = df_handler.clone().unwrap();
-                    let settings = settings.clone().unwrap();
+            // Register call_tool function
+            {
+                let th = tool_handler.clone();
+                let ctx_clone = ctx.clone();
+                let call_tool_fn = vm.new_function(
+                    "call_tool",
+                    move |func_args: rustpython_vm::function::FuncArgs, vm: &rustpython_vm::VirtualMachine| -> PyObjectRef {
+                        use rustpython_vm::builtins::PyStr;
 
-                    // Create a Python function for datafusion_query
+                        // Parse arguments: call_tool(name, args, timeout_ms=None)
+                        let name = func_args.args.first()
+                            .and_then(|arg| arg.payload::<PyStr>())
+                            .map(|s| s.as_str().to_string())
+                            .unwrap_or_default();
+
+                        let args_dict = func_args.args.get(1).cloned();
+                        let timeout_override = func_args.args.get(2)
+                            .and_then(|arg| arg.payload::<rustpython_vm::builtins::PyInt>())
+                            .and_then(|i| i.try_to_primitive::<u64>(vm).ok());
+
+                        // Check depth limit
+                        if ctx_clone.is_depth_exceeded() {
+                            return vm.ctx.new_str("RecursionLimitError: Maximum call depth exceeded").into();
+                        }
+
+                        // Check access policy
+                        if !ctx_clone.is_tool_allowed(&name) {
+                            return vm.ctx.new_str(format!("PermissionDeniedError: Tool '{}' not allowed", name)).into();
+                        }
+
+                        // Get tool handler
+                        let th_clone = th.clone();
+                        let new_ctx = ctx_clone.increment_depth();
+                        let timeout = timeout_override.unwrap_or(ctx_clone.timeout_ms);
+
+                        // Convert Python dict to JSON
+                        let args_json = if let Some(dict_obj) = args_dict {
+                            python_to_json_static(vm, dict_obj)
+                        } else {
+                            Value::Null
+                        };
+
+                        // Execute tool
+                        let result = tokio::task::block_in_place(|| {
+                            let handle = tokio::runtime::Handle::current();
+                            handle.block_on(async {
+                                // Get tool handler
+                                let handler_guard = th_clone.read().await;
+                                if let Some(handler) = handler_guard.as_ref() {
+                                    tokio::time::timeout(
+                                        Duration::from_millis(timeout),
+                                        handler.execute_tool_with_context(&name, args_json, new_ctx)
+                                    ).await
+                                    .map_err(|_| anyhow::anyhow!("TimeoutError: Tool call timed out"))
+                                    .and_then(|r| r)
+                                } else {
+                                    Err(anyhow::anyhow!("ToolNotFoundError: Tool handler not available"))
+                                }
+                            })
+                        });
+
+                        match result {
+                            Ok(value) => json_to_python_static(vm, &value),
+                            Err(e) => vm.ctx.new_str(format!("InvocationError: {}", e)).into(),
+                        }
+                    },
+                );
+                scope.globals.set_item("call_tool", call_tool_fn.into(), vm)
+                    .map_err(|e| self.map_py_err(vm, e))?;
+            }
+
+            // Register call_agent function
+            {
+                let ah = agent_handler.clone();
+                let ctx_clone = ctx.clone();
+                let call_agent_fn = vm.new_function(
+                    "call_agent",
+                    move |func_args: rustpython_vm::function::FuncArgs, vm: &rustpython_vm::VirtualMachine| -> PyObjectRef {
+                        use rustpython_vm::builtins::PyStr;
+
+                        // Parse arguments: call_agent(name, input, session_id=None, timeout_ms=None)
+                        let name = func_args.args.first()
+                            .and_then(|arg| arg.payload::<PyStr>())
+                            .map(|s| s.as_str().to_string())
+                            .unwrap_or_default();
+
+                        let input_dict = func_args.args.get(1).cloned();
+                        let session_id = func_args.args.get(2)
+                            .and_then(|arg| arg.payload::<PyStr>())
+                            .map(|s| s.as_str().to_string());
+                        let timeout_override = func_args.args.get(3)
+                            .and_then(|arg| arg.payload::<rustpython_vm::builtins::PyInt>())
+                            .and_then(|i| i.try_to_primitive::<u64>(vm).ok());
+
+                        // Check depth limit
+                        if ctx_clone.is_depth_exceeded() {
+                            return vm.ctx.new_str("RecursionLimitError: Maximum call depth exceeded").into();
+                        }
+
+                        // Check access policy
+                        if !ctx_clone.is_agent_allowed(&name) {
+                            return vm.ctx.new_str(format!("PermissionDeniedError: Agent '{}' not allowed", name)).into();
+                        }
+
+                        let ah_clone = ah.clone();
+                        let timeout = timeout_override.unwrap_or(ctx_clone.timeout_ms);
+
+                        // Convert Python dict to JSON
+                        let input_json = if let Some(dict_obj) = input_dict {
+                            python_to_json_static(vm, dict_obj)
+                        } else {
+                            Value::Null
+                        };
+
+                        // Execute agent
+                        let result = tokio::task::block_in_place(|| {
+                            let handle = tokio::runtime::Handle::current();
+                            handle.block_on(async {
+                                let handler_guard = ah_clone.read().await;
+                                if let Some(handler) = handler_guard.as_ref() {
+                                    tokio::time::timeout(
+                                        Duration::from_millis(timeout),
+                                        handler.execute(&name, input_json, session_id.clone())
+                                    ).await
+                                    .map_err(|_| anyhow::anyhow!("TimeoutError: Agent call timed out"))
+                                    .and_then(|r| r)
+                                } else {
+                                    Err(anyhow::anyhow!("AgentNotFoundError: Agent handler not available"))
+                                }
+                            })
+                        });
+
+                        match result {
+                            Ok(response) => {
+                                // Extract content, parsing JSON from markdown code blocks if needed
+                                let raw_content = response.output.get("content").cloned().unwrap_or(Value::Null);
+                                let parsed_content = if let Some(content_str) = raw_content.as_str() {
+                                    // Try to extract and parse JSON from the content
+                                    let json_str = crate::adapters::tool_handler::extract_json_from_text(content_str);
+                                    serde_json::from_str::<Value>(&json_str).unwrap_or(raw_content)
+                                } else {
+                                    raw_content
+                                };
+
+                                // Return structured response
+                                let result_dict = json!({
+                                    "content": parsed_content,
+                                    "output": response.output,
+                                    "tool_calls": response.tool_calls,
+                                    "iterations": response.iterations,
+                                    "session_id": session_id.unwrap_or_else(|| "".to_string()),
+                                    "status": "success"
+                                });
+                                json_to_python_static(vm, &result_dict)
+                            }
+                            Err(e) => {
+                                let error_dict = json!({
+                                    "content": null,
+                                    "error": e.to_string(),
+                                    "status": "error"
+                                });
+                                json_to_python_static(vm, &error_dict)
+                            }
+                        }
+                    },
+                );
+                scope.globals.set_item("call_agent", call_agent_fn.into(), vm)
+                    .map_err(|e| self.map_py_err(vm, e))?;
+            }
+
+            // Register get_resource function
+            {
+                let th = tool_handler.clone();
+                let ctx_clone = ctx.clone();
+                let get_resource_fn = vm.new_function(
+                    "get_resource",
+                    move |func_args: rustpython_vm::function::FuncArgs, vm: &rustpython_vm::VirtualMachine| -> PyObjectRef {
+                        use rustpython_vm::builtins::PyStr;
+                        use crate::adapters::tool_handler::RESOURCE_TOOL_PREFIX;
+
+                        let uri = func_args.args.first()
+                            .and_then(|arg| arg.payload::<PyStr>())
+                            .map(|s| s.as_str().to_string())
+                            .unwrap_or_default();
+
+                        // Check access policy
+                        if !ctx_clone.is_resource_allowed(&uri) {
+                            return vm.ctx.new_str(format!("PermissionDeniedError: Resource '{}' not allowed", uri)).into();
+                        }
+
+                        let th_clone = th.clone();
+
+                        // Resources are accessed via tool_handler with resource_ prefix
+                        let result = tokio::task::block_in_place(|| {
+                            let handle = tokio::runtime::Handle::current();
+                            handle.block_on(async {
+                                let handler_guard = th_clone.read().await;
+                                if let Some(handler) = handler_guard.as_ref() {
+                                    // Try to get resource through tool handler
+                                    let resource_tool = format!("{}{}", RESOURCE_TOOL_PREFIX, uri);
+                                    handler.execute_tool(&resource_tool, Value::Null).await
+                                } else {
+                                    Err(anyhow::anyhow!("ResourceNotFoundError: Tool handler not available"))
+                                }
+                            })
+                        });
+
+                        match result {
+                            Ok(value) => json_to_python_static(vm, &value),
+                            Err(e) => vm.ctx.new_str(format!("ResourceError: {}", e)).into(),
+                        }
+                    },
+                );
+                scope.globals.set_item("get_resource", get_resource_fn.into(), vm)
+                    .map_err(|e| self.map_py_err(vm, e))?;
+            }
+
+            // Register call_workflow function
+            {
+                let th = tool_handler.clone();
+                let ctx_clone = ctx.clone();
+                let call_workflow_fn = vm.new_function(
+                    "call_workflow",
+                    move |func_args: rustpython_vm::function::FuncArgs, vm: &rustpython_vm::VirtualMachine| -> PyObjectRef {
+                        use rustpython_vm::builtins::PyStr;
+
+                        let name = func_args.args.first()
+                            .and_then(|arg| arg.payload::<PyStr>())
+                            .map(|s| s.as_str().to_string())
+                            .unwrap_or_default();
+
+                        let input_dict = func_args.args.get(1).cloned();
+                        let timeout_override = func_args.args.get(2)
+                            .and_then(|arg| arg.payload::<rustpython_vm::builtins::PyInt>())
+                            .and_then(|i| i.try_to_primitive::<u64>(vm).ok());
+
+                        // Check depth limit
+                        if ctx_clone.is_depth_exceeded() {
+                            return vm.ctx.new_str("RecursionLimitError: Maximum call depth exceeded").into();
+                        }
+
+                        // Check access policy
+                        if !ctx_clone.is_workflow_allowed(&name) {
+                            return vm.ctx.new_str(format!("PermissionDeniedError: Workflow '{}' not allowed", name)).into();
+                        }
+
+                        let th_clone = th.clone();
+                        let new_ctx = ctx_clone.increment_depth();
+                        let timeout = timeout_override.unwrap_or(ctx_clone.timeout_ms);
+
+                        let input_json = if let Some(dict_obj) = input_dict {
+                            python_to_json_static(vm, dict_obj)
+                        } else {
+                            Value::Null
+                        };
+
+                        // Workflows are exposed as regular tools
+                        let result = tokio::task::block_in_place(|| {
+                            let handle = tokio::runtime::Handle::current();
+                            handle.block_on(async {
+                                let handler_guard = th_clone.read().await;
+                                if let Some(handler) = handler_guard.as_ref() {
+                                    tokio::time::timeout(
+                                        Duration::from_millis(timeout),
+                                        handler.execute_tool_with_context(&name, input_json, new_ctx)
+                                    ).await
+                                    .map_err(|_| anyhow::anyhow!("TimeoutError: Workflow call timed out"))
+                                    .and_then(|r| r)
+                                } else {
+                                    Err(anyhow::anyhow!("WorkflowError: Tool handler not available"))
+                                }
+                            })
+                        });
+
+                        match result {
+                            Ok(value) => json_to_python_static(vm, &value),
+                            Err(e) => vm.ctx.new_str(format!("WorkflowError: {}", e)).into(),
+                        }
+                    },
+                );
+                scope.globals.set_item("call_workflow", call_workflow_fn.into(), vm)
+                    .map_err(|e| self.map_py_err(vm, e))?;
+            }
+
+            // Register datafusion_query if configured (existing functionality)
+            if let Some(config) = df_config {
+                if df_handler.is_some() && settings.is_some() {
+                    let df_h = df_handler.clone().unwrap();
+                    let settings_h = settings.clone().unwrap();
+
                     let query_fn = vm.new_function(
                         "datafusion_query",
-                        move |args: rustpython_vm::function::FuncArgs, vm: &rustpython_vm::VirtualMachine| -> PyObjectRef {
+                        move |func_args: rustpython_vm::function::FuncArgs, vm: &rustpython_vm::VirtualMachine| -> PyObjectRef {
                             use rustpython_vm::builtins::PyStr;
 
-                            let sql = args.args.first()
+                            let sql = func_args.args.first()
                                 .and_then(|arg| arg.payload::<PyStr>())
                                 .map(|s| s.as_str().to_string())
                                 .unwrap_or_default();
 
-                            let df_handler_clone = df_handler.clone();
-                            let settings_clone = settings.clone();
-                            let config_clone2 = config.clone();
+                            let df_handler_clone = df_h.clone();
+                            let settings_clone = settings_h.clone();
+                            let config_clone = config.clone();
 
                             let result = tokio::task::block_in_place(|| {
                                 let handle = tokio::runtime::Handle::current();
                                 handle.block_on(async {
                                     let settings_guard = settings_clone.read().await;
                                     let data_lake = settings_guard.data_lakes.iter()
-                                        .find(|dl| dl.name == config_clone2.data_lake);
+                                        .find(|dl| dl.name == config_clone.data_lake);
 
                                     if let Some(dl) = data_lake {
                                         let table_name = df_handler_clone
-                                            .register_data_lake_table(dl, &config_clone2.schema_name)
+                                            .register_data_lake_table(dl, &config_clone.schema_name)
                                             .await
                                             .ok()?;
 
@@ -1481,7 +1817,6 @@ impl MockStrategyHandler {
 
                             match result {
                                 Some(rows) => {
-                                    // Convert rows to Python list of dicts
                                     let elements: Vec<_> = rows.iter().map(|row| {
                                         json_to_python_static(vm, row)
                                     }).collect();
@@ -1497,11 +1832,13 @@ impl MockStrategyHandler {
                 }
             }
 
+            // Compile and execute script
             let code_obj = vm.compile(script, Mode::Exec, "<embedded>".to_owned())
                 .map_err(|err| self.map_py_err(vm, vm.new_syntax_error(&err, Some(script))))?;
 
             let _ = vm.run_code_obj(code_obj, scope.clone()).map_err(|e| self.map_py_err(vm, e))?;
 
+            // Return output variable
             if let Ok(output) = scope.globals.get_item("output", vm) {
                 self.python_to_json(vm, output)
             } else {
@@ -2073,4 +2410,78 @@ fn json_to_python_static(vm: &rustpython_vm::VirtualMachine, value: &Value) -> r
             dict.into()
         }
     }
+}
+
+/// Static helper to convert Python objects to JSON (for use in closures)
+fn python_to_json_static(vm: &rustpython_vm::VirtualMachine, obj: rustpython_vm::PyObjectRef) -> Value {
+    use rustpython_vm::builtins::{PyDict, PyFloat, PyInt, PyList, PyStr};
+
+    // Check for None
+    if vm.is_none(&obj) {
+        return Value::Null;
+    }
+
+    // Check type name first to handle bool correctly
+    let type_name = obj.class().name().to_string();
+
+    // Check for bool (must be before int because bool is subclass of int in Python)
+    if type_name == "bool" {
+        if let Ok(b) = obj.clone().try_to_bool(vm) {
+            return Value::Bool(b);
+        }
+    }
+
+    // Check for int
+    if let Ok(py_int) = obj.clone().downcast::<PyInt>() {
+        if let Ok(i) = py_int.try_to_primitive::<i64>(vm) {
+            return Value::Number(serde_json::Number::from(i));
+        }
+    }
+
+    // Check for float
+    if let Ok(py_float) = obj.clone().downcast::<PyFloat>() {
+        let f = py_float.to_f64();
+        if let Some(n) = serde_json::Number::from_f64(f) {
+            return Value::Number(n);
+        }
+    }
+
+    // Check for string
+    if let Ok(py_str) = obj.clone().downcast::<PyStr>() {
+        return Value::String(py_str.as_str().to_string());
+    }
+
+    // Check for list
+    if let Ok(py_list) = obj.clone().downcast::<PyList>() {
+        let elements: Vec<Value> = py_list
+            .borrow_vec()
+            .iter()
+            .map(|item| python_to_json_static(vm, item.clone()))
+            .collect();
+        return Value::Array(elements);
+    }
+
+    // Check for dict
+    if let Ok(py_dict) = obj.clone().downcast::<PyDict>() {
+        let mut map = serde_json::Map::new();
+        for (k, v) in py_dict.into_iter() {
+            let key_str = if let Ok(s) = k.clone().downcast::<PyStr>() {
+                s.as_str().to_string()
+            } else {
+                // Try to convert key to string
+                k.str(vm)
+                    .map(|s| s.as_str().to_string())
+                    .unwrap_or_else(|_| "unknown".to_string())
+            };
+            map.insert(key_str, python_to_json_static(vm, v));
+        }
+        return Value::Object(map);
+    }
+
+    // Fallback: try to convert to string representation
+    if let Ok(s) = obj.str(vm) {
+        return Value::String(s.as_str().to_string());
+    }
+
+    Value::Null
 }

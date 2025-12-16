@@ -88,7 +88,7 @@ pub async fn create_app(
     state_manager: Arc<StateManager>,
     secrets_store: SharedSecretsStore,
     passphrase_store: SharedPassphraseStore,
-    tool_handler: Arc<crate::adapters::tool_handler::BasicToolHandler>,
+    _tool_handler: Arc<crate::adapters::tool_handler::BasicToolHandler>,
     data_store: Option<Arc<DataStore>>,
     file_storage: Option<Arc<crate::adapters::file_storage::FileStorageHandler>>,
     datafusion: Option<Arc<crate::adapters::datafusion_handler::DataFusionHandler>>,
@@ -158,17 +158,20 @@ pub async fn create_app(
         Some(secrets_store.clone()),
     ));
 
+    // Create tool handler for cross-invocations (used by both agents and Python scripts)
+    let tool_handler = Arc::new(crate::adapters::tool_handler::BasicToolHandler::new(
+        settings.clone(),
+        mock_strategy.clone(),
+    ));
+
+    // Wire up tool handler to mock_strategy for Python script cross-invocation
+    mock_strategy.set_tool_handler(tool_handler.clone() as Arc<dyn crate::domain::ToolPort>).await;
+
     // Try to create agent handler if agents are configured
     let agent_handler: Option<Arc<dyn AgentPort>> = {
         let settings_read = settings.read().await;
         if !settings_read.agents.is_empty() {
-            // Create a tool handler that uses mock strategies for agent tool calls
-            let tool_handler = Arc::new(crate::adapters::tool_handler::BasicToolHandler::new(
-                settings.clone(),
-                mock_strategy.clone(),
-            ));
-
-            let handler = AgentHandler::new_with_secrets(settings.clone(), tool_handler, secrets_store.clone());
+            let handler = AgentHandler::new_with_secrets(settings.clone(), tool_handler.clone() as Arc<dyn crate::domain::ToolPort>, secrets_store.clone());
 
             // Initialize agents - this loads them into memory
             if let Err(e) = handler.initialize().await {
@@ -177,7 +180,11 @@ pub async fn create_app(
                 tracing::info!("AgentHandler initialized with {} agents", settings_read.agents.len());
             }
 
-            Some(Arc::new(handler) as Arc<dyn AgentPort>)
+            // Wire up agent handler to mock_strategy for Python script cross-invocation
+            let agent_port: Arc<dyn AgentPort> = Arc::new(handler);
+            mock_strategy.set_agent_handler(agent_port.clone()).await;
+
+            Some(agent_port)
         } else {
             None
         }

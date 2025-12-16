@@ -14,6 +14,7 @@ use crate::components::schema_editor::FullSchemaEditor;
 use crate::components::schema_form::{SchemaFormGenerator, SchemaFormMode};
 use crate::components::database_editor::DatabaseStrategyEditor;
 use crate::components::data_lake_crud_editor::DataLakeCrudEditor;
+use crate::components::script_editor::{ScriptEditor, ScriptLanguage, ScriptLanguageSelector};
 use crate::components::list_filter::{
     ListFilterBar, Pagination, TagBadges, TagInput,
     extract_tags, filter_items, paginate_items, total_pages,
@@ -784,8 +785,8 @@ pub fn ToolForm() -> impl IntoView {
     let (mock_faker_type, set_mock_faker_type) = signal(String::new());
     let (mock_state_key, set_mock_state_key) = signal(String::new());
     let (mock_state_operation, set_mock_state_operation) = signal("get".to_string());
-    let (mock_script, set_mock_script) = signal(String::new());
-    let (mock_script_lang, set_mock_script_lang) = signal("rhai".to_string());
+    let mock_script = RwSignal::new(String::new());
+    let mock_script_lang = RwSignal::new("rhai".to_string());
     let (mock_file_path, set_mock_file_path) = signal(String::new());
     let (mock_file_selection, set_mock_file_selection) = signal("random".to_string());
     let (mock_pattern, set_mock_pattern) = signal(String::new());
@@ -1371,35 +1372,16 @@ pub fn ToolForm() -> impl IntoView {
                                     <div class="space-y-4">
                                         <div>
                                             <label class="block text-sm font-medium text-gray-700 mb-1">"Script Language"</label>
-                                            <select
-                                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
-                                                prop:value=move || mock_script_lang.get()
-                                                on:change=move |ev| {
-                                                    let target = ev.target().unwrap();
-                                                    let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
-                                                    set_mock_script_lang.set(select.value());
-                                                }
-                                            >
-                                                <option value="rhai">"Rhai"</option>
-                                                <option value="lua">"Lua"</option>
-                                                <option value="js">"JavaScript"</option>
-                                                <option value="python">"Python"</option>
-                                            </select>
+                                            <ScriptLanguageSelector selected=mock_script_lang />
                                         </div>
                                         <div>
                                             <label class="block text-sm font-medium text-gray-700 mb-1">"Script *"</label>
-                                            <textarea
-                                                rows=8
-                                                class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 font-mono text-sm"
-                                                placeholder="// Process tool input\nlet result = #{\"processed\": true, \"input\": input};\nto_json(result)"
-                                                prop:value=move || mock_script.get()
-                                                on:input=move |ev| {
-                                                    let target = ev.target().unwrap();
-                                                    let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
-                                                    set_mock_script.set(textarea.value());
-                                                }
+                                            <ScriptEditor
+                                                value=mock_script
+                                                language=Signal::derive(move || ScriptLanguage::from_str(&mock_script_lang.get()))
+                                                min_rows=10
+                                                max_rows=25
                                             />
-                                            <p class="mt-1 text-xs text-gray-500">"Access tool arguments via 'input' object, return JSON string"</p>
                                         </div>
                                     </div>
                                 }.into_any(),
@@ -1667,8 +1649,8 @@ pub fn ToolEditForm() -> impl IntoView {
     let (mock_faker_type, set_mock_faker_type) = signal(String::new());
     let (mock_state_key, set_mock_state_key) = signal(String::new());
     let (mock_state_operation, set_mock_state_operation) = signal("get".to_string());
-    let (mock_script, set_mock_script) = signal(String::new());
-    let (mock_script_lang, set_mock_script_lang) = signal("rhai".to_string());
+    let mock_script = RwSignal::new(String::new());
+    let mock_script_lang = RwSignal::new("rhai".to_string());
     let (mock_file_path, set_mock_file_path) = signal(String::new());
     let (mock_file_selection, set_mock_file_selection) = signal("random".to_string());
     let (mock_pattern, set_mock_pattern) = signal(String::new());
@@ -1803,7 +1785,7 @@ pub fn ToolEditForm() -> impl IntoView {
                             }
                         }
                         if let Some(script) = &mock.script {
-                            set_mock_script.set(script.clone());
+                            mock_script.set(script.clone());
                         }
                         if let Some(lang) = &mock.script_lang {
                             let l = match lang {
@@ -1812,7 +1794,7 @@ pub fn ToolEditForm() -> impl IntoView {
                                 ScriptLang::Js => "js",
                                 ScriptLang::Python => "python",
                             };
-                            set_mock_script_lang.set(l.to_string());
+                            mock_script_lang.set(l.to_string());
                         }
                         if let Some(file) = &mock.file {
                             set_mock_file_path.set(file.path.clone());
@@ -2390,35 +2372,16 @@ pub fn ToolEditForm() -> impl IntoView {
                                             <div class="space-y-4">
                                                 <div>
                                                     <label class="block text-sm font-medium text-gray-700 mb-1">"Script Language"</label>
-                                                    <select
-                                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
-                                                        prop:value=move || mock_script_lang.get()
-                                                        on:change=move |ev| {
-                                                            let target = ev.target().unwrap();
-                                                            let select: web_sys::HtmlSelectElement = target.dyn_into().unwrap();
-                                                            set_mock_script_lang.set(select.value());
-                                                        }
-                                                    >
-                                                        <option value="rhai">"Rhai"</option>
-                                                        <option value="lua">"Lua"</option>
-                                                        <option value="js">"JavaScript"</option>
-                                                        <option value="python">"Python"</option>
-                                                    </select>
+                                                    <ScriptLanguageSelector selected=mock_script_lang />
                                                 </div>
                                                 <div>
                                                     <label class="block text-sm font-medium text-gray-700 mb-1">"Script *"</label>
-                                                    <textarea
-                                                        rows=8
-                                                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500 font-mono text-sm"
-                                                        placeholder="// Process tool input\nlet result = #{\"processed\": true, \"input\": input};\nto_json(result)"
-                                                        prop:value=move || mock_script.get()
-                                                        on:input=move |ev| {
-                                                            let target = ev.target().unwrap();
-                                                            let textarea: web_sys::HtmlTextAreaElement = target.dyn_into().unwrap();
-                                                            set_mock_script.set(textarea.value());
-                                                        }
+                                                    <ScriptEditor
+                                                        value=mock_script
+                                                        language=Signal::derive(move || ScriptLanguage::from_str(&mock_script_lang.get()))
+                                                        min_rows=10
+                                                        max_rows=25
                                                     />
-                                                    <p class="mt-1 text-xs text-gray-500">"Access tool arguments via 'input' object, return JSON string"</p>
                                                 </div>
                                             </div>
                                         }.into_any(),

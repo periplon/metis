@@ -78,6 +78,7 @@ async fn test_generate_database_sqlite() {
         }),
         faker_schema: None,
         data_lake_crud: None,
+        ..Default::default()
     };
 
     let args = json!({ "user_id": 1 });

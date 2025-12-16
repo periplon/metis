@@ -71,6 +71,7 @@ async fn test_execute_tool_mock() {
             database: None,
             faker_schema: None,
             data_lake_crud: None,
+            ..Default::default()
         }),
         tags: vec![],
     }];

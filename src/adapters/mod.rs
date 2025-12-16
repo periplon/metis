@@ -3,6 +3,7 @@ pub mod auth_middleware;
 pub mod data_lake_handler;
 pub mod datafusion_handler;
 pub mod encryption;
+pub mod execution_context;
 pub mod file_storage;
 pub mod health_handler;
 pub mod jwks;

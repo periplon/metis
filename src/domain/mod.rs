@@ -2,6 +2,8 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::adapters::execution_context::ExecutionContext;
+
 pub mod auth;
 pub mod sampling;
 
@@ -86,9 +88,37 @@ pub trait ResourcePort: Send + Sync {
     ) -> anyhow::Result<ResourceReadResult>;
 }
 
+/// Port for tool execution operations.
+///
+/// Implementations handle tool invocation, including mock strategies,
+/// agent calls, workflows, and MCP tools.
 #[async_trait]
 pub trait ToolPort: Send + Sync {
+    /// Execute a tool by name with the given arguments.
     async fn execute_tool(&self, name: &str, args: Value) -> anyhow::Result<Value>;
+
+    /// Execute a tool with an execution context for cross-invocation scenarios.
+    ///
+    /// The context provides:
+    /// - **Recursion limits**: `call_depth` tracking to prevent infinite loops
+    /// - **Access control**: Policy-based restrictions on which tools can be called
+    /// - **Timeout management**: Per-call timeout budgets
+    /// - **Session continuity**: Agent session ID propagation
+    ///
+    /// Default implementation delegates to `execute_tool`, ignoring the context.
+    /// Override this method in handlers that need context-aware execution
+    /// (e.g., for Python scripts calling other tools).
+    async fn execute_tool_with_context(
+        &self,
+        name: &str,
+        args: Value,
+        _ctx: ExecutionContext,
+    ) -> anyhow::Result<Value> {
+        // Default: ignore context, delegate to standard execution
+        self.execute_tool(name, args).await
+    }
+
+    /// List all available tools.
     async fn list_tools(&self) -> anyhow::Result<Vec<Tool>>;
 }
 

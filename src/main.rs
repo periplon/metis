@@ -263,6 +263,9 @@ async fn main() -> anyhow::Result<()> {
         mock_strategy.clone(),
     ));
 
+    // Wire up tool handler to mock_strategy for Python script cross-invocation
+    mock_strategy.set_tool_handler(tool_handler.clone()).await;
+
     // Create agent handler with secrets support
     let agent_handler = metis::agents::handler::AgentHandler::new_with_secrets(
         settings.clone(),
@@ -282,7 +285,10 @@ async fn main() -> anyhow::Result<()> {
 
     // Wire up agent handler to tool handler so agents can call other agents
     // (tool_handler handles agent tools, MCP tools, workflows, and regular tools)
-    tool_handler.set_agent_handler(agent_handler).await;
+    tool_handler.set_agent_handler(agent_handler.clone()).await;
+
+    // Wire up agent handler to mock_strategy for Python script cross-invocation
+    mock_strategy.set_agent_handler(agent_handler.clone()).await;
 
     // Create MetisServer (tool_handler already includes agent support)
     let metis_server = MetisServer::new(

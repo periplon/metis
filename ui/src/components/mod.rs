@@ -12,6 +12,7 @@ pub mod logs;
 pub mod resources;
 pub mod resource_templates;
 pub mod schemas;
+pub mod script_editor;
 pub mod secrets;
 pub mod tools;
 pub mod prompts;

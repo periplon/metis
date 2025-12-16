@@ -28,6 +28,7 @@ async fn test_generate_template() {
         database: None,
         faker_schema: None,
         data_lake_crud: None,
+        ..Default::default()
     };
     let args = json!({ "name": "World" });
 
@@ -53,6 +54,7 @@ async fn test_generate_template_missing_args() {
         database: None,
         faker_schema: None,
         data_lake_crud: None,
+        ..Default::default()
     };
     
     // Tera renders missing variables as empty string by default or errors depending on config. 
@@ -80,6 +82,7 @@ async fn test_generate_random() {
         database: None,
         faker_schema: None,
         data_lake_crud: None,
+        ..Default::default()
     };
 
     let result = handler.generate(&config, None).await;
@@ -106,6 +109,7 @@ async fn test_generate_random_unknown_type() {
         database: None,
         faker_schema: None,
         data_lake_crud: None,
+        ..Default::default()
     };
 
     let result = handler.generate(&config, None).await;
@@ -136,6 +140,7 @@ async fn test_generate_script() {
         database: None,
         faker_schema: None,
         data_lake_crud: None,
+        ..Default::default()
     };
     let args = json!({ "name": "Script" });
 
@@ -164,6 +169,7 @@ async fn test_generate_script_lua() {
         database: None,
         faker_schema: None,
         data_lake_crud: None,
+        ..Default::default()
     };
     let args = json!({ "name": "Lua" });
 
@@ -195,6 +201,7 @@ async fn test_generate_script_js() {
         database: None,
         faker_schema: None,
         data_lake_crud: None,
+        ..Default::default()
     };
     let args = json!({ "name": "JS" });
 
@@ -226,6 +233,7 @@ output = "Hello, " + input["name"] + "!"
         database: None,
         faker_schema: None,
         data_lake_crud: None,
+        ..Default::default()
     };
     let args = json!({ "name": "Python" });
 
@@ -254,6 +262,7 @@ async fn test_generate_pattern_basic() {
         database: None,
         faker_schema: None,
         data_lake_crud: None,
+        ..Default::default()
     };
 
     let result = handler.generate(&config, None).await;
@@ -282,6 +291,7 @@ async fn test_generate_pattern_character_class() {
         database: None,
         faker_schema: None,
         data_lake_crud: None,
+        ..Default::default()
     };
 
     let result = handler.generate(&config, None).await;
@@ -309,6 +319,7 @@ async fn test_generate_pattern_repetition() {
         database: None,
         faker_schema: None,
         data_lake_crud: None,
+        ..Default::default()
     };
 
     let result = handler.generate(&config, None).await;
@@ -334,6 +345,7 @@ async fn test_generate_pattern_hex() {
         database: None,
         faker_schema: None,
         data_lake_crud: None,
+        ..Default::default()
     };
 
     let result = handler.generate(&config, None).await;
@@ -372,6 +384,7 @@ async fn test_generate_file_random() {
         database: None,
         faker_schema: None,
         data_lake_crud: None,
+        ..Default::default()
     };
 
     let result = handler.generate(&config, None).await;
@@ -414,6 +427,7 @@ async fn test_generate_file_sequential() {
         database: None,
         faker_schema: None,
         data_lake_crud: None,
+        ..Default::default()
     };
 
     // First call should return id: 1
@@ -466,6 +480,7 @@ async fn test_generate_file_jsonlines() {
         database: None,
         faker_schema: None,
         data_lake_crud: None,
+        ..Default::default()
     };
 
     let result = handler.generate(&config, None).await;
@@ -475,4 +490,291 @@ async fn test_generate_file_jsonlines() {
 
     // Cleanup
     std::fs::remove_file(&test_file).ok();
+}
+
+// ============== Python Cross-Invocation Integration Tests ==============
+
+#[tokio::test]
+async fn test_python_script_access_config_defaults() {
+    use crate::config::{ScriptAccessConfig, ScriptAccessLevel};
+
+    let config = ScriptAccessConfig::default();
+    // Default should be All (tools/agents/resources/workflows available)
+    assert!(matches!(config.tools, ScriptAccessLevel::All));
+    assert!(matches!(config.agents, ScriptAccessLevel::All));
+    assert!(matches!(config.resources, ScriptAccessLevel::All));
+    assert!(matches!(config.workflows, ScriptAccessLevel::All));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_python_crosscall_with_tool_handler() {
+    use crate::adapters::tool_handler::BasicToolHandler;
+    use crate::config::{Settings, ServerSettings, ToolConfig, ScriptLang, ScriptAccessConfig, ScriptAccessLevel};
+    use tokio::sync::RwLock;
+
+    // Create a settings with a static response tool
+    let settings = Arc::new(RwLock::new(Settings {
+        config_path: None,
+        version: 0,
+        server: ServerSettings { host: "127.0.0.1".to_string(), port: 3000 },
+        auth: Default::default(),
+        resources: vec![],
+        resource_templates: vec![],
+        tools: vec![ToolConfig {
+            name: "get_greeting".to_string(),
+            description: "Returns a greeting".to_string(),
+            input_schema: json!({}),
+            output_schema: None,
+            static_response: Some(json!({ "message": "Hello from tool!" })),
+            mock: None,
+            tags: vec![],
+        }],
+        prompts: vec![],
+        rate_limit: None,
+        s3: None,
+        workflows: vec![],
+        agents: vec![],
+        orchestrations: vec![],
+        mcp_servers: vec![],
+        secrets: Default::default(),
+        schemas: vec![],
+        data_lakes: vec![],
+        database: None,
+        file_storage: None,
+    }));
+
+    let state_manager = Arc::new(StateManager::new());
+    let mock_strategy = Arc::new(MockStrategyHandler::new(state_manager.clone()));
+    let tool_handler: Arc<dyn crate::domain::ToolPort> = Arc::new(BasicToolHandler::new(settings.clone(), mock_strategy.clone()));
+
+    // Set up the mock strategy with tool handler
+    mock_strategy.set_tool_handler(tool_handler).await;
+
+    let config = MockConfig {
+        strategy: MockStrategyType::Script,
+        template: None,
+        faker_type: None,
+        stateful: None,
+        file: None,
+        pattern: None,
+        script: Some(r#"
+result = call_tool("get_greeting", {})
+output = result
+        "#.to_string()),
+        script_lang: Some(ScriptLang::Python),
+        llm: None,
+        database: None,
+        faker_schema: None,
+        data_lake_crud: None,
+        script_access: Some(ScriptAccessConfig {
+            tools: ScriptAccessLevel::All,
+            agents: ScriptAccessLevel::All,
+            resources: ScriptAccessLevel::All,
+            workflows: ScriptAccessLevel::All,
+        }),
+        script_max_depth: None,
+        script_timeout_ms: None,
+        ..Default::default()
+    };
+
+    let result = mock_strategy.generate(&config, None).await;
+    if let Err(e) = &result {
+        println!("Error: {}", e);
+    }
+    assert!(result.is_ok());
+    let value = result.unwrap();
+
+    // Should have received the tool response
+    assert!(value.is_object());
+    assert_eq!(value.get("message").and_then(|v| v.as_str()), Some("Hello from tool!"));
+}
+
+#[tokio::test]
+async fn test_python_crosscall_access_denied() {
+    use crate::config::{ScriptLang, ScriptAccessConfig, ScriptAccessLevel};
+
+    let handler = MockStrategyHandler::new(Arc::new(StateManager::new()));
+
+    // Configure script with tools access denied
+    let config = MockConfig {
+        strategy: MockStrategyType::Script,
+        template: None,
+        faker_type: None,
+        stateful: None,
+        file: None,
+        pattern: None,
+        script: Some(r#"
+result = call_tool("any_tool", {})
+output = result
+        "#.to_string()),
+        script_lang: Some(ScriptLang::Python),
+        llm: None,
+        database: None,
+        faker_schema: None,
+        data_lake_crud: None,
+        script_access: Some(ScriptAccessConfig {
+            tools: ScriptAccessLevel::None, // Deny all tools
+            agents: ScriptAccessLevel::All,
+            resources: ScriptAccessLevel::All,
+            workflows: ScriptAccessLevel::All,
+        }),
+        script_max_depth: None,
+        script_timeout_ms: None,
+        ..Default::default()
+    };
+
+    let result = handler.generate(&config, None).await;
+    assert!(result.is_ok());
+    let value = result.unwrap();
+
+    // Should return an error string for access denied
+    if let Some(s) = value.as_str() {
+        assert!(s.contains("PermissionDeniedError") || s.contains("not allowed"));
+    }
+}
+
+#[tokio::test]
+async fn test_python_crosscall_allow_list() {
+    use crate::config::{ScriptLang, ScriptAccessConfig, ScriptAccessLevel};
+
+    let handler = MockStrategyHandler::new(Arc::new(StateManager::new()));
+
+    // Configure script with specific tools allowed
+    let config = MockConfig {
+        strategy: MockStrategyType::Script,
+        template: None,
+        faker_type: None,
+        stateful: None,
+        file: None,
+        pattern: None,
+        script: Some(r#"
+result = call_tool("not_in_allow_list", {})
+output = result
+        "#.to_string()),
+        script_lang: Some(ScriptLang::Python),
+        llm: None,
+        database: None,
+        faker_schema: None,
+        data_lake_crud: None,
+        script_access: Some(ScriptAccessConfig {
+            tools: ScriptAccessLevel::AllowList(vec!["allowed_tool".to_string()]),
+            agents: ScriptAccessLevel::All,
+            resources: ScriptAccessLevel::All,
+            workflows: ScriptAccessLevel::All,
+        }),
+        script_max_depth: None,
+        script_timeout_ms: None,
+        ..Default::default()
+    };
+
+    let result = handler.generate(&config, None).await;
+    assert!(result.is_ok());
+    let value = result.unwrap();
+
+    // Should return permission denied since tool is not in allow list
+    if let Some(s) = value.as_str() {
+        assert!(s.contains("PermissionDeniedError") || s.contains("not allowed"));
+    }
+}
+
+#[tokio::test]
+async fn test_python_crosscall_deny_list() {
+    use crate::config::{ScriptLang, ScriptAccessConfig, ScriptAccessLevel};
+
+    let handler = MockStrategyHandler::new(Arc::new(StateManager::new()));
+
+    // Configure script with specific tools denied
+    let config = MockConfig {
+        strategy: MockStrategyType::Script,
+        template: None,
+        faker_type: None,
+        stateful: None,
+        file: None,
+        pattern: None,
+        script: Some(r#"
+result = call_tool("denied_tool", {})
+output = result
+        "#.to_string()),
+        script_lang: Some(ScriptLang::Python),
+        llm: None,
+        database: None,
+        faker_schema: None,
+        data_lake_crud: None,
+        script_access: Some(ScriptAccessConfig {
+            tools: ScriptAccessLevel::DenyList(vec!["denied_tool".to_string()]),
+            agents: ScriptAccessLevel::All,
+            resources: ScriptAccessLevel::All,
+            workflows: ScriptAccessLevel::All,
+        }),
+        script_max_depth: None,
+        script_timeout_ms: None,
+        ..Default::default()
+    };
+
+    let result = handler.generate(&config, None).await;
+    assert!(result.is_ok());
+    let value = result.unwrap();
+
+    // Should return permission denied since tool is in deny list
+    if let Some(s) = value.as_str() {
+        assert!(s.contains("PermissionDeniedError") || s.contains("not allowed"));
+    }
+}
+
+#[tokio::test]
+async fn test_execution_context_depth_tracking() {
+    use crate::adapters::execution_context::ExecutionContext;
+
+    let ctx = ExecutionContext::default();
+    assert_eq!(ctx.call_depth, 0);
+    assert_eq!(ctx.max_call_depth, 10);
+
+    let ctx2 = ctx.increment_depth();
+    assert_eq!(ctx2.call_depth, 1);
+
+    // Test is_depth_exceeded (should be false since we're at depth 1)
+    assert!(!ctx2.is_depth_exceeded());
+
+    // Create deep context (10 increments reaches max depth)
+    let mut deep_ctx = ctx;
+    for _ in 0..10 {
+        deep_ctx = deep_ctx.increment_depth();
+    }
+    assert!(deep_ctx.is_depth_exceeded());
+}
+
+#[tokio::test]
+async fn test_execution_context_tool_access() {
+    use crate::adapters::execution_context::{ExecutionContext, AccessPolicy, AccessLevel};
+
+    // Test allow all
+    let ctx = ExecutionContext::with_access_policy(AccessPolicy {
+        tools: AccessLevel::All,
+        agents: AccessLevel::None,
+        resources: AccessLevel::All,
+        workflows: AccessLevel::All,
+    });
+    assert!(ctx.is_tool_allowed("any_tool"));
+    assert!(!ctx.is_agent_allowed("any_agent"));
+
+    // Test allow list
+    let ctx2 = ExecutionContext::with_access_policy(AccessPolicy {
+        tools: AccessLevel::AllowList(vec!["tool_a".to_string(), "tool_b".to_string()]),
+        agents: AccessLevel::All,
+        resources: AccessLevel::All,
+        workflows: AccessLevel::All,
+    });
+    assert!(ctx2.is_tool_allowed("tool_a"));
+    assert!(ctx2.is_tool_allowed("tool_b"));
+    assert!(!ctx2.is_tool_allowed("tool_c"));
+
+    // Test deny list
+    let ctx3 = ExecutionContext::with_access_policy(AccessPolicy {
+        tools: AccessLevel::DenyList(vec!["dangerous_tool".to_string()]),
+        agents: AccessLevel::All,
+        resources: AccessLevel::All,
+        workflows: AccessLevel::All,
+    });
+    assert!(ctx3.is_tool_allowed("safe_tool"));
+    assert!(!ctx3.is_tool_allowed("dangerous_tool"));
 }
