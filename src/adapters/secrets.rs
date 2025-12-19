@@ -13,6 +13,7 @@ pub mod keys {
     pub const OPENAI_API_KEY: &str = "OPENAI_API_KEY";
     pub const ANTHROPIC_API_KEY: &str = "ANTHROPIC_API_KEY";
     pub const GEMINI_API_KEY: &str = "GEMINI_API_KEY";
+    pub const GROQ_API_KEY: &str = "GROQ_API_KEY";
     pub const AWS_ACCESS_KEY_ID: &str = "AWS_ACCESS_KEY_ID";
     pub const AWS_SECRET_ACCESS_KEY: &str = "AWS_SECRET_ACCESS_KEY";
     pub const AWS_REGION: &str = "AWS_REGION";
