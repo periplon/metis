@@ -588,6 +588,14 @@ impl MockStrategyHandler {
                 let result = self.generate_openai(llm_config, api_key.as_deref().unwrap_or(""), &prompt, Some(base_url)).await?;
                 Ok(json!(result))
             }
+            crate::config::LLMProvider::Groq => {
+                // Groq uses OpenAI-compatible API
+                let base_url = llm_config.base_url.as_deref()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "https://api.groq.com/openai/v1".to_string());
+                let result = self.generate_openai(llm_config, api_key.as_deref().unwrap_or(""), &prompt, Some(&base_url)).await?;
+                Ok(json!(result))
+            }
         }
     }
 

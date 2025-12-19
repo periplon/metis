@@ -579,6 +579,8 @@ pub enum LLMProvider {
     /// Azure OpenAI
     #[serde(rename = "azureopenai")]
     AzureOpenAI,
+    /// Groq (ultra-fast inference with LPU)
+    Groq,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
