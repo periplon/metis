@@ -1458,7 +1458,6 @@ impl MockStrategyHandler {
         args: Option<&Value>,
         config: &MockConfig,
     ) -> Result<Value> {
-        use rustpython_vm::Interpreter;
         use rustpython_vm::compiler::Mode;
         use rustpython_vm::PyObjectRef;
 
@@ -1485,12 +1484,11 @@ impl MockStrategyHandler {
         let tool_handler = self.tool_handler.clone();
         let agent_handler = self.agent_handler.clone();
 
-        // Initialize interpreter with frozen stdlib for json, re, hashlib, etc.
-        // and native modules for encodings support (latin1, utf-8, etc.)
-        let interpreter = Interpreter::with_init(Default::default(), |vm| {
-            vm.add_native_modules(rustpython_stdlib::get_module_inits());
-            vm.add_frozen(rustpython_pylib::FROZEN_STDLIB);
-        });
+        // Initialize interpreter with full stdlib including encodings support
+        // Using rustpython::InterpreterConfig ensures proper initialization
+        let interpreter = rustpython::InterpreterConfig::new()
+            .init_stdlib()
+            .interpreter();
 
         interpreter.enter(|vm| {
             let scope = vm.new_scope_with_builtins();
