@@ -1485,7 +1485,10 @@ impl MockStrategyHandler {
         let tool_handler = self.tool_handler.clone();
         let agent_handler = self.agent_handler.clone();
 
-        let interpreter = Interpreter::without_stdlib(Default::default());
+        // Initialize interpreter with frozen stdlib for json, re, hashlib, etc.
+        let interpreter = Interpreter::with_init(Default::default(), |vm| {
+            vm.add_frozen(rustpython_pylib::frozen_stdlib());
+        });
 
         interpreter.enter(|vm| {
             let scope = vm.new_scope_with_builtins();
