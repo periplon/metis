@@ -6,6 +6,7 @@
 //! - Google Gemini
 //! - Ollama (local models)
 //! - Azure OpenAI
+//! - Groq (ultra-fast inference with LPU)
 
 mod stream;
 mod openai;
@@ -13,6 +14,7 @@ mod anthropic;
 mod gemini;
 mod ollama;
 mod azure;
+mod groq;
 
 pub use stream::*;
 pub use openai::OpenAiProvider;
@@ -20,6 +22,7 @@ pub use anthropic::AnthropicProvider;
 pub use gemini::GeminiProvider;
 pub use ollama::OllamaProvider;
 pub use azure::AzureOpenAiProvider;
+pub use groq::GroqProvider;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -185,6 +188,10 @@ pub fn create_provider(config: &LlmProviderConfig) -> LlmResult<Arc<dyn LlmProvi
             let provider = AzureOpenAiProvider::new(config)?;
             Ok(Arc::new(provider))
         }
+        LlmProviderType::Groq => {
+            let provider = GroqProvider::new(config)?;
+            Ok(Arc::new(provider))
+        }
     }
 }
 
@@ -217,6 +224,10 @@ pub async fn create_provider_with_secrets(
         }
         LlmProviderType::AzureOpenAI => {
             let provider = AzureOpenAiProvider::new_with_secrets(config, secrets).await?;
+            Ok(Arc::new(provider))
+        }
+        LlmProviderType::Groq => {
+            let provider = GroqProvider::new_with_secrets(config, secrets).await?;
             Ok(Arc::new(provider))
         }
     }

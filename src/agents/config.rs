@@ -133,6 +133,8 @@ pub enum LlmProviderType {
     /// Azure OpenAI
     #[serde(alias = "azure")]
     AzureOpenAI,
+    /// Groq (ultra-fast inference with LPU)
+    Groq,
 }
 
 impl std::fmt::Display for LlmProviderType {
@@ -143,6 +145,7 @@ impl std::fmt::Display for LlmProviderType {
             LlmProviderType::Gemini => write!(f, "gemini"),
             LlmProviderType::Ollama => write!(f, "ollama"),
             LlmProviderType::AzureOpenAI => write!(f, "azure"),
+            LlmProviderType::Groq => write!(f, "groq"),
         }
     }
 }
