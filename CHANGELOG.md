@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.48.2 - 2025-12-19
+#### Bug Fixes
+- **(script)** use FROZEN_STDLIB constant instead of function - (98e59ce) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.48.1 - 2025-12-19
 #### Bug Fixes
 - **(deps)** add freeze-stdlib feature to rustpython-pylib - (7d60c49) - Joan Marc Carbo Arnau
