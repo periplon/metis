@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.47.0 - 2025-12-19
+#### Features
+- **(api)** fetch Anthropic models from API instead of hardcoded list - (d066f1c) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.46.1 - 2025-12-19
 #### Bug Fixes
 - **(mock)** add Groq to LLMProvider enum for mock strategy - (a11db64) - Joan Marc Carbo Arnau
