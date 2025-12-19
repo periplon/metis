@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.48.1 - 2025-12-19
+#### Bug Fixes
+- **(deps)** add freeze-stdlib feature to rustpython-pylib - (7d60c49) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.48.0 - 2025-12-19
 #### Features
 - **(script)** add Python stdlib support for json, re, hashlib, etc. - (0add4ed) - Joan Marc Carbo Arnau
