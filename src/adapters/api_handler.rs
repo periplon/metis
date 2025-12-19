@@ -4733,6 +4733,7 @@ pub async fn fetch_llm_models(
         "gemini" => fetch_gemini_models(params.api_key_env, &state.secrets).await,
         "ollama" => fetch_ollama_models(params.base_url).await,
         "azureopenai" => fetch_azure_openai_models().await,
+        "groq" => fetch_groq_models(params.api_key_env, &state.secrets).await,
         _ => Err(format!("Unknown provider: {}", provider)),
     };
 
@@ -4926,6 +4927,82 @@ async fn fetch_azure_openai_models() -> Result<Vec<LlmModelInfo>, String> {
         LlmModelInfo { id: "gpt-4".to_string(), name: "GPT-4".to_string(), description: None },
         LlmModelInfo { id: "gpt-35-turbo".to_string(), name: "GPT-3.5 Turbo".to_string(), description: None },
     ])
+}
+
+async fn fetch_groq_models(api_key_env: Option<String>, secrets: &SharedSecretsStore) -> Result<Vec<LlmModelInfo>, String> {
+    let env_var = api_key_env.as_deref().unwrap_or("GROQ_API_KEY");
+    let api_key = secrets.get_or_env(env_var).await
+        .ok_or_else(|| format!("API key not found: {} (set via UI Secrets or environment variable)", env_var))?;
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get("https://api.groq.com/openai/v1/models")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("API error: {}", response.status()));
+    }
+
+    let data: Value = response.json().await.map_err(|e| format!("Parse error: {}", e))?;
+
+    let mut models: Vec<LlmModelInfo> = data["data"]
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .filter_map(|m| {
+            let id = m["id"].as_str()?;
+            let owned_by = m["owned_by"].as_str().unwrap_or("");
+            // Filter to chat/text models (exclude whisper, distil-whisper for audio)
+            if !id.contains("whisper") {
+                Some(LlmModelInfo {
+                    id: id.to_string(),
+                    name: format_groq_model_name(id),
+                    description: if owned_by.is_empty() { None } else { Some(format!("by {}", owned_by)) },
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Sort by name
+    models.sort_by(|a, b| a.name.cmp(&b.name));
+
+    // If no models found, return defaults
+    if models.is_empty() {
+        models = get_default_groq_models();
+    }
+
+    Ok(models)
+}
+
+fn format_groq_model_name(id: &str) -> String {
+    match id {
+        "llama-3.3-70b-versatile" => "Llama 3.3 70B Versatile".to_string(),
+        "llama-3.1-70b-versatile" => "Llama 3.1 70B Versatile".to_string(),
+        "llama-3.1-8b-instant" => "Llama 3.1 8B Instant".to_string(),
+        "llama3-70b-8192" => "Llama 3 70B".to_string(),
+        "llama3-8b-8192" => "Llama 3 8B".to_string(),
+        "mixtral-8x7b-32768" => "Mixtral 8x7B".to_string(),
+        "gemma2-9b-it" => "Gemma 2 9B".to_string(),
+        "gemma-7b-it" => "Gemma 7B".to_string(),
+        _ => id.replace('-', " ").to_string(),
+    }
+}
+
+fn get_default_groq_models() -> Vec<LlmModelInfo> {
+    vec![
+        LlmModelInfo { id: "llama-3.3-70b-versatile".to_string(), name: "Llama 3.3 70B Versatile".to_string(), description: Some("Recommended".to_string()) },
+        LlmModelInfo { id: "llama-3.1-70b-versatile".to_string(), name: "Llama 3.1 70B Versatile".to_string(), description: None },
+        LlmModelInfo { id: "llama-3.1-8b-instant".to_string(), name: "Llama 3.1 8B Instant".to_string(), description: Some("Fast".to_string()) },
+        LlmModelInfo { id: "llama3-70b-8192".to_string(), name: "Llama 3 70B".to_string(), description: None },
+        LlmModelInfo { id: "llama3-8b-8192".to_string(), name: "Llama 3 8B".to_string(), description: None },
+        LlmModelInfo { id: "mixtral-8x7b-32768".to_string(), name: "Mixtral 8x7B".to_string(), description: None },
+        LlmModelInfo { id: "gemma2-9b-it".to_string(), name: "Gemma 2 9B".to_string(), description: None },
+    ]
 }
 
 fn format_model_name(id: &str) -> String {
