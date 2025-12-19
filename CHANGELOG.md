@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.48.4 - 2025-12-19
+#### Bug Fixes
+- **(script)** use rustpython InterpreterConfig for proper stdlib init - (a3956ac) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.48.3 - 2025-12-19
 #### Bug Fixes
 - **(script)** add native modules for Python encoding support - (d787fa9) - Joan Marc Carbo Arnau
