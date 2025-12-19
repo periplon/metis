@@ -743,6 +743,7 @@ async fn load_secrets_from_config(
     load_secret(keys::OPENAI_API_KEY, secrets_config.openai_api_key.as_ref());
     load_secret(keys::ANTHROPIC_API_KEY, secrets_config.anthropic_api_key.as_ref());
     load_secret(keys::GEMINI_API_KEY, secrets_config.gemini_api_key.as_ref());
+    load_secret(keys::GROQ_API_KEY, secrets_config.groq_api_key.as_ref());
     load_secret(keys::AWS_ACCESS_KEY_ID, secrets_config.aws_access_key_id.as_ref());
     load_secret(keys::AWS_SECRET_ACCESS_KEY, secrets_config.aws_secret_access_key.as_ref());
     load_secret(keys::AWS_REGION, secrets_config.aws_region.as_ref());

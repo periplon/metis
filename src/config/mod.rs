@@ -97,6 +97,9 @@ pub struct SecretsConfig {
     /// Gemini API key (plain or AGE-encrypted)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gemini_api_key: Option<String>,
+    /// Groq API key (plain or AGE-encrypted)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub groq_api_key: Option<String>,
     /// AWS Access Key ID (plain or AGE-encrypted)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub aws_access_key_id: Option<String>,
@@ -120,6 +123,9 @@ impl SecretsConfig {
         }
         if other.gemini_api_key.is_some() {
             self.gemini_api_key = other.gemini_api_key.clone();
+        }
+        if other.groq_api_key.is_some() {
+            self.groq_api_key = other.groq_api_key.clone();
         }
         if other.aws_access_key_id.is_some() {
             self.aws_access_key_id = other.aws_access_key_id.clone();

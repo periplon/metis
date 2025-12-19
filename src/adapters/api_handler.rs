@@ -2804,6 +2804,9 @@ async fn build_secrets_config(
     if let Some(value) = secrets.get(keys::GEMINI_API_KEY).await {
         config.gemini_api_key = Some(encrypt_secret(value, passphrase)?);
     }
+    if let Some(value) = secrets.get(keys::GROQ_API_KEY).await {
+        config.groq_api_key = Some(encrypt_secret(value, passphrase)?);
+    }
     if let Some(value) = secrets.get(keys::AWS_ACCESS_KEY_ID).await {
         config.aws_access_key_id = Some(encrypt_secret(value, passphrase)?);
     }
