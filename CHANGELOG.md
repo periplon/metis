@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.48.3 - 2025-12-19
+#### Bug Fixes
+- **(script)** add native modules for Python encoding support - (d787fa9) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.48.2 - 2025-12-19
 #### Bug Fixes
 - **(script)** use FROZEN_STDLIB constant instead of function - (98e59ce) - Joan Marc Carbo Arnau
