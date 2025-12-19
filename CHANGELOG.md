@@ -2,6 +2,20 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.46.0 - 2025-12-19
+#### Bug Fixes
+- **(api)** add Groq to LLM models fetch endpoint - (e7b6f3a) - Joan Marc Carbo Arnau
+- **(config)** load GROQ_API_KEY from secrets section in config file - (15385e7) - Joan Marc Carbo Arnau
+- **(ui)** add Groq to LLM provider save match statements - (09f01d4) - Joan Marc Carbo Arnau
+#### Features
+- **(agents)** add Groq LLM provider support - (5b58f92) - Joan Marc Carbo Arnau
+- **(secrets)** add GROQ_API_KEY to secrets management - (615d7f8) - Joan Marc Carbo Arnau
+- **(ui)** add Groq LLM provider to UI - (ede89a7) - Joan Marc Carbo Arnau
+#### Miscellaneous Chores
+- **(ui)** update compiled UI assets - (f8b86f0) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.45.0 - 2025-12-16
 #### Features
 - **(script)** add Python cross-invocation and syntax-highlighted editor - (32fab78) - Joan Marc Carbo Arnau
