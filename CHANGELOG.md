@@ -2,6 +2,14 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## 0.48.0 - 2025-12-19
+#### Features
+- **(script)** add Python stdlib support for json, re, hashlib, etc. - (0add4ed) - Joan Marc Carbo Arnau
+#### Miscellaneous Chores
+- **(ui)** update compiled UI assets - (34a4230) - Joan Marc Carbo Arnau
+
+- - -
+
 ## 0.47.0 - 2025-12-19
 #### Features
 - **(api)** fetch Anthropic models from API instead of hardcoded list - (d066f1c) - Joan Marc Carbo Arnau
