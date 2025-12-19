@@ -1439,6 +1439,10 @@ fn MockStrategyFields(
                                 >
                                     <option value="openai">"OpenAI"</option>
                                     <option value="anthropic">"Anthropic"</option>
+                                    <option value="gemini">"Google Gemini"</option>
+                                    <option value="groq">"Groq"</option>
+                                    <option value="ollama">"Ollama (Local)"</option>
+                                    <option value="azureopenai">"Azure OpenAI"</option>
                                 </select>
                             </div>
                             <div>
@@ -1645,6 +1649,7 @@ pub fn ResourceEditForm() -> impl IntoView {
                                 LLMProvider::Gemini => "gemini",
                                 LLMProvider::Ollama => "ollama",
                                 LLMProvider::AzureOpenAI => "azureopenai",
+                                LLMProvider::Groq => "groq",
                             };
                             set_mock_llm_provider.set(provider.to_string());
                             set_mock_llm_model.set(llm.model.clone());

@@ -813,6 +813,7 @@ pub fn ToolForm() -> impl IntoView {
             "gemini" => "gemini-2.0-flash",
             "ollama" => "llama3.2:3b",
             "azureopenai" => "gpt-4o",
+            "groq" => "llama-3.3-70b-versatile",
             _ => "gpt-4o",
         }
     };
@@ -822,6 +823,7 @@ pub fn ToolForm() -> impl IntoView {
             "gemini" => "GEMINI_API_KEY",
             "ollama" => "",
             "azureopenai" => "AZURE_OPENAI_API_KEY",
+            "groq" => "GROQ_API_KEY",
             _ => "OPENAI_API_KEY",
         }
     };
@@ -1466,6 +1468,7 @@ pub fn ToolForm() -> impl IntoView {
                                                     <option value="openai" selected=move || mock_llm_provider.get() == "openai">"OpenAI"</option>
                                                     <option value="anthropic" selected=move || mock_llm_provider.get() == "anthropic">"Anthropic"</option>
                                                     <option value="gemini" selected=move || mock_llm_provider.get() == "gemini">"Google Gemini"</option>
+                                                    <option value="groq" selected=move || mock_llm_provider.get() == "groq">"Groq"</option>
                                                     <option value="ollama" selected=move || mock_llm_provider.get() == "ollama">"Ollama (Local)"</option>
                                                     <option value="azureopenai" selected=move || mock_llm_provider.get() == "azureopenai">"Azure OpenAI"</option>
                                                 </select>
@@ -1677,6 +1680,7 @@ pub fn ToolEditForm() -> impl IntoView {
             "gemini" => "gemini-2.0-flash",
             "ollama" => "llama3.2:3b",
             "azureopenai" => "gpt-4o",
+            "groq" => "llama-3.3-70b-versatile",
             _ => "gpt-4o",
         }
     };
@@ -1686,6 +1690,7 @@ pub fn ToolEditForm() -> impl IntoView {
             "gemini" => "GEMINI_API_KEY",
             "ollama" => "",
             "azureopenai" => "AZURE_OPENAI_API_KEY",
+            "groq" => "GROQ_API_KEY",
             _ => "OPENAI_API_KEY",
         }
     };
@@ -1810,6 +1815,7 @@ pub fn ToolEditForm() -> impl IntoView {
                                 LLMProvider::Gemini => "gemini",
                                 LLMProvider::Ollama => "ollama",
                                 LLMProvider::AzureOpenAI => "azureopenai",
+                                LLMProvider::Groq => "groq",
                             };
                             set_mock_llm_provider.set(provider.to_string());
                             set_mock_llm_model.set(llm.model.clone());

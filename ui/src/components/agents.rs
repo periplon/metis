@@ -28,6 +28,7 @@ fn provider_to_string(provider: &AgentLlmProvider) -> &'static str {
         AgentLlmProvider::Gemini => "gemini",
         AgentLlmProvider::Ollama => "ollama",
         AgentLlmProvider::AzureOpenAI => "azureopenai",
+        AgentLlmProvider::Groq => "groq",
     }
 }
 
@@ -39,6 +40,7 @@ fn get_default_model(provider: &AgentLlmProvider) -> &'static str {
         AgentLlmProvider::Gemini => "gemini-2.0-flash",
         AgentLlmProvider::Ollama => "llama3.2:3b",
         AgentLlmProvider::AzureOpenAI => "gpt-4o",
+        AgentLlmProvider::Groq => "llama-3.3-70b-versatile",
     }
 }
 
@@ -50,6 +52,7 @@ fn get_default_api_key_env(provider: &AgentLlmProvider) -> &'static str {
         AgentLlmProvider::Gemini => "GEMINI_API_KEY",
         AgentLlmProvider::Ollama => "",
         AgentLlmProvider::AzureOpenAI => "AZURE_OPENAI_API_KEY",
+        AgentLlmProvider::Groq => "GROQ_API_KEY",
     }
 }
 
@@ -606,6 +609,7 @@ fn format_api_key_error(error: &str, provider: Option<&AgentLlmProvider>) -> (St
             AgentLlmProvider::Gemini => "Get your API key from https://aistudio.google.com/apikey",
             AgentLlmProvider::AzureOpenAI => "Get your API key from your Azure OpenAI resource in the Azure portal",
             AgentLlmProvider::Ollama => "Ollama typically doesn't require an API key for local deployments",
+            AgentLlmProvider::Groq => "Get your API key from https://console.groq.com/keys",
         };
         guidance.push_str(&format!("2. {}\n", hint));
     }
@@ -2337,6 +2341,7 @@ pub fn AgentForm() -> impl IntoView {
                                             "gemini" => AgentLlmProvider::Gemini,
                                             "ollama" => AgentLlmProvider::Ollama,
                                             "azureopenai" => AgentLlmProvider::AzureOpenAI,
+                                            "groq" => AgentLlmProvider::Groq,
                                             _ => AgentLlmProvider::OpenAI,
                                         };
                                         set_provider.set(new_provider.clone());
@@ -2357,6 +2362,7 @@ pub fn AgentForm() -> impl IntoView {
                                     <option value="openai" selected=move || provider.get() == AgentLlmProvider::OpenAI>"OpenAI"</option>
                                     <option value="anthropic" selected=move || provider.get() == AgentLlmProvider::Anthropic>"Anthropic"</option>
                                     <option value="gemini" selected=move || provider.get() == AgentLlmProvider::Gemini>"Google Gemini"</option>
+                                    <option value="groq" selected=move || provider.get() == AgentLlmProvider::Groq>"Groq"</option>
                                     <option value="ollama" selected=move || provider.get() == AgentLlmProvider::Ollama>"Ollama (Local)"</option>
                                     <option value="azureopenai" selected=move || provider.get() == AgentLlmProvider::AzureOpenAI>"Azure OpenAI"</option>
                                 </select>
@@ -3331,6 +3337,7 @@ pub fn AgentEditForm() -> impl IntoView {
                                                 "gemini" => AgentLlmProvider::Gemini,
                                                 "ollama" => AgentLlmProvider::Ollama,
                                                 "azureopenai" => AgentLlmProvider::AzureOpenAI,
+                                                "groq" => AgentLlmProvider::Groq,
                                                 _ => AgentLlmProvider::OpenAI,
                                             };
                                             set_provider.set(new_provider.clone());
@@ -3351,6 +3358,7 @@ pub fn AgentEditForm() -> impl IntoView {
                                         <option value="openai" selected=move || provider.get() == AgentLlmProvider::OpenAI>"OpenAI"</option>
                                         <option value="anthropic" selected=move || provider.get() == AgentLlmProvider::Anthropic>"Anthropic"</option>
                                         <option value="gemini" selected=move || provider.get() == AgentLlmProvider::Gemini>"Google Gemini"</option>
+                                        <option value="groq" selected=move || provider.get() == AgentLlmProvider::Groq>"Groq"</option>
                                         <option value="ollama" selected=move || provider.get() == AgentLlmProvider::Ollama>"Ollama (Local)"</option>
                                         <option value="azureopenai" selected=move || provider.get() == AgentLlmProvider::AzureOpenAI>"Azure OpenAI"</option>
                                     </select>

@@ -451,6 +451,8 @@ pub enum LLMProvider {
     /// Azure OpenAI
     #[serde(rename = "azureopenai")]
     AzureOpenAI,
+    /// Groq (ultra-fast inference with LPU)
+    Groq,
 }
 
 /// Database type for mock strategy
@@ -683,6 +685,8 @@ pub enum AgentLlmProvider {
     Ollama,
     #[serde(rename = "azureopenai")]
     AzureOpenAI,
+    /// Groq (ultra-fast inference with LPU)
+    Groq,
 }
 
 /// Memory configuration for agents
