@@ -4732,7 +4732,7 @@ pub async fn fetch_llm_models(
 ) -> impl IntoResponse {
     let models = match provider.to_lowercase().as_str() {
         "openai" => fetch_openai_models(params.api_key_env, &state.secrets).await,
-        "anthropic" => fetch_anthropic_models().await,
+        "anthropic" => fetch_anthropic_models(params.api_key_env.clone(), &state.secrets).await,
         "gemini" => fetch_gemini_models(params.api_key_env, &state.secrets).await,
         "ollama" => fetch_ollama_models(params.base_url).await,
         "azureopenai" => fetch_azure_openai_models().await,
@@ -4802,10 +4802,55 @@ async fn fetch_openai_models(api_key_env: Option<String>, secrets: &SharedSecret
     Ok(models)
 }
 
-async fn fetch_anthropic_models() -> Result<Vec<LlmModelInfo>, String> {
-    // Anthropic doesn't have a public models API, return known models
-    Ok(vec![
-        LlmModelInfo { id: "claude-sonnet-4-20250514".to_string(), name: "Claude Sonnet 4 (Latest)".to_string(), description: Some("Most intelligent model".to_string()) },
+async fn fetch_anthropic_models(api_key_env: Option<String>, secrets: &SharedSecretsStore) -> Result<Vec<LlmModelInfo>, String> {
+    let env_var = api_key_env.as_deref().unwrap_or("ANTHROPIC_API_KEY");
+    let api_key = secrets.get_or_env(env_var).await
+        .ok_or_else(|| format!("API key not found: {} (set via UI Secrets or environment variable)", env_var))?;
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get("https://api.anthropic.com/v1/models")
+        .header("x-api-key", &api_key)
+        .header("anthropic-version", "2023-06-01")
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("API error: {}", response.status()));
+    }
+
+    let data: Value = response.json().await.map_err(|e| format!("Parse error: {}", e))?;
+
+    let mut models: Vec<LlmModelInfo> = data["data"]
+        .as_array()
+        .unwrap_or(&vec![])
+        .iter()
+        .filter_map(|m| {
+            let id = m["id"].as_str()?;
+            let display_name = m["display_name"].as_str().unwrap_or(id);
+            Some(LlmModelInfo {
+                id: id.to_string(),
+                name: display_name.to_string(),
+                description: None,
+            })
+        })
+        .collect();
+
+    // Sort by name (newest models first based on display name)
+    models.sort_by(|a, b| b.name.cmp(&a.name));
+
+    // If no models found, return defaults
+    if models.is_empty() {
+        models = get_default_anthropic_models();
+    }
+
+    Ok(models)
+}
+
+fn get_default_anthropic_models() -> Vec<LlmModelInfo> {
+    vec![
+        LlmModelInfo { id: "claude-sonnet-4-20250514".to_string(), name: "Claude Sonnet 4".to_string(), description: Some("Most intelligent model".to_string()) },
         LlmModelInfo { id: "claude-opus-4-20250514".to_string(), name: "Claude Opus 4".to_string(), description: Some("Highest capability".to_string()) },
         LlmModelInfo { id: "claude-3-7-sonnet-20250219".to_string(), name: "Claude 3.7 Sonnet".to_string(), description: None },
         LlmModelInfo { id: "claude-3-5-sonnet-20241022".to_string(), name: "Claude 3.5 Sonnet".to_string(), description: None },
@@ -4813,7 +4858,7 @@ async fn fetch_anthropic_models() -> Result<Vec<LlmModelInfo>, String> {
         LlmModelInfo { id: "claude-3-opus-20240229".to_string(), name: "Claude 3 Opus".to_string(), description: None },
         LlmModelInfo { id: "claude-3-sonnet-20240229".to_string(), name: "Claude 3 Sonnet".to_string(), description: None },
         LlmModelInfo { id: "claude-3-haiku-20240307".to_string(), name: "Claude 3 Haiku".to_string(), description: None },
-    ])
+    ]
 }
 
 async fn fetch_gemini_models(api_key_env: Option<String>, secrets: &SharedSecretsStore) -> Result<Vec<LlmModelInfo>, String> {
