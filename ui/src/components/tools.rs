@@ -931,6 +931,7 @@ pub fn ToolForm() -> impl IntoView {
                         "gemini" => LLMProvider::Gemini,
                         "ollama" => LLMProvider::Ollama,
                         "azureopenai" => LLMProvider::AzureOpenAI,
+                        "groq" => LLMProvider::Groq,
                         _ => LLMProvider::OpenAI,
                     },
                     api_key_env: if mock_llm_api_key_env.get().is_empty() { None } else { Some(mock_llm_api_key_env.get()) },
@@ -1921,6 +1922,7 @@ pub fn ToolEditForm() -> impl IntoView {
                         "gemini" => LLMProvider::Gemini,
                         "ollama" => LLMProvider::Ollama,
                         "azureopenai" => LLMProvider::AzureOpenAI,
+                        "groq" => LLMProvider::Groq,
                         _ => LLMProvider::OpenAI,
                     },
                     api_key_env: if mock_llm_api_key_env.get().is_empty() { None } else { Some(mock_llm_api_key_env.get()) },
@@ -2472,6 +2474,7 @@ pub fn ToolEditForm() -> impl IntoView {
                                                             <option value="openai" selected=move || mock_llm_provider.get() == "openai">"OpenAI"</option>
                                                             <option value="anthropic" selected=move || mock_llm_provider.get() == "anthropic">"Anthropic"</option>
                                                             <option value="gemini" selected=move || mock_llm_provider.get() == "gemini">"Google Gemini"</option>
+                                                            <option value="groq" selected=move || mock_llm_provider.get() == "groq">"Groq"</option>
                                                             <option value="ollama" selected=move || mock_llm_provider.get() == "ollama">"Ollama (Local)"</option>
                                                             <option value="azureopenai" selected=move || mock_llm_provider.get() == "azureopenai">"Azure OpenAI"</option>
                                                         </select>
