@@ -1486,7 +1486,9 @@ impl MockStrategyHandler {
         let agent_handler = self.agent_handler.clone();
 
         // Initialize interpreter with frozen stdlib for json, re, hashlib, etc.
+        // and native modules for encodings support (latin1, utf-8, etc.)
         let interpreter = Interpreter::with_init(Default::default(), |vm| {
+            vm.add_native_modules(rustpython_stdlib::get_module_inits());
             vm.add_frozen(rustpython_pylib::FROZEN_STDLIB);
         });
 
