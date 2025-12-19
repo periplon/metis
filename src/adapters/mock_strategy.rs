@@ -1487,7 +1487,7 @@ impl MockStrategyHandler {
 
         // Initialize interpreter with frozen stdlib for json, re, hashlib, etc.
         let interpreter = Interpreter::with_init(Default::default(), |vm| {
-            vm.add_frozen(rustpython_pylib::frozen_stdlib());
+            vm.add_frozen(rustpython_pylib::FROZEN_STDLIB);
         });
 
         interpreter.enter(|vm| {
